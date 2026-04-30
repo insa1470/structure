@@ -1,0 +1,15 @@
+# 任務資料（含上傳圖片，不放進 git）
+app_data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>股權圖整併審核台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-badge">股</div>
+          <div>
+            <p class="eyebrow">Review Console</p>
+            <h1>股權圖整併審核台</h1>
+          </div>
+        </div>
+        <p class="sidebar-note">
+          先上傳兩張圖，系統會先整理，再只把少數不確定項目交給使用者決定。
+        </p>
+        <nav class="nav">
+          <button class="nav-btn active" data-view="upload">上傳任務</button>
+          <button class="nav-btn" data-view="overview">總覽</button>
+          <button class="nav-btn" data-view="review">待確認</button>
+          <button class="nav-btn" data-view="candidates">新增候選</button>
+          <button class="nav-btn" data-view="results">結果主表</button>
+        </nav>
+        <div class="status-panel">
+          <p class="status-label">目前模式</p>
+          <p id="modeBadge" class="mode-badge">前端原型</p>
+          <p class="status-copy">
+            這一版先展示使用流程。分析結果來自目前示範資料，方便你先確認操作方式。
+          </p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">MVP Prototype</p>
+            <h2 id="pageTitle">建立新任務</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="exportBtn" class="ghost-btn">匯出審核結果</button>
+          </div>
+        </header>
+
+        <section id="upload" class="view active">
+          <div class="hero">
+            <div>
+              <p class="eyebrow">Step 1</p>
+              <h3>上傳兩張圖，開始一次新的整併審核</h3>
+              <p class="hero-copy">
+                圖一用來抓結構骨架，圖二用來補存續公司資訊。這一版先讓同仁熟悉操作流程。
+              </p>
+            </div>
+            <div class="hero-chip">
+              <span>最小使用流程</span>
+              <strong>上傳 -> 審核 -> 匯出</strong>
+            </div>
+          </div>
+
+          <div class="upload-layout">
+            <div class="card form-card">
+              <label class="field">
+                <span>任務名稱</span>
+                <input id="taskNameInput" type="text" placeholder="例如：協創數據 2026-04 股權圖審核" />
+              </label>
+
+              <div class="drop-grid">
+                <label class="dropzone">
+                  <input id="chart1Input" type="file" accept="image/*" />
+                  <span class="drop-title">上傳圖一</span>
+                  <span class="drop-sub">股權結構圖 / 樹狀圖</span>
+                  <span id="chart1Meta" class="drop-meta">尚未選擇檔案</span>
+                </label>
+                <label class="dropzone">
+                  <input id="chart2Input" type="file" accept="image/*" />
+                  <span class="drop-title">上傳圖二</span>
+                  <span class="drop-sub">存續公司清單 / 詳細頁</span>
+                  <span id="chart2Meta" class="drop-meta">尚未選擇檔案</span>
+                </label>
+              </div>
+
+              <div class="cta-row">
+                <button id="startAnalysisBtn" class="primary-btn" disabled>開始分析</button>
+                <button id="loadDemoBtn" class="ghost-btn">直接看示範資料</button>
+              </div>
+            </div>
+
+            <div class="card preview-card">
+              <div class="preview-head">
+                <h4>圖片預覽</h4>
+                <p>使用者只要確認有沒有選對圖即可。</p>
+              </div>
+              <div class="preview-grid">
+                <figure class="preview-frame">
+                  <figcaption>圖一</figcaption>
+                  <img id="chart1Preview" alt="圖一預覽" />
+                </figure>
+                <figure class="preview-frame">
+                  <figcaption>圖二</figcaption>
+                  <img id="chart2Preview" alt="圖二預覽" />
+                </figure>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="overview" class="view">
+          <div class="metrics" id="metricsGrid"></div>
+          <div class="overview-grid">
+            <div class="card timeline-card">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">建議流程</p>
+                  <h3>先看結論，再處理少數問題</h3>
+                </div>
+              </div>
+              <ol class="timeline">
+                <li><strong>先看主表</strong><span>多數公司已可直接使用，不用全部重看。</span></li>
+                <li><strong>只處理待確認</strong><span>名稱差異、英文名與層級衝突集中在這裡。</span></li>
+                <li><strong>再看新增候選</strong><span>圖二多出的公司，再決定要不要補進主表。</span></li>
+              </ol>
+            </div>
+            <div class="card warning-card">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">系統提醒</p>
+                  <h3>目前最需要人工看的區塊</h3>
+                </div>
+              </div>
+              <ul id="overviewWarnings" class="warning-list"></ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="review" class="view">
+          <div class="split-layout">
+            <div class="card list-card">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">待確認清單</p>
+                  <h3 id="reviewListTitle">0 筆待確認</h3>
+                </div>
+              </div>
+              <div id="reviewList" class="review-list"></div>
+            </div>
+
+            <div class="card detail-card">
+              <div id="reviewDetail" class="detail-empty">
+                <h3>先從左側選一筆待確認</h3>
+                <p>這裡只會出現使用者需要填寫的欄位，其餘欄位都不需要碰。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="candidates" class="view">
+          <div class="split-layout">
+            <div class="card list-card">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">圖二新增候選</p>
+                  <h3 id="candidateListTitle">0 筆候選</h3>
+                </div>
+              </div>
+              <div id="candidateList" class="review-list"></div>
+            </div>
+            <div class="card detail-card">
+              <div id="candidateDetail" class="detail-empty">
+                <h3>先從左側選一筆新增候選</h3>
+                <p>用這裡決定要不要把圖二多出的公司加入主表，以及要掛在哪個上層公司底下。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="results" class="view">
+          <div class="card filters-card">
+            <div class="toolbar">
+              <label class="field compact">
+                <span>搜尋公司</span>
+                <input id="searchInput" type="text" placeholder="輸入公司名、上層公司或法人代表" />
+              </label>
+              <label class="field compact">
+                <span>結果篩選</span>
+                <select id="statusFilter">
+                  <option value="all">全部</option>
+                  <option value="enriched">已自動補完</option>
+                  <option value="review_match">待人工確認</option>
+                  <option value="chart1_only">圖一獨有</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="card table-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">結果主表</p>
+                <h3 id="resultTableTitle">0 家公司</h3>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>公司名稱</th>
+                    <th>上層公司</th>
+                    <th>圖一層級</th>
+                    <th>圖二級別</th>
+                    <th>法人代表</th>
+                    <th>成立時間</th>
+                    <th>資本額</th>
+                    <th>實控人持股</th>
+                    <th>狀態</th>
+                    <th>系統結果</th>
+                    <th>人工決策</th>
+                    <th>備註</th>
+                  </tr>
+                </thead>
+                <tbody id="resultTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./config.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+  </html>

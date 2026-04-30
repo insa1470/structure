@@ -1,0 +1,19 @@
+issue_type,chart1_name,chart2_name,candidate_node_id,match_score,recommended_action,review_status,review_note
+chart1_only,协创数据,,N001,,check_if_chart2_missing_or_inactive,pending,顶层主体
+chart1_only,海南康铭创业投资合伙企业（有限合伙）,,N003,,check_if_chart2_missing_or_inactive,pending,chart2 had no safe active-company match
+review_match,协创数据技术股份有限公司,协创数据技术股份有限公司,N007,1.0000,confirm_match_or_reject,pending,图二顶部主体; level conflict chart1=2 chart2=0
+review_match,深圳市协创立软软件有限公司,深圳市协创立软件有限公司,N009,0.9600,confirm_match_or_reject,pending,名称按图二清单提取; fuzzy candidate 深圳市协创立软软件有限公司; gap 0.2643
+review_match,协创智算（乌兰察布）大数据有限公司,协创智算（乌兰察布）大数据有限公司,N013,1.0000,confirm_match_or_reject,pending,level conflict chart1=3 chart2=2
+review_match,深圳市协芯投资有限公司,深圳市协创芯投资有限公司,N015,0.9565,confirm_match_or_reject,pending,fuzzy candidate 深圳市协芯投资有限公司; gap 0.2365
+review_match,协创联算力科技（深圳）有限公司,协创芯联算力科技（深圳）有限公司,N022,0.9677,confirm_match_or_reject,pending,名称按图二清单提取; fuzzy candidate 协创联算力科技（深圳）有限公司; gap 0.0344
+review_match,协芯片（上海）有限公司,协创芯片（上海）有限公司,N030,0.9565,confirm_match_or_reject,pending,fuzzy candidate 协芯片（上海）有限公司; gap 0.3411
+review_match,深圳市创享存智计算系统有限公司,深圳市协创享存智能计算系统有限公司,N035,0.9375,confirm_match_or_reject,pending,名称按图二清单提取; fuzzy candidate 深圳市创享存智计算系统有限公司; gap 0.3375
+review_match,宇讯置游科技有限公司,宇讯云游科技有限公司,N036,0.9000,confirm_match_or_reject,pending,境外主体名称按图二清单提取; fuzzy candidate 宇讯置游科技有限公司; gap 0.2333
+review_match,Senssoul North Inc.,Semsotai North Inc.,N037,0.7647,confirm_match_or_reject,pending,英文名称需人工复核; fuzzy candidate Senssoul North Inc.; gap 0.2647
+review_match,OOBOTITC INC,OOBOTIC INC,N039,0.9524,confirm_match_or_reject,pending,英文名称需人工复核; fuzzy candidate OOBOTITC INC; gap 0.4724
+chart1_only,SHARETRONIC SDN. BHD.,,N040,,check_if_chart2_missing_or_inactive,pending,英文名称按图像辨识推定
+review_match,EVIC PHILIPPINES INC.,EWIC PHILIPPINES INC.,N041,0.9474,confirm_match_or_reject,pending,fuzzy candidate EVIC PHILIPPINES INC.; gap 0.5356
+chart2_only,,广州奥佳软件技术有限公司,,0.5000,check_if_chart1_missing_node,pending,no safe candidate
+chart2_only,,上海富奥佳智能科技有限公司,,0.6087,check_if_chart1_missing_node,pending,no safe candidate
+chart2_only,,北京富奥佳智能科技有限公司,,0.6087,check_if_chart1_missing_node,pending,no safe candidate
+chart2_only,,SHARETRONIC DATA TECHNOLOGY (SINGAPORE) PTE. LTD.,,0.4762,check_if_chart1_missing_node,pending,英文名称需人工复核; no safe candidate
