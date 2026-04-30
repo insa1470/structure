@@ -46,8 +46,10 @@ def load_sample_payload() -> dict:
     master_rows = parse_csv(BASE_DIR / "reconciliation_outputs" / "master_nodes_enriched.csv")
     review_rows = parse_csv(BASE_DIR / "reconciliation_outputs" / "reconciliation_report.csv")
     candidate_rows = parse_csv(BASE_DIR / "reconciliation_outputs" / "chart2_only_candidates.csv")
-    graph_nodes = parse_csv(BASE_DIR / "qcc_nodes.csv")
-    graph_edges = parse_csv(BASE_DIR / "qcc_edges.csv")
+    nodes_path = BASE_DIR / "qcc_nodes.csv"
+    edges_path = BASE_DIR / "qcc_edges.csv"
+    graph_nodes = parse_csv(nodes_path) if nodes_path.exists() else []
+    graph_edges = parse_csv(edges_path) if edges_path.exists() else []
     return {
         "master_rows": master_rows,
         "review_rows": review_rows,
