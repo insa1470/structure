@@ -225,20 +225,30 @@ def update_row(task_id: str):
     if not task:
         return jsonify({"error": "task_not_found"}), 404
     payload = request.get_json(silent=True) or {}
-    node_id = payload.get("node_id")
-    if not node_id:
-        return jsonify({"error": "node_id_required"}), 400
 
     editable = ["canonical_name", "legal_representative", "registered_capital",
                 "established_date", "actual_controller_share", "company_status",
                 "chart1_parent_name", "subsidiary_level_label"]
 
-    for row in task.get("master_rows", []):
-        if row.get("node_id") == node_id:
-            for field in editable:
-                if field in payload:
-                    row[field] = payload[field]
-            break
+    # 連動更新模式：同欄位相同原始值的列全部更新
+    if payload.get("cascade") and payload.get("field") and "original_value" in payload:
+        field = payload["field"]
+        original = payload["original_value"]
+        new_val  = payload.get("new_value", "")
+        if field in editable:
+            for row in task.get("master_rows", []):
+                if row.get(field) == original:
+                    row[field] = new_val
+    else:
+        node_id = payload.get("node_id")
+        if not node_id:
+            return jsonify({"error": "node_id_required"}), 400
+        for row in task.get("master_rows", []):
+            if row.get("node_id") == node_id:
+                for field in editable:
+                    if field in payload:
+                        row[field] = payload[field]
+                break
 
     save_task(task)
     return jsonify({"ok": True, "master_rows": task["master_rows"]})

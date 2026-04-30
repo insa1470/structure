@@ -420,38 +420,74 @@ function flattenTree(nodes, depth = 0, result = []) {
   return result;
 }
 
+// ── 資本額格式化 ───────────────────────────────────────────────
+function formatCapital(str) {
+  if (!str || str === "—") return str;
+  // 把開頭的數字部分加千分位，例如 28500萬元 → 28,500萬元
+  return str.replace(/^(\d+)/, (_, n) => parseInt(n, 10).toLocaleString("en-US"));
+}
+
+function unformatCapital(str) {
+  return (str || "").replace(/,/g, "");
+}
+
+// 連動更新欄位（修改一個，同值的全部跟著改）
+const CASCADE_FIELDS = new Set(["legal_representative"]);
+
 // ── 行內編輯 ──────────────────────────────────────────────────
-function makeEditable(cell, row, field) {
+function makeEditable(cell, row, field, displayValue) {
   cell.title = "點擊編輯";
-  cell.style.cursor = "pointer";
   cell.addEventListener("click", () => {
     if (cell.querySelector("input")) return;
-    const original = cell.textContent;
-    cell.innerHTML = `<input class="cell-input" value="${original === "—" ? "" : original}" />`;
+
+    // 輸入框顯示的是「原始值」（無格式）
+    const rawOriginal = field === "registered_capital"
+      ? unformatCapital(row[field] || "")
+      : (row[field] || "");
+
+    cell.innerHTML = `<input class="cell-input" value="${rawOriginal}" />`;
     const input = cell.querySelector("input");
     input.focus();
     input.select();
 
     const save = async () => {
-      const val = input.value.trim();
-      cell.textContent = val || "—";
-      if (val === (original === "—" ? "" : original)) return;
+      const newRaw = input.value.trim();
+
+      // 顯示格式化後的值
+      const display = field === "registered_capital" ? formatCapital(newRaw) : newRaw;
+      cell.textContent = display || "—";
+
+      if (newRaw === rawOriginal) return; // 沒有改變
+
       try {
-        const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
-          node_id: row.node_id,
-          [field]: val,
-        });
+        let result;
+        if (CASCADE_FIELDS.has(field) && rawOriginal) {
+          // 連動：同名全部更新
+          result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
+            cascade: true,
+            field,
+            original_value: rawOriginal,
+            new_value: newRaw,
+          });
+        } else {
+          result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
+            node_id: row.node_id,
+            [field]: newRaw,
+          });
+        }
         state.masterRows = result.master_rows || state.masterRows;
+        // 連動時重新渲染整張表
+        if (CASCADE_FIELDS.has(field)) renderResults();
       } catch (e) {
         console.error("儲存失敗", e);
-        cell.textContent = original;
+        cell.textContent = displayValue || "—";
       }
     };
 
     input.addEventListener("blur", save);
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-      if (e.key === "Escape") { cell.textContent = original; }
+      if (e.key === "Escape") { cell.textContent = displayValue || "—"; }
     });
   });
 }
@@ -498,18 +534,18 @@ function renderResults() {
 
     // 可編輯欄位
     const editableFields = [
-      { key: "legal_representative", label: row.legal_representative },
-      { key: "registered_capital",   label: row.registered_capital },
-      { key: "established_date",     label: row.established_date },
-      { key: "actual_controller_share", label: row.actual_controller_share },
-      { key: "company_status",       label: row.company_status },
+      { key: "legal_representative",    display: row.legal_representative },
+      { key: "registered_capital",      display: formatCapital(row.registered_capital) },
+      { key: "established_date",        display: row.established_date },
+      { key: "actual_controller_share", display: row.actual_controller_share },
+      { key: "company_status",          display: row.company_status },
     ];
 
-    editableFields.forEach(({ key, label }) => {
+    editableFields.forEach(({ key, display }) => {
       const td = document.createElement("td");
-      td.textContent = label || "—";
+      td.textContent = display || "—";
       td.className = "editable-cell";
-      makeEditable(td, row, key);
+      makeEditable(td, row, key, display);
       tr.appendChild(td);
     });
 
