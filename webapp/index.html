@@ -12,6 +12,7 @@
     />
     <link rel="stylesheet" href="./styles.css" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
   </head>
   <body>
     <div class="shell">
@@ -32,6 +33,7 @@
           <button class="nav-btn" data-view="review">待確認</button>
           <button class="nav-btn" data-view="candidates">新增候選</button>
           <button class="nav-btn" data-view="results">結果主表</button>
+          <button class="nav-btn nav-btn-chart" data-view="chart">股權架構圖</button>
         </nav>
         <div class="status-panel">
           <p class="status-label">目前模式</p>
@@ -227,6 +229,23 @@
               </table>
             </div>
           </div>
+        </section>
+
+        <!-- 股權架構圖 -->
+        <section class="view" id="chart">
+          <div class="section-head chart-header">
+            <div>
+              <p class="eyebrow">視覺化</p>
+              <h3>股權架構圖</h3>
+            </div>
+            <div class="chart-actions">
+              <span id="chartLayoutBadge" class="pill info"></span>
+              <button id="exportPngBtn" class="ghost-btn">⬇ 下載 PNG</button>
+              <button id="exportHtmlBtn" class="ghost-btn">⬇ 下載 HTML</button>
+            </div>
+          </div>
+          <div id="chartLegend" class="chart-legend"></div>
+          <div id="chartContainer" class="chart-container"></div>
         </section>
       </main>
     </div>

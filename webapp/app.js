@@ -41,6 +41,11 @@ const elements = {
   statusFilter: document.getElementById("statusFilter"),
   resultTableTitle: document.getElementById("resultTableTitle"),
   resultTableBody: document.getElementById("resultTableBody"),
+  chartContainer: document.getElementById("chartContainer"),
+  chartLayoutBadge: document.getElementById("chartLayoutBadge"),
+  chartLegend: document.getElementById("chartLegend"),
+  exportPngBtn: document.getElementById("exportPngBtn"),
+  exportHtmlBtn: document.getElementById("exportHtmlBtn"),
 };
 
 const pageTitles = {
@@ -49,6 +54,7 @@ const pageTitles = {
   review: "待確認",
   candidates: "圖二新增候選",
   results: "結果主表",
+  chart: "股權架構圖",
 };
 
 const API_BASE = (window.API_BASE || "").replace(/\/$/, "");
@@ -108,6 +114,7 @@ function setView(viewName) {
     view.classList.toggle("active", view.id === viewName);
   });
   elements.pageTitle.textContent = pageTitles[viewName];
+  if (viewName === "chart") setTimeout(renderChart, 50); // 等 DOM 顯示後再渲染
 }
 
 function enableStartIfReady() {
@@ -609,6 +616,204 @@ function exportWorkbook() {
   XLSX.writeFile(workbook, `${state.taskName || "股權圖整併審核結果"}.xlsx`);
 }
 
+// ══════════════════════════════════════════════════════════════
+// 股權架構圖
+// ══════════════════════════════════════════════════════════════
+
+const LEVEL_COLORS = ["#1e3a5f", "#1d4ed8", "#4338ca", "#7c3aed", "#9333ea", "#c026d3"];
+const LEVEL_NAMES  = ["頂層主體", "一級子公司", "二級子公司", "三級子公司", "四級子公司", "五級以上"];
+let _chart = null;
+
+function wrapName(name, maxLen = 10) {
+  if (!name || name.length <= maxLen) return name || "";
+  const lines = [];
+  for (let i = 0; i < name.length; i += maxLen) lines.push(name.slice(i, i + maxLen));
+  return lines.join("\n");
+}
+
+function buildEChartsTree(rows) {
+  const byId = {};
+  rows.forEach((r) => { byId[r.node_id] = { ...r, _children: [] }; });
+
+  const roots = [];
+  rows.forEach((r) => {
+    const parent = r.chart1_parent && byId[r.chart1_parent];
+    if (parent) parent._children.push(r.node_id);
+    else roots.push(r.node_id);
+  });
+
+  function toNode(id) {
+    const r = byId[id];
+    if (!r) return null;
+    const uncertain = r.node_status !== "enriched";
+    const level = Number(r.chart1_level) || 0;
+    const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
+
+    const nameLine = wrapName(r.canonical_name || r.chart1_name || "—");
+    const labelParts = [`{name|${uncertain ? "⚠ " : ""}${nameLine}}`];
+    if (r.legal_representative) labelParts.push(`{info|法代：${r.legal_representative}}`);
+    if (r.registered_capital)   labelParts.push(`{info|資本：${formatCapital(r.registered_capital)}}`);
+    if (r.established_date)     labelParts.push(`{info|成立：${r.established_date}}`);
+
+    return {
+      name: id,
+      _row: r,
+      label: { formatter: labelParts.join("\n") },
+      itemStyle: {
+        color,
+        borderColor:  uncertain ? "#f59e0b" : color,
+        borderWidth:  uncertain ? 2.5 : 0,
+        borderType:   uncertain ? "dashed" : "solid",
+        shadowColor:  "rgba(0,0,0,0.15)",
+        shadowBlur:   6,
+      },
+      // 持股比例顯示在連線上
+      edgeLabel: r.actual_controller_share
+        ? { show: true, formatter: r.actual_controller_share, fontSize: 11, color: "#475569", backgroundColor: "#f1f5f9", padding: [2, 4], borderRadius: 3 }
+        : undefined,
+      children: r._children.map(toNode).filter(Boolean),
+    };
+  }
+
+  if (roots.length === 0) return null;
+  if (roots.length === 1) return toNode(roots[0]);
+
+  // 多個根：加一個隱形虛根
+  return {
+    name: "__root__",
+    label: { show: false },
+    itemStyle: { opacity: 0 },
+    symbolSize: [0, 0],
+    children: roots.map(toNode).filter(Boolean),
+  };
+}
+
+function renderChart() {
+  if (!state.started || !state.masterRows.length) return;
+  if (!window.echarts) { console.warn("ECharts 未載入"); return; }
+
+  if (_chart) { _chart.dispose(); _chart = null; }
+
+  const container = elements.chartContainer;
+  _chart = echarts.init(container, null, { renderer: "canvas" });
+
+  const total  = state.masterRows.length;
+  const orient = total <= 20 ? "TB" : "LR";
+  const isLR   = orient === "LR";
+
+  elements.chartLayoutBadge.textContent = `${total} 家公司 · ${isLR ? "左右佈局" : "上下佈局"}`;
+
+  // 節點尺寸
+  const nW = isLR ? 210 : 185;
+  const nH = isLR ? 100 : 90;
+
+  const treeData = buildEChartsTree(state.masterRows);
+  if (!treeData) return;
+
+  const option = {
+    backgroundColor: "#f8fafc",
+    tooltip: {
+      trigger: "item",
+      enterable: false,
+      formatter(params) {
+        const r = params.data._row;
+        if (!r) return "";
+        const rows = [
+          `<b>${r.canonical_name || r.chart1_name}</b>`,
+          r.legal_representative  ? `法代：${r.legal_representative}` : "",
+          r.registered_capital    ? `資本額：${formatCapital(r.registered_capital)}` : "",
+          r.established_date      ? `成立：${r.established_date}` : "",
+          r.actual_controller_share ? `持股：${r.actual_controller_share}` : "",
+          r.company_status        ? `狀態：${r.company_status}` : "",
+          r.node_status !== "enriched" ? `<span style="color:#f59e0b">⚠ 資料待確認</span>` : "",
+        ].filter(Boolean);
+        return rows.join("<br/>");
+      },
+    },
+    series: [{
+      type: "tree",
+      orient,
+      data: [treeData],
+      top:    isLR ? "2%"  : "4%",
+      bottom: isLR ? "2%"  : "4%",
+      left:   isLR ? "3%"  : "8%",
+      right:  isLR ? "3%"  : "8%",
+      symbol: "rect",
+      symbolSize: [nW, nH],
+      edgeShape: "polyline",
+      layout: "orthogonal",
+      roam: true,
+      initialTreeDepth: -1,
+      label: {
+        show: true,
+        position: "inside",
+        verticalAlign: "middle",
+        align: "center",
+        rich: {
+          name: { fontSize: 12, fontWeight: "bold", color: "#fff", lineHeight: 20 },
+          info: { fontSize: 10, color: "rgba(255,255,255,0.88)", lineHeight: 16 },
+        },
+      },
+      leaves: {
+        label: { position: "inside", verticalAlign: "middle", align: "center" },
+      },
+      lineStyle: { color: "#94a3b8", width: 1.5, curveness: 0 },
+      emphasis: { focus: "descendant" },
+      animationDurationUpdate: 600,
+    }],
+  };
+
+  _chart.setOption(option);
+
+  // 更新圖例
+  const levels = [...new Set(state.masterRows.map((r) => Number(r.chart1_level) || 0))].sort();
+  elements.chartLegend.innerHTML = [
+    ...levels.map((l) => {
+      const color = LEVEL_COLORS[Math.min(l, LEVEL_COLORS.length - 1)];
+      return `<span class="legend-item"><span class="legend-dot" style="background:${color}"></span>${LEVEL_NAMES[l] || `第${l}層`}</span>`;
+    }),
+    `<span class="legend-item"><span class="legend-dot legend-dot-uncertain"></span>待確認</span>`,
+  ].join("");
+
+  const ro = new ResizeObserver(() => _chart && _chart.resize());
+  ro.observe(container);
+}
+
+function exportPNG() {
+  if (!_chart) return;
+  const url = _chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#f8fafc" });
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${state.taskName || "股權架構圖"}.png`;
+  a.click();
+}
+
+function exportHTML() {
+  if (!_chart) return;
+  const option = JSON.stringify(_chart.getOption());
+  const title  = state.taskName || "股權架構圖";
+  const html = `<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="UTF-8"><title>${title}</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"><\/script>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#f8fafc}
+#c{width:100vw;height:100vh}
+.tip{position:fixed;bottom:16px;right:20px;font:13px/1.5 sans-serif;color:#64748b;background:#ffffffcc;padding:6px 12px;border-radius:8px;backdrop-filter:blur(6px)}
+</style></head>
+<body><div id="c"></div>
+<div class="tip">滾輪縮放 · 拖曳移動</div>
+<script>
+const c=echarts.init(document.getElementById('c'));
+c.setOption(${option});
+window.addEventListener('resize',()=>c.resize());
+<\/script></body></html>`;
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = `${title}.html`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
 function bindEvents() {
   elements.navButtons.forEach((button) => {
     button.addEventListener("click", () => setView(button.dataset.view));
@@ -650,6 +855,8 @@ function bindEvents() {
   elements.searchInput.addEventListener("input", renderResults);
   elements.statusFilter.addEventListener("change", renderResults);
   elements.exportBtn.addEventListener("click", exportWorkbook);
+  elements.exportPngBtn.addEventListener("click", exportPNG);
+  elements.exportHtmlBtn.addEventListener("click", exportHTML);
 }
 
 bindEvents();
