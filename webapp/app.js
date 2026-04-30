@@ -46,6 +46,7 @@ const elements = {
   chartLegend: document.getElementById("chartLegend"),
   exportPngBtn: document.getElementById("exportPngBtn"),
   exportHtmlBtn: document.getElementById("exportHtmlBtn"),
+  printChartBtn: document.getElementById("printChartBtn"),
 };
 
 const pageTitles = {
@@ -688,24 +689,76 @@ function buildEChartsTree(rows) {
   };
 }
 
-function renderChart() {
-  if (!state.started || !state.masterRows.length) return;
-  if (!window.echarts) { console.warn("ECharts 未載入"); return; }
+// ── 條列式樹狀（>20 家） ──────────────────────────────────────
+function renderListTree() {
+  const container = elements.chartContainer;
+  const roots = buildTree(state.masterRows);
 
+  // 更新圖例
+  const levels = [...new Set(state.masterRows.map((r) => Number(r.chart1_level) || 0))].sort();
+  elements.chartLegend.innerHTML = [
+    ...levels.map((l) => {
+      const color = LEVEL_COLORS[Math.min(l, LEVEL_COLORS.length - 1)];
+      return `<span class="legend-item"><span class="legend-dot" style="background:${color}"></span>${LEVEL_NAMES[l] || `第${l}層`}</span>`;
+    }),
+    `<span class="legend-item"><span class="legend-dot legend-dot-uncertain"></span>待確認</span>`,
+  ].join("");
+
+  let rows = [];
+
+  function walk(node, prefixLines, isLast) {
+    const level = Number(node.chart1_level) || 0;
+    const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
+    const uncertain = node.node_status !== "enriched";
+
+    // 前綴字元
+    const isRoot = level === 0 && prefixLines.length === 0;
+    const connector = isRoot ? "" : (isLast ? "└── " : "├── ");
+    const prefix = prefixLines.join("") + connector;
+
+    // 資訊欄
+    const ratio = node.actual_controller_share ? `(${node.actual_controller_share})` : "";
+    const name = node.canonical_name || node.chart1_name || "—";
+    const attrs = [
+      node.legal_representative ? `法代：${node.legal_representative}` : "",
+      node.registered_capital   ? `資本：${formatCapital(node.registered_capital)}` : "",
+      node.established_date     ? `成立：${node.established_date}` : "",
+    ].filter(Boolean).join("｜");
+
+    rows.push({ prefix, ratio, name, attrs, color, uncertain, isRoot, level });
+
+    if (node.children?.length) {
+      const childBase = isRoot ? "" : (isLast ? "    " : "│   ");
+      node.children.forEach((child, i) => {
+        const childIsLast = i === node.children.length - 1;
+        walk(child, [...prefixLines, childBase], childIsLast);
+      });
+    }
+  }
+
+  roots.forEach((root, i) => walk(root, [], i === roots.length - 1));
+
+  container.innerHTML = `
+    <div class="list-tree" id="listTreeInner">
+      ${rows.map((r) => `
+        <div class="lt-row ${r.uncertain ? "lt-uncertain" : ""} ${r.isRoot ? "lt-root" : ""}">
+          <span class="lt-prefix">${r.isRoot ? "" : r.prefix}</span>
+          <span class="lt-ratio" style="color:${r.color}">${r.ratio}</span>
+          <span class="lt-name" style="color:${r.color}">${r.name}</span>
+          ${r.uncertain ? '<span class="lt-warn">⚠ 待確認</span>' : ""}
+          ${r.attrs ? `<span class="lt-attrs">${r.attrs}</span>` : ""}
+        </div>
+      `).join("")}
+    </div>`;
+}
+
+// ── ECharts 視覺圖（≤20 家） ─────────────────────────────────
+function renderEChart() {
+  if (!window.echarts) { console.warn("ECharts 未載入"); return; }
   if (_chart) { _chart.dispose(); _chart = null; }
 
   const container = elements.chartContainer;
   _chart = echarts.init(container, null, { renderer: "canvas" });
-
-  const total  = state.masterRows.length;
-  const orient = total <= 20 ? "TB" : "LR";
-  const isLR   = orient === "LR";
-
-  elements.chartLayoutBadge.textContent = `${total} 家公司 · ${isLR ? "左右佈局" : "上下佈局"}`;
-
-  // 節點尺寸
-  const nW = isLR ? 210 : 185;
-  const nH = isLR ? 100 : 90;
 
   const treeData = buildEChartsTree(state.masterRows);
   if (!treeData) return;
@@ -718,7 +771,7 @@ function renderChart() {
       formatter(params) {
         const r = params.data._row;
         if (!r) return "";
-        const rows = [
+        return [
           `<b>${r.canonical_name || r.chart1_name}</b>`,
           r.legal_representative  ? `法代：${r.legal_representative}` : "",
           r.registered_capital    ? `資本額：${formatCapital(r.registered_capital)}` : "",
@@ -726,37 +779,25 @@ function renderChart() {
           r.actual_controller_share ? `持股：${r.actual_controller_share}` : "",
           r.company_status        ? `狀態：${r.company_status}` : "",
           r.node_status !== "enriched" ? `<span style="color:#f59e0b">⚠ 資料待確認</span>` : "",
-        ].filter(Boolean);
-        return rows.join("<br/>");
+        ].filter(Boolean).join("<br/>");
       },
     },
     series: [{
-      type: "tree",
-      orient,
+      type: "tree", orient: "TB",
       data: [treeData],
-      top:    isLR ? "2%"  : "4%",
-      bottom: isLR ? "2%"  : "4%",
-      left:   isLR ? "3%"  : "8%",
-      right:  isLR ? "3%"  : "8%",
-      symbol: "rect",
-      symbolSize: [nW, nH],
-      edgeShape: "polyline",
-      layout: "orthogonal",
-      roam: true,
-      initialTreeDepth: -1,
+      top: "4%", bottom: "4%", left: "8%", right: "8%",
+      symbol: "rect", symbolSize: [185, 90],
+      edgeShape: "polyline", layout: "orthogonal",
+      roam: true, initialTreeDepth: -1,
       label: {
-        show: true,
-        position: "inside",
-        verticalAlign: "middle",
-        align: "center",
+        show: true, position: "inside",
+        verticalAlign: "middle", align: "center",
         rich: {
           name: { fontSize: 12, fontWeight: "bold", color: "#fff", lineHeight: 20 },
           info: { fontSize: 10, color: "rgba(255,255,255,0.88)", lineHeight: 16 },
         },
       },
-      leaves: {
-        label: { position: "inside", verticalAlign: "middle", align: "center" },
-      },
+      leaves: { label: { position: "inside", verticalAlign: "middle", align: "center" } },
       lineStyle: { color: "#94a3b8", width: 1.5, curveness: 0 },
       emphasis: { focus: "descendant" },
       animationDurationUpdate: 600,
@@ -765,7 +806,6 @@ function renderChart() {
 
   _chart.setOption(option);
 
-  // 更新圖例
   const levels = [...new Set(state.masterRows.map((r) => Number(r.chart1_level) || 0))].sort();
   elements.chartLegend.innerHTML = [
     ...levels.map((l) => {
@@ -775,8 +815,28 @@ function renderChart() {
     `<span class="legend-item"><span class="legend-dot legend-dot-uncertain"></span>待確認</span>`,
   ].join("");
 
-  const ro = new ResizeObserver(() => _chart && _chart.resize());
-  ro.observe(container);
+  new ResizeObserver(() => _chart && _chart.resize()).observe(container);
+}
+
+// ── 主入口 ────────────────────────────────────────────────────
+function renderChart() {
+  if (!state.started || !state.masterRows.length) return;
+
+  const total = state.masterRows.length;
+  const useList = total > 20;
+
+  elements.chartLayoutBadge.textContent = `${total} 家公司 · ${useList ? "條列樹狀" : "視覺圖"}`;
+
+  // 切換容器樣式
+  elements.chartContainer.classList.toggle("chart-container-list", useList);
+  elements.chartContainer.classList.toggle("chart-container-echart", !useList);
+
+  // PNG / HTML 匯出按鈕只在 ECharts 模式下有意義
+  elements.exportPngBtn.style.display  = useList ? "none" : "";
+  elements.exportHtmlBtn.style.display = useList ? "none" : "";
+
+  if (useList) renderListTree();
+  else renderEChart();
 }
 
 function exportPNG() {
@@ -789,29 +849,63 @@ function exportPNG() {
 }
 
 function exportHTML() {
-  if (!_chart) return;
-  const option = JSON.stringify(_chart.getOption());
-  const title  = state.taskName || "股權架構圖";
-  const html = `<!DOCTYPE html>
+  const title = state.taskName || "股權架構圖";
+  const useList = state.masterRows.length > 20;
+
+  if (useList) {
+    // 條列式：匯出含樣式的獨立 HTML
+    const inner = document.getElementById("listTreeInner")?.outerHTML || "";
+    const html = `<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="UTF-8"><title>${title}</title>
+<style>
+@page { size: A4 landscape; margin: 15mm; }
+body { font-family: "Noto Sans TC", "PingFang TC", sans-serif; background: #f8fafc; padding: 24px; }
+h2 { font-size: 16px; margin-bottom: 16px; color: #1e293b; }
+.list-tree { font-size: 12px; line-height: 1.9; }
+.lt-row { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.lt-root { font-size: 15px; font-weight: 800; margin-bottom: 4px; }
+.lt-prefix { font-family: monospace; color: #94a3b8; white-space: pre; }
+.lt-ratio { font-weight: 700; min-width: 60px; }
+.lt-name { font-weight: 600; }
+.lt-warn { font-size: 11px; color: #f59e0b; font-weight: 600; }
+.lt-attrs { color: #64748b; font-size: 11px; }
+.lt-uncertain .lt-name { text-decoration: underline dotted #f59e0b; }
+</style></head>
+<body>
+<h2>${title} — 股權架構圖</h2>
+${inner}
+</body></html>`;
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `${title}.html`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  } else {
+    // ECharts 模式
+    if (!_chart) return;
+    const option = JSON.stringify(_chart.getOption());
+    const html = `<!DOCTYPE html>
 <html lang="zh-Hant"><head>
 <meta charset="UTF-8"><title>${title}</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"><\/script>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#f8fafc}
-#c{width:100vw;height:100vh}
-.tip{position:fixed;bottom:16px;right:20px;font:13px/1.5 sans-serif;color:#64748b;background:#ffffffcc;padding:6px 12px;border-radius:8px;backdrop-filter:blur(6px)}
-</style></head>
-<body><div id="c"></div>
-<div class="tip">滾輪縮放 · 拖曳移動</div>
-<script>
-const c=echarts.init(document.getElementById('c'));
-c.setOption(${option});
-window.addEventListener('resize',()=>c.resize());
-<\/script></body></html>`;
-  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href = url; a.download = `${title}.html`; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 3000);
+<style>*{margin:0;padding:0}body{background:#f8fafc}#c{width:100vw;height:100vh}
+.tip{position:fixed;bottom:16px;right:20px;font:13px/1.5 sans-serif;color:#64748b;
+background:#ffffffcc;padding:6px 12px;border-radius:8px}</style></head>
+<body><div id="c"></div><div class="tip">滾輪縮放 · 拖曳移動</div>
+<script>const c=echarts.init(document.getElementById('c'));
+c.setOption(${option});window.addEventListener('resize',()=>c.resize());<\/script>
+</body></html>`;
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `${title}.html`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  }
+}
+
+function printChart() {
+  window.print();
 }
 
 function bindEvents() {
@@ -857,6 +951,7 @@ function bindEvents() {
   elements.exportBtn.addEventListener("click", exportWorkbook);
   elements.exportPngBtn.addEventListener("click", exportPNG);
   elements.exportHtmlBtn.addEventListener("click", exportHTML);
+  elements.printChartBtn.addEventListener("click", printChart);
 }
 
 bindEvents();
