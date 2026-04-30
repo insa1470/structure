@@ -219,6 +219,31 @@ def review_decision():
     return jsonify({"ok": True, "review_decisions": task["review_decisions"]})
 
 
+@app.route("/api/tasks/<task_id>/update-row", methods=["POST"])
+def update_row(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    node_id = payload.get("node_id")
+    if not node_id:
+        return jsonify({"error": "node_id_required"}), 400
+
+    editable = ["canonical_name", "legal_representative", "registered_capital",
+                "established_date", "actual_controller_share", "company_status",
+                "chart1_parent_name", "subsidiary_level_label"]
+
+    for row in task.get("master_rows", []):
+        if row.get("node_id") == node_id:
+            for field in editable:
+                if field in payload:
+                    row[field] = payload[field]
+            break
+
+    save_task(task)
+    return jsonify({"ok": True, "master_rows": task["master_rows"]})
+
+
 @app.route("/api/candidate-decision", methods=["POST"])
 def candidate_decision():
     payload = request.get_json(silent=True) or {}

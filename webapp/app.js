@@ -399,46 +399,127 @@ function renderCandidateDetail() {
   });
 }
 
+// ── 樹狀結構建立 ─────────────────────────────────────────────
+function buildTree(rows) {
+  const byId = {};
+  rows.forEach((r) => { byId[r.node_id] = { ...r, children: [] }; });
+  const roots = [];
+  rows.forEach((r) => {
+    const parent = r.chart1_parent && byId[r.chart1_parent];
+    if (parent) parent.children.push(byId[r.node_id]);
+    else roots.push(byId[r.node_id]);
+  });
+  return roots;
+}
+
+function flattenTree(nodes, depth = 0, result = []) {
+  nodes.forEach((node) => {
+    result.push({ ...node, _depth: depth });
+    if (node.children?.length) flattenTree(node.children, depth + 1, result);
+  });
+  return result;
+}
+
+// ── 行內編輯 ──────────────────────────────────────────────────
+function makeEditable(cell, row, field) {
+  cell.title = "點擊編輯";
+  cell.style.cursor = "pointer";
+  cell.addEventListener("click", () => {
+    if (cell.querySelector("input")) return;
+    const original = cell.textContent;
+    cell.innerHTML = `<input class="cell-input" value="${original === "—" ? "" : original}" />`;
+    const input = cell.querySelector("input");
+    input.focus();
+    input.select();
+
+    const save = async () => {
+      const val = input.value.trim();
+      cell.textContent = val || "—";
+      if (val === (original === "—" ? "" : original)) return;
+      try {
+        const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
+          node_id: row.node_id,
+          [field]: val,
+        });
+        state.masterRows = result.master_rows || state.masterRows;
+      } catch (e) {
+        console.error("儲存失敗", e);
+        cell.textContent = original;
+      }
+    };
+
+    input.addEventListener("blur", save);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+      if (e.key === "Escape") { cell.textContent = original; }
+    });
+  });
+}
+
 function renderResults() {
   const query = elements.searchInput.value.trim();
   const filter = elements.statusFilter.value;
-  const visibleRows = state.masterRows.filter((row) => {
-    const inFilter = filter === "all" ? true : row.node_status === filter;
-    const haystack = [row.chart1_name, row.chart1_parent_name, row.legal_representative, row.matched_chart2_name]
-      .join(" ")
-      .toLowerCase();
-    const inQuery = query ? haystack.includes(query.toLowerCase()) : true;
+
+  const filteredRows = state.masterRows.filter((row) => {
+    const inFilter = filter === "all" || row.node_status === filter;
+    const haystack = [row.canonical_name, row.chart1_name, row.chart1_parent_name, row.legal_representative]
+      .join(" ").toLowerCase();
+    const inQuery = !query || haystack.includes(query.toLowerCase());
     return inFilter && inQuery;
   });
 
-  elements.resultTableTitle.textContent = `${visibleRows.length} 家公司`;
-  elements.resultTableBody.innerHTML = visibleRows
-    .map((row) => {
-      const reviewDecision = state.reviewDecisions[row.node_id] || state.reviewDecisions[row.chart1_name] || {};
-      const statusClass =
-        row.node_status === "enriched"
-          ? "status-enriched"
-          : row.node_status === "review_match"
-            ? "status-review"
-            : "status-slate";
-      return `
-        <tr class="${statusClass}">
-          <td>${reviewDecision.corrected_name || row.canonical_name || row.chart1_name}</td>
-          <td>${reviewDecision.corrected_parent || row.chart1_parent_name || "—"}</td>
-          <td>${reviewDecision.corrected_level || row.chart1_level || "—"}</td>
-          <td>${row.subsidiary_level_label || "—"}</td>
-          <td>${row.legal_representative || "—"}</td>
-          <td>${row.established_date || "—"}</td>
-          <td>${row.registered_capital || "—"}</td>
-          <td>${row.actual_controller_share || "—"}</td>
-          <td>${row.company_status || "—"}</td>
-          <td>${statusText(row)}</td>
-          <td>${reviewDecision.decision || "—"}</td>
-          <td class="table-note">${reviewDecision.note || row.review_note || "—"}</td>
-        </tr>
-      `;
-    })
-    .join("");
+  // 搜尋時用篩選後的平面清單，否則用樹狀
+  const rows = query || filter !== "all"
+    ? filteredRows.map((r) => ({ ...r, _depth: 0 }))
+    : flattenTree(buildTree(state.masterRows));
+
+  elements.resultTableTitle.textContent = `${filteredRows.length} 家公司`;
+
+  elements.resultTableBody.innerHTML = "";
+  rows.forEach((row) => {
+    const depth = row._depth || 0;
+    const statusClass =
+      row.node_status === "enriched" ? "status-enriched"
+      : row.node_status === "review_match" ? "status-review"
+      : "status-slate";
+
+    const tr = document.createElement("tr");
+    tr.className = statusClass;
+
+    // 公司名稱（含縮排與層級線）
+    const nameTd = document.createElement("td");
+    nameTd.style.paddingLeft = `${8 + depth * 22}px`;
+    nameTd.className = "tree-name-cell";
+    const prefix = depth > 0 ? `<span class="tree-branch">${depth > 1 ? "　".repeat(depth - 1) + "└─ " : "└─ "}</span>` : "";
+    const levelBadge = row.subsidiary_level_label
+      ? `<span class="level-badge">${row.subsidiary_level_label}</span>` : "";
+    nameTd.innerHTML = `${prefix}<span class="company-name">${row.canonical_name || row.chart1_name}</span>${levelBadge}`;
+    tr.appendChild(nameTd);
+
+    // 可編輯欄位
+    const editableFields = [
+      { key: "legal_representative", label: row.legal_representative },
+      { key: "registered_capital",   label: row.registered_capital },
+      { key: "established_date",     label: row.established_date },
+      { key: "actual_controller_share", label: row.actual_controller_share },
+      { key: "company_status",       label: row.company_status },
+    ];
+
+    editableFields.forEach(({ key, label }) => {
+      const td = document.createElement("td");
+      td.textContent = label || "—";
+      td.className = "editable-cell";
+      makeEditable(td, row, key);
+      tr.appendChild(td);
+    });
+
+    // 狀態（不可編輯）
+    const statusTd = document.createElement("td");
+    statusTd.textContent = statusText(row);
+    tr.appendChild(statusTd);
+
+    elements.resultTableBody.appendChild(tr);
+  });
 }
 
 async function createTaskFromUpload() {
