@@ -189,52 +189,59 @@ class EquityReviewHandler(SimpleHTTPRequestHandler):
         return self.respond_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
     def handle_task_analyze(self):
-        ctype, _ = cgi.parse_header(self.headers.get("content-type", ""))
-        if ctype != "multipart/form-data":
-            return self.respond_json({"error": "multipart_required"}, HTTPStatus.BAD_REQUEST)
+        try:
+            ctype, _ = cgi.parse_header(self.headers.get("content-type", ""))
+            if ctype != "multipart/form-data":
+                return self.respond_json({"error": "multipart_required"}, HTTPStatus.BAD_REQUEST)
 
-        environ = {
-            "REQUEST_METHOD": "POST",
-            "CONTENT_TYPE": self.headers.get("content-type"),
-        }
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
-        task_name = form.getfirst("task_name", "").strip()
-        chart1 = form["chart1"] if "chart1" in form else None
-        chart2 = form["chart2"] if "chart2" in form else None
-        if not chart1 or not chart2 or not getattr(chart1, "file", None) or not getattr(chart2, "file", None):
-            return self.respond_json({"error": "chart1_and_chart2_required"}, HTTPStatus.BAD_REQUEST)
+            environ = {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("content-type"),
+                "CONTENT_LENGTH": self.headers.get("content-length", "0"),
+            }
+            form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
+            task_name = form.getfirst("task_name", "").strip()
+            chart1 = form["chart1"] if "chart1" in form else None
+            chart2 = form["chart2"] if "chart2" in form else None
+            if not chart1 or not chart2 or not getattr(chart1, "file", None) or not getattr(chart2, "file", None):
+                return self.respond_json({"error": "chart1_and_chart2_required"}, HTTPStatus.BAD_REQUEST)
 
-        # 先建立暫存資料夾，存放上傳圖片
-        tmp_id = uuid.uuid4().hex[:12]
-        folder = DATA_DIR / tmp_id / "uploads"
-        folder.mkdir(parents=True, exist_ok=True)
+            # 先建立暫存資料夾，存放上傳圖片
+            tmp_id = uuid.uuid4().hex[:12]
+            folder = DATA_DIR / tmp_id / "uploads"
+            folder.mkdir(parents=True, exist_ok=True)
 
-        saved_paths: dict[str, Path] = {}
-        for field_name, field in (("chart1", chart1), ("chart2", chart2)):
-            filename = sanitize_filename(field.filename)
-            dest = folder / f"{field_name}_{filename}"
-            with dest.open("wb") as handle:
-                shutil.copyfileobj(field.file, handle)
-            saved_paths[field_name] = dest
+            saved_paths: dict[str, Path] = {}
+            for field_name, field in (("chart1", chart1), ("chart2", chart2)):
+                filename = sanitize_filename(field.filename or "upload.bin")
+                dest = folder / f"{field_name}_{filename}"
+                with dest.open("wb") as handle:
+                    shutil.copyfileobj(field.file, handle)
+                saved_paths[field_name] = dest
 
-        # 若有設定 DASHSCOPE_API_KEY，使用 Qwen-VL 真實分析；否則 fallback 示範資料
-        use_qwen = bool(os.environ.get("DASHSCOPE_API_KEY", "").strip())
-        if use_qwen:
-            try:
-                from analyzer import run_analysis
-                analysis = run_analysis(saved_paths["chart1"], saved_paths["chart2"])
-                task = build_task_payload_from_analysis(task_name, chart1.filename, chart2.filename, analysis)
-            except Exception as exc:
-                task = build_task_payload(task_name, chart1.filename, chart2.filename)
-                task["analysis_warning"] = f"Qwen-VL 分析失敗，已 fallback 示範資料：{exc}"
-        else:
-            task = build_task_payload(task_name, chart1.filename, chart2.filename)
-            task["analysis_warning"] = "未設定 DASHSCOPE_API_KEY，目前使用示範資料。"
+            # 若有設定 DASHSCOPE_API_KEY，使用 Qwen-VL 真實分析；否則 fallback 示範資料
+            use_qwen = bool(os.environ.get("DASHSCOPE_API_KEY", "").strip())
+            if use_qwen:
+                try:
+                    from analyzer import run_analysis
+                    analysis = run_analysis(saved_paths["chart1"], saved_paths["chart2"])
+                    task = build_task_payload_from_analysis(task_name, chart1.filename, chart2.filename, analysis)
+                except Exception as exc:
+                    task = build_task_payload(task_name, chart1.filename or "", chart2.filename or "")
+                    task["analysis_warning"] = f"Qwen-VL 分析失敗，已 fallback 示範資料：{exc}"
+            else:
+                task = build_task_payload(task_name, chart1.filename or "", chart2.filename or "")
+                task["analysis_warning"] = "未設定 DASHSCOPE_API_KEY，目前使用示範資料。"
 
-        # 把暫存資料夾重命名為正式 task_id
-        (DATA_DIR / tmp_id).rename(task_dir(task["id"]))
-        save_task(task)
-        return self.respond_json(task, HTTPStatus.CREATED)
+            # 把暫存資料夾重命名為正式 task_id
+            (DATA_DIR / tmp_id).rename(task_dir(task["id"]))
+            save_task(task)
+            return self.respond_json(task, HTTPStatus.CREATED)
+
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            return self.respond_json({"error": "server_error", "detail": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def handle_review_decision(self):
         payload = self.read_json_body()
