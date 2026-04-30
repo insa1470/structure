@@ -530,14 +530,45 @@ function renderResults() {
     const tr = document.createElement("tr");
     tr.className = statusClass;
 
-    // 公司名稱（含縮排與層級線）
+    // 公司名稱（含縮排與層級線，可點擊編輯）
     const nameTd = document.createElement("td");
     nameTd.style.paddingLeft = `${8 + depth * 22}px`;
     nameTd.className = "tree-name-cell";
     const prefix = depth > 0 ? `<span class="tree-branch">${depth > 1 ? "　".repeat(depth - 1) + "└─ " : "└─ "}</span>` : "";
     const levelBadge = row.subsidiary_level_label
       ? `<span class="level-badge">${row.subsidiary_level_label}</span>` : "";
-    nameTd.innerHTML = `${prefix}<span class="company-name">${row.canonical_name || row.chart1_name}</span>${levelBadge}`;
+    nameTd.innerHTML = `${prefix}<span class="company-name editable-name" title="點擊編輯名稱">${row.canonical_name || row.chart1_name}</span>${levelBadge}`;
+
+    // 名稱行內編輯
+    nameTd.addEventListener("click", (e) => {
+      if (e.target.classList.contains("tree-branch") || e.target.classList.contains("level-badge")) return;
+      if (nameTd.querySelector("input.cell-input")) return;
+      const nameSpan = nameTd.querySelector(".company-name");
+      if (!nameSpan) return;
+      const curName = row.canonical_name || row.chart1_name || "";
+      nameSpan.innerHTML = `<input class="cell-input" value="${curName.replace(/"/g, "&quot;")}">`;
+      const input = nameSpan.querySelector("input");
+      input.focus(); input.select();
+      const save = async () => {
+        const newVal = input.value.trim();
+        nameSpan.textContent = newVal || curName;
+        if (newVal && newVal !== curName) {
+          try {
+            const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
+              node_id: row.node_id, canonical_name: newVal,
+            });
+            state.masterRows = result.master_rows || state.masterRows;
+            row.canonical_name = newVal;
+          } catch (e) { console.error(e); nameSpan.textContent = curName; }
+        }
+      };
+      input.addEventListener("blur", save);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+        if (e.key === "Escape") { nameSpan.textContent = curName; }
+      });
+    });
+
     tr.appendChild(nameTd);
 
     // 可編輯欄位
@@ -561,6 +592,24 @@ function renderResults() {
     const statusTd = document.createElement("td");
     statusTd.textContent = statusText(row);
     tr.appendChild(statusTd);
+
+    // 刪除按鈕
+    const delTd = document.createElement("td");
+    delTd.className = "del-td";
+    const delBtn = document.createElement("button");
+    delBtn.className = "row-del-btn";
+    delBtn.title = "從主表移除此公司";
+    delBtn.textContent = "✕";
+    delBtn.addEventListener("click", async () => {
+      if (!confirm(`確定要從主表移除「${row.canonical_name || row.chart1_name}」嗎？`)) return;
+      try {
+        const result = await apiPost(`/api/tasks/${state.taskId}/delete-row`, { node_id: row.node_id });
+        state.masterRows = result.master_rows || state.masterRows;
+        renderResults();
+      } catch (e) { console.error("刪除失敗", e); }
+    });
+    delTd.appendChild(delBtn);
+    tr.appendChild(delTd);
 
     elements.resultTableBody.appendChild(tr);
   });
@@ -717,7 +766,6 @@ function renderListTree() {
     const prefix = prefixLines.join("") + connector;
 
     // 資訊欄
-    const ratio = node.actual_controller_share ? `(${node.actual_controller_share})` : "";
     const name = node.canonical_name || node.chart1_name || "—";
     const attrs = [
       node.legal_representative ? `法代：${node.legal_representative}` : "",
@@ -725,7 +773,7 @@ function renderListTree() {
       node.established_date     ? `成立：${node.established_date}` : "",
     ].filter(Boolean).join("｜");
 
-    rows.push({ prefix, ratio, name, attrs, color, uncertain, isRoot, level });
+    rows.push({ prefix, name, attrs, color, uncertain, isRoot, level });
 
     if (node.children?.length) {
       const childBase = isRoot ? "" : (isLast ? "    " : "│   ");
@@ -743,7 +791,6 @@ function renderListTree() {
       ${rows.map((r) => `
         <div class="lt-row ${r.uncertain ? "lt-uncertain" : ""} ${r.isRoot ? "lt-root" : ""}">
           <span class="lt-prefix">${r.isRoot ? "" : r.prefix}</span>
-          <span class="lt-ratio" style="color:${r.color}">${r.ratio}</span>
           <span class="lt-name" style="color:${r.color}">${r.name}</span>
           ${r.uncertain ? '<span class="lt-warn">⚠ 待確認</span>' : ""}
           ${r.attrs ? `<span class="lt-attrs">${r.attrs}</span>` : ""}
@@ -866,7 +913,6 @@ h2 { font-size: 16px; margin-bottom: 16px; color: #1e293b; }
 .lt-row { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
 .lt-root { font-size: 15px; font-weight: 800; margin-bottom: 4px; }
 .lt-prefix { font-family: monospace; color: #94a3b8; white-space: pre; }
-.lt-ratio { font-weight: 700; min-width: 60px; }
 .lt-name { font-weight: 600; }
 .lt-warn { font-size: 11px; color: #f59e0b; font-weight: 600; }
 .lt-attrs { color: #64748b; font-size: 11px; }

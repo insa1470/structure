@@ -254,6 +254,20 @@ def update_row(task_id: str):
     return jsonify({"ok": True, "master_rows": task["master_rows"]})
 
 
+@app.route("/api/tasks/<task_id>/delete-row", methods=["POST"])
+def delete_row(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    node_id = payload.get("node_id")
+    if not node_id:
+        return jsonify({"error": "node_id_required"}), 400
+    task["master_rows"] = [r for r in task.get("master_rows", []) if r.get("node_id") != node_id]
+    save_task(task)
+    return jsonify({"ok": True, "master_rows": task["master_rows"]})
+
+
 @app.route("/api/candidate-decision", methods=["POST"])
 def candidate_decision():
     payload = request.get_json(silent=True) or {}
