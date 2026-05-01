@@ -530,48 +530,78 @@ function renderResults() {
     const tr = document.createElement("tr");
     tr.className = statusClass;
 
-    // 公司名稱（含縮排與層級線，可點擊編輯）
+    // ── 刪除按鈕（第一欄）──────────────────────────────────
+    const delTd = document.createElement("td");
+    delTd.className = "del-td";
+    const delBtn = document.createElement("button");
+    delBtn.className = "row-del-btn";
+    delBtn.title = "從主表移除此公司";
+    delBtn.textContent = "✕";
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`確定要從主表移除「${row.canonical_name || row.chart1_name}」嗎？`)) return;
+      try {
+        const result = await apiPost(`/api/tasks/${state.taskId}/delete-row`, { node_id: row.node_id });
+        state.masterRows = result.master_rows || state.masterRows;
+        renderResults();
+      } catch (err) { console.error("刪除失敗", err); }
+    });
+    delTd.appendChild(delBtn);
+    tr.appendChild(delTd);
+
+    // ── 公司名稱（含縮排與層級線，可點擊編輯）──────────────
     const nameTd = document.createElement("td");
     nameTd.style.paddingLeft = `${8 + depth * 22}px`;
     nameTd.className = "tree-name-cell";
     const prefix = depth > 0 ? `<span class="tree-branch">${depth > 1 ? "　".repeat(depth - 1) + "└─ " : "└─ "}</span>` : "";
     const levelBadge = row.subsidiary_level_label
       ? `<span class="level-badge">${row.subsidiary_level_label}</span>` : "";
-    nameTd.innerHTML = `${prefix}<span class="company-name editable-name" title="點擊編輯名稱">${row.canonical_name || row.chart1_name}</span>${levelBadge}`;
+    const curName = row.canonical_name || row.chart1_name || "";
+    nameTd.innerHTML = `${prefix}<span class="company-name editable-name" title="點擊編輯名稱">${curName}</span>${levelBadge}`;
 
-    // 名稱行內編輯
     nameTd.addEventListener("click", (e) => {
       if (e.target.classList.contains("tree-branch") || e.target.classList.contains("level-badge")) return;
       if (nameTd.querySelector("input.cell-input")) return;
       const nameSpan = nameTd.querySelector(".company-name");
       if (!nameSpan) return;
-      const curName = row.canonical_name || row.chart1_name || "";
-      nameSpan.innerHTML = `<input class="cell-input" value="${curName.replace(/"/g, "&quot;")}">`;
-      const input = nameSpan.querySelector("input");
+
+      // 用絕對定位的 input 覆蓋文字，避免 TD 寬度變動
+      const spanRect = nameSpan.getBoundingClientRect();
+      const tdRect   = nameTd.getBoundingClientRect();
+      const input = document.createElement("input");
+      input.className = "cell-input name-overlay-input";
+      input.value = row.canonical_name || row.chart1_name || "";
+      input.style.width = Math.max(spanRect.width + 40, 120) + "px";
+      nameSpan.style.visibility = "hidden";
+      nameTd.style.position = "relative";
+      nameTd.appendChild(input);
       input.focus(); input.select();
-      const save = async () => {
+
+      const finish = async (save) => {
         const newVal = input.value.trim();
-        nameSpan.textContent = newVal || curName;
-        if (newVal && newVal !== curName) {
+        input.remove();
+        nameSpan.style.visibility = "";
+        if (save && newVal && newVal !== curName) {
+          nameSpan.textContent = newVal;
+          row.canonical_name = newVal;
           try {
             const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
               node_id: row.node_id, canonical_name: newVal,
             });
             state.masterRows = result.master_rows || state.masterRows;
-            row.canonical_name = newVal;
-          } catch (e) { console.error(e); nameSpan.textContent = curName; }
+          } catch (err) { console.error(err); nameSpan.textContent = curName; row.canonical_name = curName; }
         }
       };
-      input.addEventListener("blur", save);
+      input.addEventListener("blur", () => finish(true));
       input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-        if (e.key === "Escape") { nameSpan.textContent = curName; }
+        if (e.key === "Enter")  { e.preventDefault(); finish(true); }
+        if (e.key === "Escape") { finish(false); }
       });
     });
 
     tr.appendChild(nameTd);
 
-    // 可編輯欄位
+    // ── 可編輯欄位 ───────────────────────────────────────────
     const editableFields = [
       { key: "legal_representative",    display: row.legal_representative },
       { key: "registered_capital",      display: formatCapital(row.registered_capital) },
@@ -588,28 +618,10 @@ function renderResults() {
       tr.appendChild(td);
     });
 
-    // 狀態（不可編輯）
+    // ── 狀態（不可編輯）──────────────────────────────────────
     const statusTd = document.createElement("td");
     statusTd.textContent = statusText(row);
     tr.appendChild(statusTd);
-
-    // 刪除按鈕
-    const delTd = document.createElement("td");
-    delTd.className = "del-td";
-    const delBtn = document.createElement("button");
-    delBtn.className = "row-del-btn";
-    delBtn.title = "從主表移除此公司";
-    delBtn.textContent = "✕";
-    delBtn.addEventListener("click", async () => {
-      if (!confirm(`確定要從主表移除「${row.canonical_name || row.chart1_name}」嗎？`)) return;
-      try {
-        const result = await apiPost(`/api/tasks/${state.taskId}/delete-row`, { node_id: row.node_id });
-        state.masterRows = result.master_rows || state.masterRows;
-        renderResults();
-      } catch (e) { console.error("刪除失敗", e); }
-    });
-    delTd.appendChild(delBtn);
-    tr.appendChild(delTd);
 
     elements.resultTableBody.appendChild(tr);
   });
