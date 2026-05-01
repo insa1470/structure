@@ -119,7 +119,13 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
                 ],
             }
         ],
+        max_tokens=4096,
     )
+
+    # 檢查是否因 token 上限被截斷
+    finish_reason = response.choices[0].finish_reason
+    if finish_reason == "length":
+        raise RuntimeError("模型輸出被截斷（token 上限），圖片公司數量可能過多，請裁切後重試")
 
     raw = response.choices[0].message.content.strip()
 
