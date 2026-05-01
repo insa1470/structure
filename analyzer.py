@@ -134,13 +134,28 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
     except json.JSONDecodeError:
         pass
 
-    # 找完整 JSON array（貪婪模式，從第一個 [ 到最後一個 ]）
-    match = _re.search(r"\[.*\]", raw, _re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
+    # 用括號配對找第一個完整 JSON array（避免被尾端說明文字裡的 ] 誤導）
+    start = raw.find("[")
+    if start != -1:
+        depth, in_str, esc = 0, False, False
+        for i, ch in enumerate(raw[start:], start):
+            if esc:
+                esc = False; continue
+            if ch == "\\" and in_str:
+                esc = True; continue
+            if ch == '"':
+                in_str = not in_str; continue
+            if in_str:
+                continue
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(raw[start: i + 1])
+                    except json.JSONDecodeError:
+                        break
 
     raise RuntimeError(f"無法解析模型回傳的 JSON。模型原始回應（前300字）：{raw[:300]}")
 
