@@ -119,7 +119,7 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
                 ],
             }
         ],
-        max_tokens=4096,
+        max_tokens=8192,
     )
 
     finish_reason = response.choices[0].finish_reason
@@ -138,23 +138,35 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
     raw = _re.sub(r"\s*```$", "", raw)
     raw = raw.strip()
 
-    # 直接解析
+    import ast
+
+    # 策略 1：直接 JSON 解析
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # 用括號配對找第一個完整 JSON array（避免被尾端說明文字裡的 ] 誤導）
+    # 策略 2：ast.literal_eval（接受單/雙引號混用的 Python dict 格式）
+    try:
+        result = ast.literal_eval(raw)
+        if isinstance(result, list):
+            return result
+    except (ValueError, SyntaxError):
+        pass
+
+    # 策略 3：括號配對找第一個完整 array，再用 json / ast 解析
     start = raw.find("[")
     if start != -1:
-        depth, in_str, esc = 0, False, False
+        depth, in_str, quote_ch, esc = 0, False, '"', False
         for i, ch in enumerate(raw[start:], start):
             if esc:
                 esc = False; continue
             if ch == "\\" and in_str:
                 esc = True; continue
-            if ch == '"':
-                in_str = not in_str; continue
+            if not in_str and ch in ('"', "'"):
+                in_str, quote_ch = True, ch; continue
+            if in_str and ch == quote_ch:
+                in_str = False; continue
             if in_str:
                 continue
             if ch == "[":
@@ -162,10 +174,15 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
             elif ch == "]":
                 depth -= 1
                 if depth == 0:
-                    try:
-                        return json.loads(raw[start: i + 1])
-                    except json.JSONDecodeError:
-                        break
+                    candidate = raw[start: i + 1]
+                    for parser in (json.loads, ast.literal_eval):
+                        try:
+                            result = parser(candidate)
+                            if isinstance(result, list):
+                                return result
+                        except Exception:
+                            pass
+                    break
 
     raise RuntimeError(f"無法解析模型回傳的 JSON。模型原始回應（前300字）：{raw[:300]}")
 
