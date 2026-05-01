@@ -42,19 +42,33 @@ PROMPT_CHART2 = """讀取集團公司列表，提取每家公司資訊。
 
 
 def _encode_image(image_path: Path) -> tuple[str, str]:
-    """壓縮圖片至 1120px 以內，回傳 (base64, mime_type)。"""
+    """
+    智慧縮放圖片後回傳 (base64, mime_type)：
+    - 直式圖（高 > 2×寬）：以寬度為基準，限寬 900px，高度不壓縮
+      （適用手機截圖公司列表，避免寬度縮到幾百px讓文字無法辨識）
+    - 橫式/方形圖：最長邊限 1568px
+    """
     import io
     try:
         from PIL import Image
         img = Image.open(image_path)
         if img.mode in ("RGBA", "LA", "P"):
             img = img.convert("RGB")
-        max_px = 1120
-        if max(img.width, img.height) > max_px:
-            ratio = max_px / max(img.width, img.height)
-            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+        w, h = img.width, img.height
+        if h > w * 2:
+            # 直式圖：限寬 900px，保持高度（讓模型讀完整列表）
+            max_w = 900
+            if w > max_w:
+                ratio = max_w / w
+                img = img.resize((max_w, int(h * ratio)), Image.LANCZOS)
+        else:
+            # 橫式/方形圖：限最長邊 1568px
+            max_px = 1568
+            if max(w, h) > max_px:
+                ratio = max_px / max(w, h)
+                img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=88)
+        img.save(buf, format="JPEG", quality=85)
         buf.seek(0)
         return base64.b64encode(buf.read()).decode(), "image/jpeg"
     except ImportError:
