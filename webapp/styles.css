@@ -54,6 +54,31 @@ textarea {
   height: 100vh;
 }
 
+/* ── 分析狀態橫幅 ─────────────────────────────────────── */
+.analysis-banner {
+  margin: 0 0 16px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  border-left: 4px solid;
+}
+.banner-warn {
+  background: #fff8e6;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+.banner-info {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #1e40af;
+}
+.banner-ok {
+  background: #ecfdf5;
+  border-color: #10b981;
+  color: #065f46;
+}
+
 .brand {
   display: flex;
   gap: 14px;

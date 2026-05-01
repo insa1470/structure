@@ -138,6 +138,34 @@ function makeMetric(label, value, theme) {
   `;
 }
 
+function showAnalysisBanner(task) {
+  // 移除舊橫幅
+  document.getElementById("analysisBanner")?.remove();
+
+  const isDemo = !task.source_files?.chart1 || task.source_files?.chart1 === "demo_chart1.png";
+  const warning = task.analysis_warning;
+  const mode = task.analysis_mode || "unknown";
+
+  let msg = "", type = "";
+  if (isDemo) {
+    msg = "目前顯示的是示範資料，並非您上傳的圖片。";
+    type = "banner-info";
+  } else if (warning) {
+    msg = `⚠ AI 辨識未成功，目前顯示示範資料，非本次上傳內容。<br><small>${warning}</small>`;
+    type = "banner-warn";
+  } else if (mode === "qwen_vl") {
+    msg = `✓ AI 辨識完成（Qwen-VL），任務 ID：${task.id}`;
+    type = "banner-ok";
+  }
+
+  if (!msg) return;
+  const banner = document.createElement("div");
+  banner.id = "analysisBanner";
+  banner.className = `analysis-banner ${type}`;
+  banner.innerHTML = msg;
+  document.querySelector(".main")?.prepend(banner);
+}
+
 function hydrateTask(task) {
   state.taskId = task.id;
   state.taskName = task.name;
@@ -150,6 +178,7 @@ function hydrateTask(task) {
   state.selectedCandidateIndex = 0;
   state.started = true;
   updateTaskBadge();
+  showAnalysisBanner(task);
   renderOverview(task.summary || {});
   renderReviewList();
   renderReviewDetail();
