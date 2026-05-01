@@ -68,40 +68,41 @@ def _encode_image(image_path: Path) -> tuple[str, str]:
 
 
 def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
-    """呼叫 Qwen-VL API，回傳解析後的 JSON list。"""
-    try:
-        import dashscope
-        from dashscope import MultiModalConversation
-    except ImportError:
-        raise RuntimeError("請先安裝 dashscope：pip install dashscope")
+    """呼叫 Qwen-VL API（OpenAI 相容格式），回傳解析後的 JSON list。"""
+    import re as _re
 
     api_key = os.environ.get("DASHSCOPE_API_KEY", "")
     if not api_key:
         raise RuntimeError("請設定環境變數 DASHSCOPE_API_KEY")
 
-    dashscope.api_key = api_key
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError("請安裝 openai：pip install openai")
+
     b64, mime = _encode_image(image_path)
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"image": f"data:{mime};base64,{b64}"},
-                {"text": prompt},
-            ],
-        }
-    ]
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
 
-    response = MultiModalConversation.call(model=QWEN_MODEL, messages=messages)
+    response = client.chat.completions.create(
+        model=QWEN_MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
+    )
 
-    if response.status_code != 200:
-        raise RuntimeError(f"Qwen-VL API 錯誤：{response.code} {response.message}")
+    raw = response.choices[0].message.content.strip()
 
-    raw = response.output.choices[0].message.content[0]["text"].strip()
-
-    # 嘗試從回應中提取 JSON array（模型有時會夾雜說明文字）
-    import re as _re
-    # 先移除常見 markdown 包裝
+    # 移除 markdown 包裝
     raw = _re.sub(r"^```(?:json)?\s*", "", raw)
     raw = _re.sub(r"\s*```$", "", raw)
     raw = raw.strip()
@@ -113,7 +114,7 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
         pass
 
     # 找第一個完整 JSON array
-    match = _re.search(r"\[.*\]", raw, _re.DOTALL)
+    match = _re.search(r"\[.*?\]", raw, _re.DOTALL)
     if match:
         try:
             return json.loads(match.group())
