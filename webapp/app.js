@@ -645,35 +645,68 @@ function renderResults() {
     const isDraggable = !(query || filter !== "all"); // 搜尋/篩選模式不啟用拖曳
     if (isDraggable) {
       tr.draggable = true;
+
       tr.addEventListener("dragstart", (e) => {
         _dragNodeId = row.node_id;
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", row.node_id);
-        setTimeout(() => tr.classList.add("row-dragging"), 0);
+
+        // 自訂幽靈：小膠囊，不是整行
+        const ghost = document.createElement("div");
+        ghost.textContent = row.canonical_name || row.chart1_name || "";
+        ghost.style.cssText = "position:fixed;top:-200px;left:0;background:#4f46e5;color:#fff;padding:5px 14px;border-radius:99px;font-size:13px;font-weight:600;white-space:nowrap;";
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, 18);
+        setTimeout(() => { ghost.remove(); tr.classList.add("row-dragging"); }, 0);
       });
+
       tr.addEventListener("dragend", () => {
         tr.classList.remove("row-dragging");
         document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
+        document.getElementById("drag-tooltip")?.remove();
         _dragNodeId = null;
       });
+
       tr.addEventListener("dragover", (e) => {
         if (!_dragNodeId || _dragNodeId === row.node_id) return;
-        if (isAncestor(_dragNodeId, row.node_id)) return; // 防止循環
+        if (isAncestor(_dragNodeId, row.node_id)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
+
+        // 高亮目標行
         document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
         tr.classList.add("drag-target");
+
+        // 跟隨滑鼠的提示浮層
+        let tip = document.getElementById("drag-tooltip");
+        if (!tip) {
+          tip = document.createElement("div");
+          tip.id = "drag-tooltip";
+          document.body.appendChild(tip);
+        }
+        const targetName = row.canonical_name || row.chart1_name || "";
+        tip.textContent = `↳ 放入「${targetName}」底下`;
+        tip.style.left = e.clientX + "px";
+        tip.style.top  = e.clientY + "px";
       });
+
       tr.addEventListener("dragleave", (e) => {
-        if (!tr.contains(e.relatedTarget)) tr.classList.remove("drag-target");
+        if (!tr.contains(e.relatedTarget)) {
+          tr.classList.remove("drag-target");
+        }
       });
+
       tr.addEventListener("drop", async (e) => {
         e.preventDefault();
         tr.classList.remove("drag-target");
+        document.getElementById("drag-tooltip")?.remove();
         const draggedId = e.dataTransfer.getData("text/plain");
         if (!draggedId || draggedId === row.node_id) return;
         if (isAncestor(draggedId, row.node_id)) return;
         await reparentNode(draggedId, row.node_id);
+        // drop 後捲動到被移動的行
+        const movedTr = document.querySelector(`tr[data-node-id="${draggedId}"]`);
+        movedTr?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     }
 
