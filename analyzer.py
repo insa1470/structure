@@ -134,8 +134,8 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
     except json.JSONDecodeError:
         pass
 
-    # 找第一個完整 JSON array
-    match = _re.search(r"\[.*?\]", raw, _re.DOTALL)
+    # 找完整 JSON array（貪婪模式，從第一個 [ 到最後一個 ]）
+    match = _re.search(r"\[.*\]", raw, _re.DOTALL)
     if match:
         try:
             return json.loads(match.group())
