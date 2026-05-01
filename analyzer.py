@@ -213,8 +213,13 @@ def _call_api_once(b64: str, mime: str, prompt: str) -> tuple[list[dict], bool]:
         "[" in stripped and not stripped.endswith("]") and not stripped.endswith("}")
     )
     if looks_truncated:
-        print(f"[Qwen] 偵測到截斷（finish_reason={finish_reason}，末尾={stripped[-20:]!r}）", file=sys.stderr)
-        return [], True
+        print(f"[Qwen] 截斷（finish_reason={finish_reason}，末尾={stripped[-20:]!r}），嘗試部分回收", file=sys.stderr)
+        try:
+            partial = _parse_json_response(raw)
+            print(f"[Qwen] 部分回收成功：{len(partial)} 個物件", file=sys.stderr)
+            return partial, True   # 回傳部分資料 + 截斷旗標
+        except Exception:
+            return [], True        # 完全無法回收才回空
 
     return _parse_json_response(raw), False
 
@@ -231,41 +236,44 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
     if not truncated:
         return items
 
-    # ── 輸出截斷：分割圖片重試 ────────────────────────────────────────────────
-    print("[Qwen] 輸出截斷，自動分割圖片為上下兩半重試", file=sys.stderr)
+    # ── 輸出截斷：分割成 4 塊重試 ────────────────────────────────────────────
+    print("[Qwen] 輸出截斷，自動分割圖片為 4 塊重試", file=sys.stderr)
 
     try:
         from PIL import Image
     except ImportError:
-        raise RuntimeError("圖片公司數量過多，輸出超過 token 上限；請安裝 Pillow 以啟用自動分割：pip install Pillow")
+        raise RuntimeError("圖片公司數量過多，請安裝 Pillow 以啟用自動分割：pip install Pillow")
 
     img = Image.open(image_path)
     w, h = img.width, img.height
-    overlap = int(max(w, h) * 0.08)  # 8% 重疊，避免邊緣漏掉
+    ov = int(max(w, h) * 0.05)  # 5% 重疊
 
-    if h >= w:  # 直圖：切上下
-        mid = h // 2
-        halves = [
-            img.crop((0, 0, w, mid + overlap)),
-            img.crop((0, mid - overlap, w, h)),
+    if h >= w:  # 直圖：切 4 橫條
+        q = h // 4
+        crops = [
+            img.crop((0, 0,          w, q + ov)),
+            img.crop((0, q - ov,     w, 2*q + ov)),
+            img.crop((0, 2*q - ov,   w, 3*q + ov)),
+            img.crop((0, 3*q - ov,   w, h)),
         ]
-    else:  # 橫圖：切左右
-        mid = w // 2
-        halves = [
-            img.crop((0, 0, mid + overlap, h)),
-            img.crop((mid - overlap, 0, w, h)),
+    else:  # 橫圖：切 4 直條
+        q = w // 4
+        crops = [
+            img.crop((0,         0, q + ov,   h)),
+            img.crop((q - ov,    0, 2*q + ov, h)),
+            img.crop((2*q - ov,  0, 3*q + ov, h)),
+            img.crop((3*q - ov,  0, w,        h)),
         ]
 
     combined: list[dict] = []
     seen_names: set[str] = set()
 
-    for idx, half in enumerate(halves):
-        hb64, hmime = _pil_to_b64(half)
-        half_items, half_truncated = _call_api_once(hb64, hmime, prompt)
-        if half_truncated:
-            print(f"[Qwen] 分割後第{idx+1}半仍截斷，部分資料可能遺漏", file=sys.stderr)
-        for item in half_items:
-            # 短 key 或長 key 都試
+    for idx, crop in enumerate(crops):
+        cb64, cmime = _pil_to_b64(crop)
+        crop_items, crop_truncated = _call_api_once(cb64, cmime, prompt)
+        if crop_truncated:
+            print(f"[Qwen] 第{idx+1}塊仍截斷，已回收部分資料", file=sys.stderr)
+        for item in crop_items:
             name = item.get("company") or item.get("c") or ""
             if name and name not in seen_names:
                 seen_names.add(name)
