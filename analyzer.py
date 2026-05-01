@@ -22,45 +22,26 @@ QWEN_MODEL = "qwen2.5-vl-32b-instruct"
 
 LEVEL_LABELS = {0: "頂層主體", 1: "一級子公司", 2: "二級子公司", 3: "三級子公司"}
 
-PROMPT_CHART1 = """請仔細閱讀這張股權結構圖，識別圖中所有方框內的公司名稱和連線上的持股比例。
+PROMPT_CHART1 = """讀取股權結構圖，識別所有方框內的公司名稱和連線上的持股比例。
 
-重要規則：
-- 只能輸出圖片中實際可見的文字，禁止猜測或補充任何未出現的公司名稱
-- 如果某段文字看不清楚，請將 uncertain 設為 true，但仍嘗試讀出可見部分
-- level 從 0 開始：頂層主體為 0，一級子公司為 1，依此類推
-- parent 填上層公司的完整名稱，頂層公司填 null
+規則：
+- 只輸出圖片中實際可見的文字，禁止猜測
+- level：頂層主體=0，一級子公司=1，依此類推
+- parent：填上層公司全名，頂層填null
+- ratio：填持股比例如"51.2%"，無則填null
 
-只輸出以下格式的 JSON array，不要任何說明文字或 markdown：
-[
-  {
-    "company": "公司全名（完整抄寫圖中文字）",
-    "parent": "上層公司全名或 null",
-    "shareholding_ratio": "51.2% 或 null",
-    "level": 0,
-    "uncertain": false
-  }
-]"""
+只輸出JSON array，不要說明文字或markdown：
+[{"c":"公司全名","p":"上層公司全名或null","r":"51.2%或null","l":0}]"""
 
-PROMPT_CHART2 = """請仔細閱讀這張集團公司列表或概覽圖，提取每家公司的基本資訊。
+PROMPT_CHART2 = """讀取集團公司列表，提取每家公司資訊。
 
-重要規則：
-- 只能輸出圖片中實際可見的文字，禁止猜測或補充任何未出現的資訊
-- 公司名稱必須完整抄寫，不得縮寫或更改
-- 看不清楚的欄位填 null，不要猜測
+規則：
+- 只輸出圖片中實際可見的文字，禁止猜測
+- 公司名稱完整抄寫，不得縮寫
+- 看不清楚填null
 
-只輸出以下格式的 JSON array，不要任何說明文字或 markdown：
-[
-  {
-    "company": "公司全名",
-    "legal_representative": "法人代表姓名或 null",
-    "registered_capital": "如 1000萬元，或 null",
-    "established_date": "如 2015-03-01，或 null",
-    "company_status": "如 存續，或 null",
-    "subsidiary_level_label": "如 一級子公司，或 null",
-    "actual_controller_share": "如 51.2%，或 null",
-    "uncertain": false
-  }
-]"""
+只輸出JSON array，不要說明文字或markdown：
+[{"c":"公司全名","lr":"法人代表或null","rc":"註冊資本如1000萬元或null","ed":"成立日期如2015-03-01或null","cs":"狀態如存續或null","sl":"如一級子公司或null","ac":"如51.2%或null"}]"""
 
 
 def _encode_image(image_path: Path) -> tuple[str, str]:
@@ -119,7 +100,7 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
                 ],
             }
         ],
-        max_tokens=8192,
+        max_tokens=16384,
     )
 
     finish_reason = response.choices[0].finish_reason
@@ -202,12 +183,37 @@ def _find_best_match(name: str, candidates: list[dict], threshold: float = 0.85)
 
 def analyze_chart1(image_path: Path) -> list[dict]:
     """解析圖一（股權結構圖），回傳節點與關係清單。"""
-    return _call_qwen_vl(image_path, PROMPT_CHART1)
+    raw = _call_qwen_vl(image_path, PROMPT_CHART1)
+    # 正規化短 key → 長 key（相容舊格式與新精簡格式）
+    result = []
+    for item in raw:
+        result.append({
+            "company": item.get("company") or item.get("c") or "",
+            "parent": item.get("parent") or item.get("p") or None,
+            "shareholding_ratio": item.get("shareholding_ratio") or item.get("r") or None,
+            "level": item.get("level") if item.get("level") is not None else (item.get("l") or 0),
+            "uncertain": item.get("uncertain", False),
+        })
+    return result
 
 
 def analyze_chart2(image_path: Path) -> list[dict]:
     """解析圖二（集團概覽），回傳公司屬性清單。"""
-    return _call_qwen_vl(image_path, PROMPT_CHART2)
+    raw = _call_qwen_vl(image_path, PROMPT_CHART2)
+    # 正規化短 key → 長 key（相容舊格式與新精簡格式）
+    result = []
+    for item in raw:
+        result.append({
+            "company": item.get("company") or item.get("c") or "",
+            "legal_representative": item.get("legal_representative") or item.get("lr") or None,
+            "registered_capital": item.get("registered_capital") or item.get("rc") or None,
+            "established_date": item.get("established_date") or item.get("ed") or None,
+            "company_status": item.get("company_status") or item.get("cs") or None,
+            "subsidiary_level_label": item.get("subsidiary_level_label") or item.get("sl") or None,
+            "actual_controller_share": item.get("actual_controller_share") or item.get("ac") or None,
+            "uncertain": item.get("uncertain", False),
+        })
+    return result
 
 
 def merge_charts(
