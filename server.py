@@ -163,6 +163,7 @@ def get_task(task_id: str):
 @app.route("/api/tasks/analyze", methods=["POST"])
 def analyze():
     import shutil
+    import threading
 
     chart1 = request.files.get("chart1")
     chart2 = request.files.get("chart2")
@@ -174,27 +175,56 @@ def analyze():
 
     task_name = request.form.get("task_name", "").strip()
 
-    # 儲存上傳圖片
-    tmp_id = uuid.uuid4().hex[:12]
-    upload_dir = DATA_DIR / tmp_id / "uploads"
+    # 儲存上傳圖片，立刻建立 processing 狀態的任務
+    task_id = uuid.uuid4().hex[:12]
+    upload_dir = DATA_DIR / task_id / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
     c1_path = upload_dir / f"chart1_{sanitize_filename(chart1.filename or 'upload.png')}"
     c2_path = upload_dir / f"chart2_{sanitize_filename(chart2.filename or 'upload.jpg')}"
     chart1.save(str(c1_path))
     chart2.save(str(c2_path))
 
-    # Qwen-VL 分析（失敗直接回傳錯誤，不 fallback）
-    try:
-        from analyzer import run_analysis
-        analysis = run_analysis(c1_path, c2_path)
-        task = build_task_from_analysis(task_name, chart1.filename or "", chart2.filename or "", analysis)
-    except Exception as exc:
-        shutil.rmtree(DATA_DIR / tmp_id, ignore_errors=True)
-        return jsonify({"error": "analysis_failed", "message": f"AI 辨識失敗，請重新上傳或確認圖片是否清晰：{exc}"}), 500
+    c1_name = chart1.filename or ""
+    c2_name = chart2.filename or ""
 
-    (DATA_DIR / tmp_id).rename(DATA_DIR / task["id"])
+    task: dict = {
+        "id": task_id,
+        "name": task_name or f"任務-{task_id}",
+        "status": "processing",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "analysis_mode": "qwen_vl",
+        "source_files": {"chart1": c1_name, "chart2": c2_name},
+        "summary": {},
+        "master_rows": [],
+        "review_rows": [],
+        "candidate_rows": [],
+        "review_decisions": {},
+        "candidate_decisions": {},
+        "graph": {},
+        "error": "",
+    }
     save_task(task)
-    return jsonify(task), 201
+
+    # 背景執行 Qwen-VL 分析
+    def run_async():
+        try:
+            from analyzer import run_analysis
+            analysis = run_analysis(c1_path, c2_path)
+            built = build_task_from_analysis(task_name, c1_name, c2_name, analysis)
+            task.update(built)
+            task["status"] = "ready"
+            task["error"] = ""
+        except Exception as exc:
+            task["status"] = "error"
+            task["error"] = str(exc)
+        finally:
+            save_task(task)
+
+    threading.Thread(target=run_async, daemon=True).start()
+
+    # 立刻回傳 202，前端輪詢 /api/tasks/<task_id>
+    return jsonify({"id": task_id, "status": "processing"}), 202
 
 
 @app.route("/api/review-decision", methods=["POST"])

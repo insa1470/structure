@@ -659,12 +659,38 @@ function renderResults() {
   });
 }
 
-async function createTaskFromUpload() {
+async function pollTask(taskId, onTick) {
+  const MAX_MS = 12 * 60 * 1000; // 12 分鐘上限
+  const INTERVAL = 4000;          // 每 4 秒查一次
+  const start = Date.now();
+  let tick = 0;
+  while (Date.now() - start < MAX_MS) {
+    await new Promise((r) => setTimeout(r, INTERVAL));
+    tick++;
+    if (onTick) onTick(tick);
+    const task = await apiGet(`/api/tasks/${taskId}`);
+    if (task.status === "ready") return task;
+    if (task.status === "error") throw new Error(task.error || "AI 辨識失敗，請重試");
+    // status === "processing" → 繼續等
+  }
+  throw new Error("分析逾時（超過 12 分鐘），請重試或裁切圖片後再上傳");
+}
+
+async function createTaskFromUpload(onStatus) {
   const formData = new FormData();
   formData.append("task_name", elements.taskNameInput.value.trim() || "未命名任務");
   formData.append("chart1", state.chart1File);
   formData.append("chart2", state.chart2File);
-  const task = await apiPost("/api/tasks/analyze", formData, true);
+
+  if (onStatus) onStatus("上傳中…");
+  const initTask = await apiPost("/api/tasks/analyze", formData, true);
+
+  if (onStatus) onStatus("AI 辨識中，請稍候…");
+  const elapsed = (tick) => {
+    const secs = tick * 4;
+    if (onStatus) onStatus(`AI 辨識中… 已等候 ${secs} 秒`);
+  };
+  const task = await pollTask(initTask.id, elapsed);
   hydrateTask(task);
   setView("overview");
 }
@@ -1037,16 +1063,15 @@ function bindEvents() {
   });
   elements.startAnalysisBtn.addEventListener("click", async () => {
     const originalText = elements.startAnalysisBtn.textContent;
-    // 清除舊錯誤
     document.getElementById("uploadError")?.remove();
     try {
       state.loading = true;
       enableStartIfReady();
-      elements.startAnalysisBtn.textContent = "分析中，請稍候…";
-      await createTaskFromUpload();
+      await createTaskFromUpload((statusMsg) => {
+        elements.startAnalysisBtn.textContent = statusMsg;
+      });
     } catch (error) {
       console.error(error);
-      // 在上傳頁顯示錯誤，不跳 alert、不跳頁
       const errDiv = document.createElement("div");
       errDiv.id = "uploadError";
       errDiv.className = "upload-error-msg";
