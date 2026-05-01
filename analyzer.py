@@ -128,6 +128,7 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
         pass
 
     # 策略 3：括號配對提取第一個完整 array
+    candidate = None
     start = raw.find("[")
     if start != -1:
         depth, in_str, quote_ch, esc = 0, False, '"', False
@@ -156,6 +157,43 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
                         except Exception:
                             pass
                     break
+
+    # 策略 4：補上遺漏的引號（模型有時對字串值省略引號）再重試
+    import re as _re2
+
+    def _repair_unquoted(text: str) -> str:
+        fixed = []
+        for line in text.split("\n"):
+            m = _re2.match(r'^(\s*"[^"]+"\s*:\s*)(.+?)(\s*,?\s*)$', line)
+            if m:
+                prefix, value = m.group(1), m.group(2).rstrip("，,").strip()
+                # 已是合法 JSON 值則不動
+                if (value.startswith('"') or value.startswith("[") or value.startswith("{")
+                        or value in ("null", "true", "false")):
+                    fixed.append(line)
+                    continue
+                # 純數字則不動
+                try:
+                    float(value); fixed.append(line); continue
+                except ValueError:
+                    pass
+                # 補引號，保留行尾逗號
+                trailing = "," if (line.rstrip().endswith(",") or "，" in line) else ""
+                fixed.append(f'{prefix}"{value}"{trailing}')
+            else:
+                fixed.append(line)
+        return "\n".join(fixed)
+
+    target = candidate if candidate is not None else raw
+    repaired = _repair_unquoted(target)
+    if repaired != target:
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                result = parser(repaired)
+                if isinstance(result, list):
+                    return result
+            except Exception:
+                pass
 
     raise RuntimeError(f"無法解析模型回傳的 JSON。原始回應（前500字）：{raw[:500]}")
 
