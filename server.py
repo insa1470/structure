@@ -211,9 +211,14 @@ def analyze():
         try:
             from analyzer import run_analysis
             analysis = run_analysis(c1_path, c2_path)
-            built = build_task_from_analysis(task_name, c1_name, c2_name, analysis)
-            task.update(built)
+            # 直接更新欄位，不覆蓋 task_id
             task["status"] = "ready"
+            task["analysis_mode"] = "qwen_vl"
+            task["summary"] = analysis["summary"]
+            task["master_rows"] = analysis["master_rows"]
+            task["review_rows"] = analysis["review_rows"]
+            task["candidate_rows"] = analysis["candidate_rows"]
+            task["graph"] = analysis["graph"]
             task["error"] = ""
         except Exception as exc:
             task["status"] = "error"
