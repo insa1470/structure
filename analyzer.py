@@ -122,12 +122,16 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
         max_tokens=4096,
     )
 
-    # 檢查是否因 token 上限被截斷
     finish_reason = response.choices[0].finish_reason
-    if finish_reason == "length":
-        raise RuntimeError("模型輸出被截斷（token 上限），圖片公司數量可能過多，請裁切後重試")
-
     raw = response.choices[0].message.content.strip()
+
+    # 完整記錄到 stderr 方便 Railway log 查看
+    import sys
+    print(f"[Qwen] finish_reason={finish_reason} raw_len={len(raw)}", file=sys.stderr)
+    print(f"[Qwen] raw={raw}", file=sys.stderr)
+
+    if finish_reason == "length":
+        raise RuntimeError(f"模型輸出被截斷（token 上限），raw_len={len(raw)}，請裁切圖片後重試")
 
     # 移除 markdown 包裝
     raw = _re.sub(r"^```(?:json)?\s*", "", raw)
