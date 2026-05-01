@@ -98,8 +98,29 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
         raise RuntimeError(f"Qwen-VL API 錯誤：{response.code} {response.message}")
 
     raw = response.output.choices[0].message.content[0]["text"].strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(raw)
+
+    # 嘗試從回應中提取 JSON array（模型有時會夾雜說明文字）
+    import re as _re
+    # 先移除常見 markdown 包裝
+    raw = _re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = _re.sub(r"\s*```$", "", raw)
+    raw = raw.strip()
+
+    # 直接解析
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # 找第一個完整 JSON array
+    match = _re.search(r"\[.*\]", raw, _re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    raise RuntimeError(f"無法解析模型回傳的 JSON（前200字）：{raw[:200]}")
 
 
 def _fuzzy_match(name_a: str, name_b: str) -> float:
