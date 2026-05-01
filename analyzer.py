@@ -18,7 +18,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 
-QWEN_MODEL = "qwen-vl-max"
+QWEN_MODEL = "qwen2.5-vl-7b-instruct"
 
 LEVEL_LABELS = {0: "頂層主體", 1: "一級子公司", 2: "二級子公司", 3: "三級子公司"}
 
