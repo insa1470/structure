@@ -73,7 +73,7 @@ def _encode_image(image_path: Path) -> tuple[str, str]:
 
 
 def _parse_json_response(raw: str) -> list[dict]:
-    """三段式解析模型輸出，支援標準 JSON、Python 單引號格式、帶前後綴文字。"""
+    """四段式解析模型輸出：標準JSON → Python單引號 → 括號配對 → 部分回收。"""
     import re as _re
     import ast
 
@@ -127,6 +127,43 @@ def _parse_json_response(raw: str) -> list[dict]:
                             pass
                     break
 
+    # 策略 4：部分回收——逐一提取完整的 {} 物件（應對截斷的 JSON array）
+    import ast as _ast
+    objects: list[dict] = []
+    depth, in_str, quote_ch, esc, obj_start = 0, False, '"', False, None
+    for i, ch in enumerate(raw):
+        if esc:
+            esc = False; continue
+        if ch == "\\" and in_str:
+            esc = True; continue
+        if not in_str and ch in ('"', "'"):
+            in_str, quote_ch = True, ch; continue
+        if in_str and ch == quote_ch:
+            in_str = False; continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and obj_start is not None:
+                candidate = raw[obj_start: i + 1]
+                for parser in (json.loads, _ast.literal_eval):
+                    try:
+                        obj = parser(candidate)
+                        if isinstance(obj, dict):
+                            objects.append(obj)
+                            break
+                    except Exception:
+                        pass
+                obj_start = None
+    if objects:
+        import sys
+        print(f"[Qwen] 策略4部分回收：成功提取 {len(objects)} 個物件", file=sys.stderr)
+        return objects
+
     raise RuntimeError(f"無法解析模型回傳的 JSON。模型原始回應（前300字）：{raw[:300]}")
 
 
@@ -170,7 +207,13 @@ def _call_api_once(b64: str, mime: str, prompt: str) -> tuple[list[dict], bool]:
     print(f"[Qwen] finish_reason={finish_reason} raw_len={len(raw)}", file=sys.stderr)
     print(f"[Qwen] raw={raw[:800]}", file=sys.stderr)
 
-    if finish_reason == "length":
+    # 截斷偵測：finish_reason=="length" 或 JSON 明顯沒有閉合的 ]
+    stripped = raw.strip().rstrip("`").rstrip()
+    looks_truncated = finish_reason == "length" or (
+        "[" in stripped and not stripped.endswith("]") and not stripped.endswith("}")
+    )
+    if looks_truncated:
+        print(f"[Qwen] 偵測到截斷（finish_reason={finish_reason}，末尾={stripped[-20:]!r}）", file=sys.stderr)
         return [], True
 
     return _parse_json_response(raw), False
