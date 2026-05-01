@@ -972,15 +972,18 @@ function bindEvents() {
     state.taskName = event.target.value.trim();
   });
   elements.startAnalysisBtn.addEventListener("click", async () => {
+    const originalText = elements.startAnalysisBtn.textContent;
     try {
       state.loading = true;
       enableStartIfReady();
+      elements.startAnalysisBtn.textContent = "分析中，請稍候…";
       await createTaskFromUpload();
     } catch (error) {
       console.error(error);
-      alert("目前分析服務無法完成任務建立。");
+      alert("目前分析服務無法完成任務建立，請稍後再試。");
     } finally {
       state.loading = false;
+      elements.startAnalysisBtn.textContent = originalText;
       enableStartIfReady();
     }
   });
@@ -1002,3 +1005,7 @@ function bindEvents() {
 
 bindEvents();
 updateTaskBadge();
+
+// 頁面載入時靜默 ping 後端，提前喚醒 Railway（冷啟動可能需 10–30 秒）
+fetch(API_BASE + "/api/health").catch(() => {});
+
