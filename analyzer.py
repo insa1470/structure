@@ -22,49 +22,70 @@ QWEN_MODEL = "qwen2.5-vl-32b-instruct"
 
 LEVEL_LABELS = {0: "頂層主體", 1: "一級子公司", 2: "二級子公司", 3: "三級子公司"}
 
-PROMPT_CHART1 = """這是一張企查查股權結構圖。
-請識別所有公司節點和持股關係，輸出以下 JSON 格式（只輸出 JSON，不要其他說明文字）：
+PROMPT_CHART1 = """請仔細閱讀這張股權結構圖，識別圖中所有方框內的公司名稱和連線上的持股比例。
 
+重要規則：
+- 只能輸出圖片中實際可見的文字，禁止猜測或補充任何未出現的公司名稱
+- 如果某段文字看不清楚，請將 uncertain 設為 true，但仍嘗試讀出可見部分
+- level 從 0 開始：頂層主體為 0，一級子公司為 1，依此類推
+- parent 填上層公司的完整名稱，頂層公司填 null
+
+只輸出以下格式的 JSON array，不要任何說明文字或 markdown：
 [
   {
-    "company": "子公司名稱",
-    "parent": "上層公司名稱（頂層公司則填 null）",
-    "shareholding_ratio": "51.2%（若無則填 null）",
+    "company": "公司全名（完整抄寫圖中文字）",
+    "parent": "上層公司全名或 null",
+    "shareholding_ratio": "51.2% 或 null",
     "level": 0,
     "uncertain": false
   }
-]
+]"""
 
-說明：
-- level 從 0 開始，頂層主體為 0，一級子公司為 1，依此類推
-- 若某個連線關係不確定（線條模糊、方向不明），請將 uncertain 設為 true
-- 只輸出 JSON array，不要 markdown 代碼塊"""
+PROMPT_CHART2 = """請仔細閱讀這張集團公司列表或概覽圖，提取每家公司的基本資訊。
 
-PROMPT_CHART2 = """這是一張企查查集團公司概覽圖或表格。
-請提取每家公司的基本資訊，輸出以下 JSON 格式（只輸出 JSON，不要其他說明文字）：
+重要規則：
+- 只能輸出圖片中實際可見的文字，禁止猜測或補充任何未出現的資訊
+- 公司名稱必須完整抄寫，不得縮寫或更改
+- 看不清楚的欄位填 null，不要猜測
 
+只輸出以下格式的 JSON array，不要任何說明文字或 markdown：
 [
   {
-    "company": "公司名稱",
-    "legal_representative": "法人代表（若無填 null）",
-    "registered_capital": "1000萬元（若無填 null）",
-    "established_date": "2015-03-01（若無填 null）",
-    "company_status": "存續（若無填 null）",
-    "subsidiary_level_label": "一級子公司（若無填 null）",
-    "actual_controller_share": "51.2%（若無填 null）",
+    "company": "公司全名",
+    "legal_representative": "法人代表姓名或 null",
+    "registered_capital": "如 1000萬元，或 null",
+    "established_date": "如 2015-03-01，或 null",
+    "company_status": "如 存續，或 null",
+    "subsidiary_level_label": "如 一級子公司，或 null",
+    "actual_controller_share": "如 51.2%，或 null",
     "uncertain": false
   }
-]
-
-只輸出 JSON array，不要 markdown 代碼塊"""
+]"""
 
 
 def _encode_image(image_path: Path) -> tuple[str, str]:
-    """回傳 (base64_data, mime_type)。"""
-    suffix = image_path.suffix.lstrip(".").lower()
-    mime = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
-    with image_path.open("rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8"), mime
+    """壓縮圖片至合適大小，回傳 (base64_data, mime_type)。"""
+    import io
+    try:
+        from PIL import Image
+        img = Image.open(image_path)
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGB")
+        # Qwen-VL 推薦最大 1120px
+        max_px = 1120
+        if max(img.width, img.height) > max_px:
+            ratio = max_px / max(img.width, img.height)
+            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88)
+        buf.seek(0)
+        return base64.b64encode(buf.read()).decode(), "image/jpeg"
+    except ImportError:
+        # Pillow 未安裝時直接讀原檔
+        suffix = image_path.suffix.lstrip(".").lower()
+        mime = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
+        with image_path.open("rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8"), mime
 
 
 def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
@@ -121,7 +142,7 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
         except json.JSONDecodeError:
             pass
 
-    raise RuntimeError(f"無法解析模型回傳的 JSON（前200字）：{raw[:200]}")
+    raise RuntimeError(f"無法解析模型回傳的 JSON。模型原始回應（前300字）：{raw[:300]}")
 
 
 def _fuzzy_match(name_a: str, name_b: str) -> float:
