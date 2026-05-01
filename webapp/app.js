@@ -682,11 +682,15 @@ function exportWorkbook() {
 // 股權架構圖
 // ══════════════════════════════════════════════════════════════
 
-const LEVEL_COLORS = ["#1e3a5f", "#1d4ed8", "#4338ca", "#7c3aed", "#9333ea", "#c026d3"];
+const LEVEL_COLORS = ["#1e3a5f", "#1d4ed8", "#0891b2", "#0d9488", "#059669", "#d97706"];
 const LEVEL_NAMES  = ["頂層主體", "一級子公司", "二級子公司", "三級子公司", "四級子公司", "五級以上"];
 let _chart = null;
 
-function wrapName(name, maxLen = 10) {
+// 節點尺寸
+const NODE_W = 220;
+const NODE_H = 110;
+
+function wrapName(name, maxLen = 12) {
   if (!name || name.length <= maxLen) return name || "";
   const lines = [];
   for (let i = 0; i < name.length; i += maxLen) lines.push(name.slice(i, i + maxLen));
@@ -711,11 +715,17 @@ function buildEChartsTree(rows) {
     const level = Number(r.chart1_level) || 0;
     const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
 
-    const nameLine = wrapName(r.canonical_name || r.chart1_name || "—");
+    // 公司名稱（最多兩行）
+    const nameLine = wrapName(r.canonical_name || r.chart1_name || "—", 12);
+    // 法代＋資本額同一行，成立日期另一行
+    const repCap = [
+      r.legal_representative ? `法代：${r.legal_representative}` : "",
+      r.registered_capital   ? `資本：${formatCapital(r.registered_capital)}` : "",
+    ].filter(Boolean).join("  ");
+
     const labelParts = [`{name|${uncertain ? "⚠ " : ""}${nameLine}}`];
-    if (r.legal_representative) labelParts.push(`{info|法代：${r.legal_representative}}`);
-    if (r.registered_capital)   labelParts.push(`{info|資本：${formatCapital(r.registered_capital)}}`);
-    if (r.established_date)     labelParts.push(`{info|成立：${r.established_date}}`);
+    if (repCap)            labelParts.push(`{info|${repCap}}`);
+    if (r.established_date) labelParts.push(`{info|成立：${r.established_date}}`);
 
     return {
       name: id,
@@ -723,16 +733,26 @@ function buildEChartsTree(rows) {
       label: { formatter: labelParts.join("\n") },
       itemStyle: {
         color,
-        borderColor:  uncertain ? "#f59e0b" : color,
-        borderWidth:  uncertain ? 2.5 : 0,
+        borderColor:  uncertain ? "#fbbf24" : "rgba(255,255,255,0.25)",
+        borderWidth:  uncertain ? 3 : 1,
         borderType:   uncertain ? "dashed" : "solid",
-        shadowColor:  "rgba(0,0,0,0.15)",
-        shadowBlur:   6,
+        shadowColor:  "rgba(0,0,0,0.22)",
+        shadowBlur:   10,
+        shadowOffsetY: 3,
       },
       // 持股比例顯示在連線上
-      edgeLabel: r.actual_controller_share
-        ? { show: true, formatter: r.actual_controller_share, fontSize: 11, color: "#475569", backgroundColor: "#f1f5f9", padding: [2, 4], borderRadius: 3 }
-        : undefined,
+      edgeLabel: r.actual_controller_share ? {
+        show: true,
+        formatter: r.actual_controller_share,
+        fontSize: 12,
+        fontWeight: "bold",
+        color: "#1e293b",
+        backgroundColor: "#ffffff",
+        padding: [3, 7],
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: "#cbd5e1",
+      } : undefined,
       children: r._children.map(toNode).filter(Boolean),
     };
   }
@@ -844,22 +864,22 @@ function renderEChart() {
     series: [{
       type: "tree", orient: "TB",
       data: [treeData],
-      top: "4%", bottom: "4%", left: "8%", right: "8%",
-      symbol: "rect", symbolSize: [185, 90],
+      top: "5%", bottom: "5%", left: "6%", right: "6%",
+      symbol: "rect", symbolSize: [NODE_W, NODE_H],
       edgeShape: "polyline", layout: "orthogonal",
       roam: true, initialTreeDepth: -1,
       label: {
         show: true, position: "inside",
         verticalAlign: "middle", align: "center",
         rich: {
-          name: { fontSize: 12, fontWeight: "bold", color: "#fff", lineHeight: 20 },
-          info: { fontSize: 10, color: "rgba(255,255,255,0.88)", lineHeight: 16 },
+          name: { fontSize: 13, fontWeight: "bold", color: "#fff", lineHeight: 22, align: "center" },
+          info: { fontSize: 10.5, color: "rgba(255,255,255,0.92)", lineHeight: 18, align: "center" },
         },
       },
       leaves: { label: { position: "inside", verticalAlign: "middle", align: "center" } },
       lineStyle: { color: "#94a3b8", width: 1.5, curveness: 0 },
       emphasis: { focus: "descendant" },
-      animationDurationUpdate: 600,
+      animationDurationUpdate: 500,
     }],
   };
 
