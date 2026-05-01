@@ -162,10 +162,15 @@ def get_task(task_id: str):
 
 @app.route("/api/tasks/analyze", methods=["POST"])
 def analyze():
+    import shutil
+
     chart1 = request.files.get("chart1")
     chart2 = request.files.get("chart2")
     if not chart1 or not chart2:
-        return jsonify({"error": "chart1_and_chart2_required"}), 400
+        return jsonify({"error": "chart1_and_chart2_required", "message": "請同時上傳圖一和圖二。"}), 400
+
+    if not os.environ.get("DASHSCOPE_API_KEY", "").strip():
+        return jsonify({"error": "no_api_key", "message": "伺服器尚未設定 AI 辨識 API Key，無法分析。請聯絡管理員。"}), 422
 
     task_name = request.form.get("task_name", "").strip()
 
@@ -173,27 +178,20 @@ def analyze():
     tmp_id = uuid.uuid4().hex[:12]
     upload_dir = DATA_DIR / tmp_id / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
-
     c1_path = upload_dir / f"chart1_{sanitize_filename(chart1.filename or 'upload.png')}"
     c2_path = upload_dir / f"chart2_{sanitize_filename(chart2.filename or 'upload.jpg')}"
     chart1.save(str(c1_path))
     chart2.save(str(c2_path))
 
-    # Qwen-VL 或 fallback
-    use_qwen = bool(os.environ.get("DASHSCOPE_API_KEY", "").strip())
-    if use_qwen:
-        try:
-            from analyzer import run_analysis
-            analysis = run_analysis(c1_path, c2_path)
-            task = build_task_from_analysis(task_name, chart1.filename or "", chart2.filename or "", analysis)
-        except Exception as exc:
-            task = build_task(task_name, chart1.filename or "", chart2.filename or "")
-            task["analysis_warning"] = f"Qwen-VL 分析失敗，已 fallback 示範資料：{exc}"
-    else:
-        task = build_task(task_name, chart1.filename or "", chart2.filename or "")
-        task["analysis_warning"] = "未設定 DASHSCOPE_API_KEY，目前使用示範資料。"
+    # Qwen-VL 分析（失敗直接回傳錯誤，不 fallback）
+    try:
+        from analyzer import run_analysis
+        analysis = run_analysis(c1_path, c2_path)
+        task = build_task_from_analysis(task_name, chart1.filename or "", chart2.filename or "", analysis)
+    except Exception as exc:
+        shutil.rmtree(DATA_DIR / tmp_id, ignore_errors=True)
+        return jsonify({"error": "analysis_failed", "message": f"AI 辨識失敗，請重新上傳或確認圖片是否清晰：{exc}"}), 500
 
-    # 重命名暫存資料夾
     (DATA_DIR / tmp_id).rename(DATA_DIR / task["id"])
     save_task(task)
     return jsonify(task), 201

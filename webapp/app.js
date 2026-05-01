@@ -72,7 +72,10 @@ async function apiPost(url, body, isForm = false) {
     headers: isForm ? undefined : { "Content-Type": "application/json" },
     body: isForm ? body : JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`POST ${url} failed`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || `POST ${url} 失敗（${response.status}）`);
+  }
   return response.json();
 }
 
@@ -1034,6 +1037,8 @@ function bindEvents() {
   });
   elements.startAnalysisBtn.addEventListener("click", async () => {
     const originalText = elements.startAnalysisBtn.textContent;
+    // 清除舊錯誤
+    document.getElementById("uploadError")?.remove();
     try {
       state.loading = true;
       enableStartIfReady();
@@ -1041,7 +1046,12 @@ function bindEvents() {
       await createTaskFromUpload();
     } catch (error) {
       console.error(error);
-      alert("目前分析服務無法完成任務建立，請稍後再試。");
+      // 在上傳頁顯示錯誤，不跳 alert、不跳頁
+      const errDiv = document.createElement("div");
+      errDiv.id = "uploadError";
+      errDiv.className = "upload-error-msg";
+      errDiv.innerHTML = `<strong>分析失敗</strong>：${error.message}<br><small>請確認圖片清晰度，或稍後再試。</small>`;
+      elements.startAnalysisBtn.closest(".cta-row")?.after(errDiv);
     } finally {
       state.loading = false;
       elements.startAnalysisBtn.textContent = originalText;

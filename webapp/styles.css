@@ -79,6 +79,19 @@ textarea {
   color: #065f46;
 }
 
+/* ── 上傳頁錯誤訊息 ───────────────────────────────────── */
+.upload-error-msg {
+  margin-top: 14px;
+  padding: 12px 16px;
+  background: #fff1f2;
+  border: 1px solid #fca5a5;
+  border-left: 4px solid #ef4444;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .brand {
   display: flex;
   gap: 14px;
