@@ -619,7 +619,28 @@ tbody tr.status-slate {
 .tree-name-cell:hover { background: #f1f5f9; }
 .tree-branch { color: #94a3b8; font-size: 0.85em; margin-right: 2px; font-family: monospace; }
 .company-name { font-weight: 500; }
-.editable-name { border-bottom: 1.5px dashed #c7d2fe; }
+.editable-name { border-bottom: 1.5px dashed #c7d2fe; cursor: text; }
+.editable-name[contenteditable="true"] {
+  outline: none;
+  border-bottom: 2px solid #6366f1;
+  background: #f5f3ff;
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+/* ── 拖曳手柄 ─────────────────────────────────────────── */
+.drag-handle {
+  display: inline-block; width: 18px; text-align: center;
+  color: #cbd5e1; font-size: 14px; cursor: grab; margin-right: 4px;
+  opacity: 0.35; transition: opacity 0.15s, color 0.15s;
+  user-select: none;
+}
+.drag-handle:hover { opacity: 1; color: #6366f1; }
+
+/* ── 拖曳狀態 ─────────────────────────────────────────── */
+tr.row-dragging { opacity: 0.35; }
+tr.drag-target td { background: #ede9fe !important; }
+tr.drag-target { outline: 2px solid #6366f1; outline-offset: -2px; }
 
 /* ── 刪除按鈕 ──────────────────────────────────────────── */
 .del-col { width: 36px; }

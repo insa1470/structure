@@ -108,6 +108,13 @@ function recommendationText(action) {
 
 function updateTaskBadge() {
   elements.modeBadge.textContent = state.taskId ? `任務 ${state.taskId}` : "尚未建立任務";
+  const copy = document.getElementById("statusCopy");
+  if (!copy) return;
+  if (state.taskId) {
+    copy.textContent = "任務已載入。可從左側導覽切換各審核階段。";
+  } else {
+    copy.textContent = "上傳兩張圖，系統會先整理，再只把少數不確定項目交給使用者決定。";
+  }
 }
 
 function setView(viewName) {
@@ -439,6 +446,77 @@ function renderCandidateDetail() {
   });
 }
 
+// ── 層級標籤對照 ─────────────────────────────────────────────
+const SUBSIDIARY_LABELS = {
+  0: "集團本級", 1: "一級子公司", 2: "二級子公司",
+  3: "三級子公司", 4: "四級子公司",
+};
+
+// ── 拖曳重新掛父層 ────────────────────────────────────────────
+let _dragNodeId = null;
+
+function isAncestor(candidateAncestorId, nodeId) {
+  // 判斷 candidateAncestorId 是否為 nodeId 的祖先（防止循環）
+  const byId = {};
+  state.masterRows.forEach((r) => { byId[r.node_id] = r; });
+  let cur = byId[nodeId];
+  while (cur && cur.chart1_parent) {
+    if (cur.chart1_parent === candidateAncestorId) return true;
+    cur = byId[cur.chart1_parent];
+  }
+  return false;
+}
+
+async function reparentNode(nodeId, newParentId) {
+  const byId = {};
+  state.masterRows.forEach((r) => { byId[r.node_id] = r; });
+  const node = byId[nodeId];
+  const newParent = byId[newParentId];
+  if (!node || !newParent) return;
+
+  const oldLevel = Number(node.chart1_level) || 0;
+  const newLevel = (Number(newParent.chart1_level) || 0) + 1;
+  const diff = newLevel - oldLevel;
+
+  // 遞迴更新節點及所有後代的層級
+  function cascadeLevel(id) {
+    const r = byId[id];
+    if (!r) return;
+    const lv = (Number(r.chart1_level) || 0) + diff;
+    r.chart1_level = lv;
+    r.subsidiary_level_label = SUBSIDIARY_LABELS[lv] || `${lv}級子公司`;
+    state.masterRows
+      .filter((c) => c.chart1_parent === id)
+      .forEach((c) => cascadeLevel(c.node_id));
+  }
+
+  node.chart1_parent = newParentId;
+  node.chart1_parent_name = newParent.canonical_name || newParent.chart1_name || "";
+  cascadeLevel(nodeId);
+
+  renderResults();
+
+  // 蒐集所有受影響節點（dragged + descendants）一起存檔
+  const changed = [];
+  function collect(id) {
+    const r = byId[id];
+    if (!r) return;
+    changed.push(r);
+    state.masterRows.filter((c) => c.chart1_parent === id).forEach((c) => collect(c.node_id));
+  }
+  collect(nodeId);
+
+  await Promise.all(changed.map((r) =>
+    apiPost(`/api/tasks/${state.taskId}/update-row`, {
+      node_id: r.node_id,
+      chart1_parent:       r === node ? newParentId : r.chart1_parent,
+      chart1_parent_name:  r === node ? node.chart1_parent_name : r.chart1_parent_name,
+      chart1_level:        String(r.chart1_level),
+      subsidiary_level_label: r.subsidiary_level_label,
+    }).catch((err) => console.error("reparent save failed", err))
+  ));
+}
+
 // ── 樹狀結構建立 ─────────────────────────────────────────────
 function buildTree(rows) {
   const byId = {};
@@ -561,6 +639,43 @@ function renderResults() {
 
     const tr = document.createElement("tr");
     tr.className = statusClass;
+    tr.dataset.nodeId = row.node_id;
+
+    // ── 拖曳事件 ────────────────────────────────────────────
+    const isDraggable = !(query || filter !== "all"); // 搜尋/篩選模式不啟用拖曳
+    if (isDraggable) {
+      tr.draggable = true;
+      tr.addEventListener("dragstart", (e) => {
+        _dragNodeId = row.node_id;
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", row.node_id);
+        setTimeout(() => tr.classList.add("row-dragging"), 0);
+      });
+      tr.addEventListener("dragend", () => {
+        tr.classList.remove("row-dragging");
+        document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
+        _dragNodeId = null;
+      });
+      tr.addEventListener("dragover", (e) => {
+        if (!_dragNodeId || _dragNodeId === row.node_id) return;
+        if (isAncestor(_dragNodeId, row.node_id)) return; // 防止循環
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
+        tr.classList.add("drag-target");
+      });
+      tr.addEventListener("dragleave", (e) => {
+        if (!tr.contains(e.relatedTarget)) tr.classList.remove("drag-target");
+      });
+      tr.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        tr.classList.remove("drag-target");
+        const draggedId = e.dataTransfer.getData("text/plain");
+        if (!draggedId || draggedId === row.node_id) return;
+        if (isAncestor(draggedId, row.node_id)) return;
+        await reparentNode(draggedId, row.node_id);
+      });
+    }
 
     // ── 刪除按鈕（第一欄）──────────────────────────────────
     const delTd = document.createElement("td");
@@ -589,46 +704,51 @@ function renderResults() {
     const levelBadge = row.subsidiary_level_label
       ? `<span class="level-badge">${row.subsidiary_level_label}</span>` : "";
     const curName = row.canonical_name || row.chart1_name || "";
-    nameTd.innerHTML = `${prefix}<span class="company-name editable-name" title="點擊編輯名稱">${curName}</span>${levelBadge}`;
+    const dragHandle = isDraggable ? `<span class="drag-handle" title="拖曳調整層級">⠿</span>` : "";
+    nameTd.innerHTML = `${dragHandle}${prefix}<span class="company-name editable-name" title="點擊編輯名稱">${curName}</span>${levelBadge}`;
 
     nameTd.addEventListener("click", (e) => {
-      if (e.target.classList.contains("tree-branch") || e.target.classList.contains("level-badge")) return;
-      if (nameTd.querySelector("input.cell-input")) return;
+      const t = e.target;
+      if (t.classList.contains("tree-branch") || t.classList.contains("level-badge") || t.classList.contains("drag-handle")) return;
       const nameSpan = nameTd.querySelector(".company-name");
-      if (!nameSpan) return;
+      if (!nameSpan || nameSpan.contentEditable === "true") return;
 
-      // 用絕對定位的 input 覆蓋文字，避免 TD 寬度變動
-      const spanRect = nameSpan.getBoundingClientRect();
-      const tdRect   = nameTd.getBoundingClientRect();
-      const input = document.createElement("input");
-      input.className = "cell-input name-overlay-input";
-      input.value = row.canonical_name || row.chart1_name || "";
-      input.style.width = Math.max(spanRect.width + 40, 120) + "px";
-      nameSpan.style.visibility = "hidden";
-      nameTd.style.position = "relative";
-      nameTd.appendChild(input);
-      input.focus(); input.select();
+      // contenteditable 直接在 span 上編輯，不改版面
+      nameSpan.contentEditable = "true";
+      nameSpan.spellcheck = false;
+      nameSpan.focus();
+      // 移到末尾
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(nameSpan);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
 
       const finish = async (save) => {
-        const newVal = input.value.trim();
-        input.remove();
-        nameSpan.style.visibility = "";
+        nameSpan.contentEditable = "false";
+        const newVal = nameSpan.textContent.trim();
         if (save && newVal && newVal !== curName) {
-          nameSpan.textContent = newVal;
           row.canonical_name = newVal;
           try {
             const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
               node_id: row.node_id, canonical_name: newVal,
             });
             state.masterRows = result.master_rows || state.masterRows;
-          } catch (err) { console.error(err); nameSpan.textContent = curName; row.canonical_name = curName; }
+          } catch (err) {
+            console.error(err);
+            nameSpan.textContent = curName;
+            row.canonical_name = curName;
+          }
+        } else if (!save) {
+          nameSpan.textContent = curName;
         }
       };
-      input.addEventListener("blur", () => finish(true));
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter")  { e.preventDefault(); finish(true); }
+      nameSpan.addEventListener("blur", () => finish(true), { once: true });
+      nameSpan.addEventListener("keydown", (e) => {
+        if (e.key === "Enter")  { e.preventDefault(); nameSpan.blur(); }
         if (e.key === "Escape") { finish(false); }
-      });
+      }, { once: true });
     });
 
     tr.appendChild(nameTd);

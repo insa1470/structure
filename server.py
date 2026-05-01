@@ -261,7 +261,8 @@ def update_row(task_id: str):
 
     editable = ["canonical_name", "legal_representative", "registered_capital",
                 "established_date", "actual_controller_share", "company_status",
-                "chart1_parent_name", "subsidiary_level_label"]
+                "chart1_parent_name", "chart1_parent", "chart1_level",
+                "subsidiary_level_label"]
 
     # 連動更新模式：同欄位相同原始值的列全部更新
     if payload.get("cascade") and payload.get("field") and "original_value" in payload:
