@@ -44,90 +44,52 @@ PROMPT_CHART2 = """讀取集團公司列表，提取每家公司資訊。
 [{"c":"公司全名","lr":"法人代表或null","rc":"註冊資本如1000萬元或null","ed":"成立日期如2015-03-01或null","cs":"狀態如存續或null","sl":"如一級子公司或null","ac":"如51.2%或null"}]"""
 
 
+def _pil_to_b64(img) -> tuple[str, str]:
+    """將 PIL Image 壓縮並編碼為 base64 JPEG，回傳 (b64, mime)。"""
+    import io
+    from PIL import Image
+    if img.mode in ("RGBA", "LA", "P"):
+        img = img.convert("RGB")
+    max_px = 1120
+    if max(img.width, img.height) > max_px:
+        ratio = max_px / max(img.width, img.height)
+        img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=88)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode(), "image/jpeg"
+
+
 def _encode_image(image_path: Path) -> tuple[str, str]:
     """壓縮圖片至合適大小，回傳 (base64_data, mime_type)。"""
-    import io
     try:
         from PIL import Image
-        img = Image.open(image_path)
-        if img.mode in ("RGBA", "LA", "P"):
-            img = img.convert("RGB")
-        # Qwen-VL 推薦最大 1120px
-        max_px = 1120
-        if max(img.width, img.height) > max_px:
-            ratio = max_px / max(img.width, img.height)
-            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=88)
-        buf.seek(0)
-        return base64.b64encode(buf.read()).decode(), "image/jpeg"
+        return _pil_to_b64(Image.open(image_path))
     except ImportError:
-        # Pillow 未安裝時直接讀原檔
         suffix = image_path.suffix.lstrip(".").lower()
         mime = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
         with image_path.open("rb") as f:
             return base64.b64encode(f.read()).decode("utf-8"), mime
 
 
-def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
-    """呼叫 Qwen-VL API（OpenAI 相容格式），回傳解析後的 JSON list。"""
+def _parse_json_response(raw: str) -> list[dict]:
+    """三段式解析模型輸出，支援標準 JSON、Python 單引號格式、帶前後綴文字。"""
     import re as _re
+    import ast
 
-    api_key = os.environ.get("DASHSCOPE_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("請設定環境變數 DASHSCOPE_API_KEY")
-
-    try:
-        from openai import OpenAI
-    except ImportError:
-        raise RuntimeError("請安裝 openai：pip install openai")
-
-    b64, mime = _encode_image(image_path)
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    )
-
-    response = client.chat.completions.create(
-        model=QWEN_MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
-        max_tokens=16384,
-    )
-
-    finish_reason = response.choices[0].finish_reason
-    raw = response.choices[0].message.content.strip()
-
-    # 完整記錄到 stderr 方便 Railway log 查看
-    import sys
-    print(f"[Qwen] finish_reason={finish_reason} raw_len={len(raw)}", file=sys.stderr)
-    print(f"[Qwen] raw={raw}", file=sys.stderr)
-
-    if finish_reason == "length":
-        raise RuntimeError(f"模型輸出被截斷（token 上限），raw_len={len(raw)}，請裁切圖片後重試")
-
-    # 移除 markdown 包裝
     raw = _re.sub(r"^```(?:json)?\s*", "", raw)
     raw = _re.sub(r"\s*```$", "", raw)
     raw = raw.strip()
 
-    import ast
-
     # 策略 1：直接 JSON 解析
     try:
-        return json.loads(raw)
+        result = json.loads(raw)
+        if isinstance(result, list):
+            return result
     except json.JSONDecodeError:
         pass
 
-    # 策略 2：ast.literal_eval（接受單/雙引號混用的 Python dict 格式）
+    # 策略 2：ast.literal_eval（接受單引號 Python dict）
     try:
         result = ast.literal_eval(raw)
         if isinstance(result, list):
@@ -135,7 +97,7 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
     except (ValueError, SyntaxError):
         pass
 
-    # 策略 3：括號配對找第一個完整 array，再用 json / ast 解析
+    # 策略 3：括號配對提取第一個完整 array
     start = raw.find("[")
     if start != -1:
         depth, in_str, quote_ch, esc = 0, False, '"', False
@@ -166,6 +128,110 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
                     break
 
     raise RuntimeError(f"無法解析模型回傳的 JSON。模型原始回應（前300字）：{raw[:300]}")
+
+
+def _call_api_once(b64: str, mime: str, prompt: str) -> tuple[list[dict], bool]:
+    """
+    呼叫一次 Qwen-VL API。
+    回傳 (parsed_list, was_truncated)。
+    was_truncated=True 表示 finish_reason=="length"，呼叫方應分割圖片重試。
+    """
+    import sys
+
+    api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("請設定環境變數 DASHSCOPE_API_KEY")
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError("請安裝 openai：pip install openai")
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+
+    response = client.chat.completions.create(
+        model=QWEN_MODEL,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+        max_tokens=8192,
+    )
+
+    finish_reason = response.choices[0].finish_reason
+    raw = response.choices[0].message.content.strip()
+
+    print(f"[Qwen] finish_reason={finish_reason} raw_len={len(raw)}", file=sys.stderr)
+    print(f"[Qwen] raw={raw[:800]}", file=sys.stderr)
+
+    if finish_reason == "length":
+        return [], True
+
+    return _parse_json_response(raw), False
+
+
+def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
+    """
+    呼叫 Qwen-VL，若輸出被截斷（公司太多），自動對半裁圖分兩次辨識後合併。
+    """
+    import sys
+
+    b64, mime = _encode_image(image_path)
+    items, truncated = _call_api_once(b64, mime, prompt)
+
+    if not truncated:
+        return items
+
+    # ── 輸出截斷：分割圖片重試 ────────────────────────────────────────────────
+    print("[Qwen] 輸出截斷，自動分割圖片為上下兩半重試", file=sys.stderr)
+
+    try:
+        from PIL import Image
+    except ImportError:
+        raise RuntimeError("圖片公司數量過多，輸出超過 token 上限；請安裝 Pillow 以啟用自動分割：pip install Pillow")
+
+    img = Image.open(image_path)
+    w, h = img.width, img.height
+    overlap = int(max(w, h) * 0.08)  # 8% 重疊，避免邊緣漏掉
+
+    if h >= w:  # 直圖：切上下
+        mid = h // 2
+        halves = [
+            img.crop((0, 0, w, mid + overlap)),
+            img.crop((0, mid - overlap, w, h)),
+        ]
+    else:  # 橫圖：切左右
+        mid = w // 2
+        halves = [
+            img.crop((0, 0, mid + overlap, h)),
+            img.crop((mid - overlap, 0, w, h)),
+        ]
+
+    combined: list[dict] = []
+    seen_names: set[str] = set()
+
+    for idx, half in enumerate(halves):
+        hb64, hmime = _pil_to_b64(half)
+        half_items, half_truncated = _call_api_once(hb64, hmime, prompt)
+        if half_truncated:
+            print(f"[Qwen] 分割後第{idx+1}半仍截斷，部分資料可能遺漏", file=sys.stderr)
+        for item in half_items:
+            # 短 key 或長 key 都試
+            name = item.get("company") or item.get("c") or ""
+            if name and name not in seen_names:
+                seen_names.add(name)
+                combined.append(item)
+
+    if not combined:
+        raise RuntimeError("圖片公司數量過多且分割後仍無法辨識，請裁切圖片後重試")
+
+    return combined
 
 
 def _fuzzy_match(name_a: str, name_b: str) -> float:
