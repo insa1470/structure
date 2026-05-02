@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260503b" />
+    <link rel="stylesheet" href="./styles.css?v=20260503c" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
   </head>
@@ -97,6 +97,17 @@
               <div class="cta-row">
                 <button id="startAnalysisBtn" class="primary-btn" disabled>開始分析</button>
                 <button id="loadDemoBtn" class="ghost-btn">直接看示範資料</button>
+              </div>
+
+              <div class="upload-tips">
+                <p class="tips-title">📌 提高辨識率的建議</p>
+                <ul class="tips-list">
+                  <li><strong>底色建議白底深字</strong> — 白底可獲最佳辨識率；黑底白字雖可讀，偶爾會有字元誤判。</li>
+                  <li><strong>解析度 ≥ 1200px</strong> — 文字清晰最重要，模糊或過小的字體是辨識失敗最常見原因。</li>
+                  <li><strong>正面拍攝，避免斜角</strong> — 若是拍攝實體文件，請確保畫面平整，無透視變形。</li>
+                  <li><strong>避免強光反射</strong> — 螢幕截圖或掃描圖效果優於手機拍照。</li>
+                  <li><strong>圖一著重結構</strong>，圖二著重詳細資訊（法代、資本額等）；兩張不需要是同一版圖。</li>
+                </ul>
               </div>
             </div>
 
@@ -245,7 +256,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260503b"></script>
-    <script type="module" src="./app.js?v=20260503b"></script>
+    <script src="./config.js?v=20260503c"></script>
+    <script type="module" src="./app.js?v=20260503c"></script>
   </body>
   </html>
