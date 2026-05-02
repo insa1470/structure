@@ -201,8 +201,11 @@ def _call_qwen_vl_once(image_path: Path, prompt: str) -> list[dict]:
         #    例如 "ed":"2003-11-16,"cs" → "ed":"2003-11-16","cs"
         #    模式：:"非引號內容,"  → :"非引號內容","
         text = _re.sub(r':"([^",\n{}\[\]]+),(")', r':"\1",\2', text)
+        # 1.5 字串值在物件或陣列結尾前少了右引號
+        #     例如 "ed":"2014-12-03} → "ed":"2014-12-03"}
+        text = _re.sub(r'(:")([^"\n]*?)(?=\s*[}\]])', r'\1\2"', text)
         # 2. 數字/null/true/false 後接雜散引號，例如 "l":2" → "l":2
-        text = _re.sub(r'(\b(?:\d+(?:\.\d+)?|null|true|false))"(\s*[,}\]])', r'\1\2', text)
+        text = _re.sub(r'(:\s*)(\d+(?:\.\d+)?|null|true|false)"(\s*[,}\]])', r'\1\2\3', text)
         # 3. 字串值結尾多一個引號，例如 "abc"" → "abc"
         text = _re.sub(r'""(\s*[,}\]])', r'"\1', text)
         # 4. 尾隨逗號（陣列/物件最後一個元素後的逗號）
@@ -302,6 +305,24 @@ def _call_qwen_vl_once(image_path: Path, prompt: str) -> list[dict]:
                     return result
             except Exception:
                 pass
+
+    # 策略 5：逐物件搶救。整包 JSON 壞掉時，只要 {...} 還在，就逐筆修復並解析。
+    fragments = _re.findall(r"\{[^{}]+\}", target, flags=_re.S)
+    salvaged: list[dict] = []
+    if fragments:
+        for fragment in fragments:
+            fragment = _repair_json(fragment)
+            fragment = _repair_unquoted(fragment)
+            for parser in (json.loads, ast.literal_eval):
+                try:
+                    item = parser(fragment)
+                    if isinstance(item, dict):
+                        salvaged.append(item)
+                        break
+                except Exception:
+                    continue
+        if salvaged:
+            return salvaged
 
     raise RuntimeError(f"無法解析模型回傳的 JSON。原始回應（前500字）：{raw[:500]}")
 
