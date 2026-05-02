@@ -550,15 +550,17 @@ textarea {
 }
 
 .table-wrap {
+  width: 100%;
   overflow-x: auto;
   overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
-  width: 100%;
+  width: auto;
   border-collapse: collapse;
-  min-width: max-content;
   font-size: 0.84em;
+  table-layout: fixed;
 }
 
 th,

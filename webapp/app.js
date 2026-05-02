@@ -549,6 +549,7 @@ function attachNameEdit(td, row) {
   td.addEventListener("click", (e) => {
     const t = e.target;
     if (t.classList.contains("drag-handle")) return;
+    if (t.classList.contains("parent-indicator") || t.classList.contains("parent-select")) return;
     const nameSpan = td.querySelector(".company-name");
     if (!nameSpan || nameSpan.contentEditable === "true") return;
     const curName = nameSpan.textContent;
@@ -751,7 +752,8 @@ function renderResults() {
         parentIndicator.className = "parent-indicator";
         parentIndicator.title = "點擊更改上層公司";
         parentIndicator.textContent = level === 0 ? "頂層" : `↑ ${parentName || "（未設定）"}`;
-        parentIndicator.addEventListener("click", () => {
+        parentIndicator.addEventListener("click", (e) => {
+          e.stopPropagation();
           if (td.querySelector(".parent-select")) return;
           // 建立下拉選單，列出所有可選父層（排除自身及子孫）
           const sel = document.createElement("select");
