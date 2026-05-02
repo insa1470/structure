@@ -135,6 +135,33 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
     raw = _re.sub(r"\s*```$", "", raw)
     raw = raw.strip()
 
+    # ── 前置清理：修復常見格式錯誤 ────────────────────────────
+    def _repair_json(text: str) -> str:
+        # 1. 數字/null/true/false 後接雜散引號，例如 "l":2" → "l":2
+        text = _re.sub(r'(\b(?:\d+(?:\.\d+)?|null|true|false))"(\s*[,}\]])', r'\1\2', text)
+        # 2. 字串值結尾多一個引號，例如 "abc"" → "abc"
+        text = _re.sub(r'""(\s*[,}\]])', r'"\1', text)
+        # 3. 尾隨逗號（陣列/物件最後一個元素後的逗號）
+        text = _re.sub(r',(\s*[}\]])', r'\1', text)
+        # 4. 中文全形逗號換成半形
+        text = text.replace("，", ",")
+        # 5. 截斷的 JSON：結尾若沒有 ] 就補上（只在有 [ 的情況）
+        stripped = text.rstrip()
+        if stripped.startswith("[") and not stripped.endswith("]"):
+            # 補上遺漏的 }] 以嘗試解析已有部分
+            # 計算缺少多少層
+            depth = 0
+            for ch in stripped:
+                if ch in ("{", "["): depth += 1
+                elif ch in ("}", "]"): depth -= 1
+            # 去掉末尾不完整物件（找最後一個完整的 }）
+            last_close = stripped.rfind("}")
+            if last_close != -1:
+                text = stripped[:last_close + 1] + "]"
+        return text
+
+    raw = _repair_json(raw)
+
     # 策略 1：標準 JSON
     try:
         result = json.loads(raw)
