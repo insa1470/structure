@@ -631,34 +631,6 @@ tbody tr.status-slate {
 .editable-col { width: 80px; min-width: 70px; color: #334155; }
 .status-col   { width: 72px; min-width: 60px; font-size: 0.78em; color: #64748b; }
 
-/* ── 上層公司選擇器 ───────────────────────────────────── */
-.parent-indicator {
-  display: inline-block;
-  margin-top: 3px;
-  font-size: 0.72em;
-  color: #94a3b8;
-  cursor: pointer;
-  border-bottom: 1px dashed #cbd5e1;
-  line-height: 1.4;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.parent-indicator:hover { color: #6366f1; border-color: #6366f1; }
-.parent-select {
-  display: block;
-  margin-top: 3px;
-  font-size: 0.75em;
-  color: #334155;
-  border: 1px solid #6366f1;
-  border-radius: 4px;
-  padding: 2px 4px;
-  background: #fff;
-  max-width: 124px;
-  cursor: pointer;
-  outline: none;
-}
 .tree-branch { color: #94a3b8; font-size: 0.85em; margin-right: 2px; font-family: monospace; }
 .company-name { font-weight: 500; }
 .editable-name { border-bottom: 1.5px dashed #c7d2fe; cursor: text; }

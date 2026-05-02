@@ -549,7 +549,6 @@ function attachNameEdit(td, row) {
   td.addEventListener("click", (e) => {
     const t = e.target;
     if (t.classList.contains("drag-handle")) return;
-    if (t.classList.contains("parent-indicator") || t.classList.contains("parent-select")) return;
     const nameSpan = td.querySelector(".company-name");
     if (!nameSpan || nameSpan.contentEditable === "true") return;
     const curName = nameSpan.textContent;
@@ -734,69 +733,57 @@ function renderResults() {
     delTd.appendChild(delBtn);
     tr.appendChild(delTd);
 
+    // ── 拖曳事件（整行） ────────────────────────────────────
+    tr.draggable = true;
+    tr.addEventListener("dragstart", (e) => {
+      _dragNodeId = row.node_id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", row.node_id);
+      const ghost = document.createElement("div");
+      ghost.textContent = row.canonical_name || row.chart1_name || "";
+      ghost.style.cssText = "position:fixed;top:-200px;left:0;background:#4f46e5;color:#fff;padding:5px 14px;border-radius:99px;font-size:13px;font-weight:600;white-space:nowrap;";
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, 18);
+      setTimeout(() => { ghost.remove(); tr.classList.add("row-dragging"); }, 0);
+    });
+    tr.addEventListener("dragend", () => {
+      tr.classList.remove("row-dragging");
+      document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
+      document.getElementById("drag-tooltip")?.remove();
+      _dragNodeId = null;
+    });
+    tr.addEventListener("dragover", (e) => {
+      if (!_dragNodeId || _dragNodeId === row.node_id) return;
+      if (isAncestor(_dragNodeId, row.node_id)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
+      tr.classList.add("drag-target");
+      let tip = document.getElementById("drag-tooltip");
+      if (!tip) { tip = document.createElement("div"); tip.id = "drag-tooltip"; document.body.appendChild(tip); }
+      tip.textContent = `↳ 放入「${row.canonical_name || row.chart1_name}」底下`;
+      tip.style.left = e.clientX + "px";
+      tip.style.top  = e.clientY + "px";
+    });
+    tr.addEventListener("dragleave", (e) => { if (!tr.contains(e.relatedTarget)) tr.classList.remove("drag-target"); });
+    tr.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      tr.classList.remove("drag-target");
+      document.getElementById("drag-tooltip")?.remove();
+      const draggedId = e.dataTransfer.getData("text/plain");
+      if (!draggedId || draggedId === row.node_id || isAncestor(draggedId, row.node_id)) return;
+      await reparentNode(draggedId, row.node_id);
+      document.querySelector(`tr[data-node-id="${draggedId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+
     // ── 層級欄：公司名在對應欄，其餘空白 ────────────────────
     const curName = row.canonical_name || row.chart1_name || "";
-    const parentRow = byId[row.chart1_parent];
-    const parentName = parentRow ? (parentRow.canonical_name || parentRow.chart1_name || "") : "";
-
     for (let lv = 0; lv <= maxLevel; lv++) {
       const td = document.createElement("td");
       if (lv === level) {
         td.className = "tree-name-cell";
-        // 公司名（可點擊編輯）
-        td.innerHTML = `<span class="company-name editable-name" title="點擊編輯名稱">${curName}</span>`;
+        td.innerHTML = `<span class="drag-handle" title="拖曳調整層級">⠿</span><span class="company-name editable-name" title="點擊編輯名稱">${curName}</span>`;
         attachNameEdit(td, row);
-
-        // 上層公司選擇器（點擊出現下拉）
-        const parentIndicator = document.createElement("div");
-        parentIndicator.className = "parent-indicator";
-        parentIndicator.title = "點擊更改上層公司";
-        parentIndicator.textContent = level === 0 ? "頂層" : `↑ ${parentName || "（未設定）"}`;
-        parentIndicator.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (td.querySelector(".parent-select")) return;
-          // 建立下拉選單，列出所有可選父層（排除自身及子孫）
-          const sel = document.createElement("select");
-          sel.className = "parent-select";
-          let opts = `<option value="">— 設為頂層 —</option>`;
-          state.masterRows
-            .filter((r) => r.node_id !== row.node_id && !isAncestor(r.node_id, row.node_id))
-            .forEach((r) => {
-              const n = r.canonical_name || r.chart1_name || "";
-              const lbl = LEVEL_HEADERS[Number(r.chart1_level) || 0] || "";
-              const sel_ = r.node_id === row.chart1_parent ? "selected" : "";
-              opts += `<option value="${r.node_id}" ${sel_}>[${lbl}] ${n}</option>`;
-            });
-          sel.innerHTML = opts;
-          parentIndicator.replaceWith(sel);
-          sel.focus();
-          const apply = async () => {
-            const newParentId = sel.value;
-            if (newParentId && newParentId !== row.chart1_parent) {
-              await reparentNode(row.node_id, newParentId);
-            } else if (!newParentId && row.chart1_parent) {
-              // 移到頂層
-              const node = byId[row.node_id];
-              if (node) {
-                const diff = -(Number(node.chart1_level) || 0);
-                node.chart1_parent = "";
-                node.chart1_parent_name = "";
-                node.chart1_level = 0;
-                node.subsidiary_level_label = SUBSIDIARY_LABELS[0] || "集團主體";
-                renderResults();
-                await apiPost(`/api/tasks/${state.taskId}/update-row`, {
-                  node_id: node.node_id, chart1_parent: "", chart1_parent_name: "",
-                  chart1_level: "0", subsidiary_level_label: SUBSIDIARY_LABELS[0],
-                }).catch(console.error);
-              }
-            } else {
-              renderResults();
-            }
-          };
-          sel.addEventListener("change", apply);
-          sel.addEventListener("blur", () => { if (td.contains(sel)) renderResults(); });
-        });
-        td.appendChild(parentIndicator);
       } else {
         td.className = "level-empty-td";
       }
