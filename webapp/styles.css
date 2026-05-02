@@ -622,11 +622,41 @@ tbody tr.status-slate {
 }
 
 /* ── 層級欄式主表 ─────────────────────────────────────── */
-.level-col { min-width: 150px; max-width: 220px; font-weight: 700; color: #6366f1 !important; border-bottom: 2px solid #e0e7ff !important; }
-.level-empty-td { min-width: 150px; max-width: 220px; background: repeating-linear-gradient(90deg, transparent, transparent 5px, #f1f5f9 5px, #f1f5f9 6px) !important; opacity: 0.5; }
-.tree-name-cell { min-width: 150px; max-width: 220px; cursor: pointer; transition: background 0.15s; }
-.tree-name-cell:hover { background: rgba(99,102,241,0.06); }
-.editable-col { min-width: 80px; max-width: 120px; color: #334155; }
+.level-col   { width: 130px; min-width: 110px; font-weight: 700; color: #6366f1 !important; }
+.level-empty-td { width: 130px; min-width: 110px; background: #f8fafc !important; border-right: 1px dashed #e2e8f0; }
+.tree-name-cell { width: 130px; min-width: 110px; cursor: default; vertical-align: top; padding-top: 6px; }
+.tree-name-cell:hover { background: rgba(99,102,241,0.04); }
+.editable-col { width: 80px; min-width: 70px; color: #334155; }
+.status-col   { width: 72px; min-width: 60px; font-size: 0.78em; color: #64748b; }
+
+/* ── 上層公司選擇器 ───────────────────────────────────── */
+.parent-indicator {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 0.72em;
+  color: #94a3b8;
+  cursor: pointer;
+  border-bottom: 1px dashed #cbd5e1;
+  line-height: 1.4;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.parent-indicator:hover { color: #6366f1; border-color: #6366f1; }
+.parent-select {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.75em;
+  color: #334155;
+  border: 1px solid #6366f1;
+  border-radius: 4px;
+  padding: 2px 4px;
+  background: #fff;
+  max-width: 124px;
+  cursor: pointer;
+  outline: none;
+}
 .tree-branch { color: #94a3b8; font-size: 0.85em; margin-right: 2px; font-family: monospace; }
 .company-name { font-weight: 500; }
 .editable-name { border-bottom: 1.5px dashed #c7d2fe; cursor: text; }
