@@ -550,28 +550,35 @@ textarea {
 }
 
 .table-wrap {
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1200px;
+  min-width: max-content;
+  font-size: 0.84em;
 }
 
 th,
 td {
-  padding: 14px 12px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--line);
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 thead th {
   position: sticky;
   top: 0;
-  background: #f8fbff;
+  background: #f4f6fb;
   z-index: 1;
+  font-size: 0.8em;
+  letter-spacing: 0.02em;
+  color: #475569;
+  border-bottom: 2px solid #e2e8f0;
 }
 
 tbody tr.status-enriched {
@@ -615,10 +622,11 @@ tbody tr.status-slate {
 }
 
 /* ── 層級欄式主表 ─────────────────────────────────────── */
-.level-col { min-width: 160px; font-weight: 600; font-size: 0.8em; color: #6366f1; border-bottom: 2px solid #e0e7ff; }
-.level-empty-td { border-right: 1px dashed #e2e8f0; }
-.tree-name-cell { white-space: nowrap; cursor: pointer; transition: background 0.15s; border-right: 1px solid #e2e8f0; }
-.tree-name-cell:hover { background: #f1f5f9; }
+.level-col { min-width: 150px; max-width: 220px; font-weight: 700; color: #6366f1 !important; border-bottom: 2px solid #e0e7ff !important; }
+.level-empty-td { min-width: 150px; max-width: 220px; background: repeating-linear-gradient(90deg, transparent, transparent 5px, #f1f5f9 5px, #f1f5f9 6px) !important; opacity: 0.5; }
+.tree-name-cell { min-width: 150px; max-width: 220px; cursor: pointer; transition: background 0.15s; }
+.tree-name-cell:hover { background: rgba(99,102,241,0.06); }
+.editable-col { min-width: 80px; max-width: 120px; color: #334155; }
 .tree-branch { color: #94a3b8; font-size: 0.85em; margin-right: 2px; font-family: monospace; }
 .company-name { font-weight: 500; }
 .editable-name { border-bottom: 1.5px dashed #c7d2fe; cursor: text; }
