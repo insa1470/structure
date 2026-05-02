@@ -828,7 +828,8 @@ async function pollTask(taskId, onStatus) {
     const task = await apiGet(`/api/tasks/${taskId}`);
     if (onStatus) onStatus(task);
     if (task.status === "ready") return task;
-    if (task.status === "chart2_error") return task;  // 圖一成功但圖二失敗
+    if (task.status === "chart2_error") return task;
+    if (task.status === "chart2_ocr_done") return task;  // 圖二 OCR 完成，等用戶確認
     if (task.status === "error") throw new Error(task.error || "AI 辨識失敗，請重試");
     // processing / chart1_ready / processing_chart2 → 繼續等
   }
@@ -837,10 +838,75 @@ async function pollTask(taskId, onStatus) {
 
 // ── 工作區渲染 ────────────────────────────────────────────────
 // phase: "idle"|"uploading"|"processing"|"chart1_ready"|"processing_chart2"
-//        |"ready"|"chart2_error"|"error"
+//        |"chart2_confirm"|"ready"|"chart2_error"|"error"
 function renderWorkspace(phase, opts = {}) {
   const el = document.getElementById("workspaceContent");
   if (!el) return;
+
+  // ── 特殊：圖二確認畫面 ───────────────────────────────────
+  if (phase === "chart2_confirm") {
+    const task = opts.task || {};
+    const chart2Raw = task.chart2_raw || [];
+    const chart1Count = (task.master_rows || []).length;
+    const chart2Count = chart2Raw.length;
+    const discrepancy = chart1Count > 0 && chart2Count < chart1Count * 0.5;
+
+    const companyListHtml = chart2Raw.length
+      ? chart2Raw.map((c) => `<li class="ws-company-item">${c.company || "（未知）"}</li>`).join("")
+      : `<li class="ws-company-item ws-company-empty">（無辨識結果）</li>`;
+
+    el.innerHTML = `
+      <p class="workspace-eyebrow">圖二辨識完成，請確認後繼續</p>
+      <div class="ws-confirm-counts">
+        <div class="ws-cc-stat">
+          <span class="ws-cc-label">圖一結構</span>
+          <span class="ws-cc-val">${chart1Count} 家</span>
+        </div>
+        <div class="ws-cc-arrow">→</div>
+        <div class="ws-cc-stat">
+          <span class="ws-cc-label">圖二辨識</span>
+          <span class="ws-cc-val ${discrepancy ? "ws-cc-warn" : ""}">${chart2Count} 家</span>
+        </div>
+      </div>
+      ${discrepancy ? `<div class="ws-warn-box">⚠ 圖二辨識到的公司數量明顯少於圖一，建議確認圖片清晰度後再繼續。</div>` : ""}
+      <p class="ws-company-list-label">圖二辨識到的公司（${chart2Count} 筆）</p>
+      <ul class="ws-company-list">${companyListHtml}</ul>
+      <div class="ws-confirm-actions">
+        <button class="ws-confirm-btn" id="wsConfirmChart2Btn">確認，開始配對</button>
+        <label class="ws-reupload-label">
+          重新上傳圖二
+          <input type="file" id="wsChart2ReuploadInput" accept="image/*" style="display:none" />
+        </label>
+      </div>`;
+
+    document.getElementById("wsConfirmChart2Btn")?.addEventListener("click", () => {
+      confirmChart2Match(task.id);
+    });
+
+    document.getElementById("wsChart2ReuploadInput")?.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file || !task.id) return;
+      renderWorkspace("processing_chart2", { msg: "重新上傳圖二中…" });
+      try {
+        const fd = new FormData();
+        fd.append("chart2", file);
+        await apiPost(`/api/tasks/${task.id}/analyze-chart2`, fd, true);
+        renderWorkspace("processing_chart2", { msg: "圖二辨識中…" });
+        const updated = await pollTask(task.id, () => {});
+        if (updated.status === "chart2_ocr_done") {
+          renderWorkspace("chart2_confirm", { task: updated });
+        } else if (updated.status === "chart2_error") {
+          renderWorkspace("chart2_error", { taskId: updated.id, error: updated.error, summary: updated.summary });
+        } else {
+          hydrateTask(updated);
+          renderWorkspace("ready", { summary: updated.summary });
+        }
+      } catch (err) {
+        renderWorkspace("error", { error: err.message });
+      }
+    });
+    return;
+  }
 
   const c1name = state.chart1File?.name || "—";
   const c2name = state.chart2File?.name || "—";
@@ -979,6 +1045,18 @@ function renderWorkspace(phase, opts = {}) {
   }
 }
 
+async function confirmChart2Match(taskId) {
+  renderWorkspace("processing_chart2", { msg: "配對中…" });
+  try {
+    const result = await apiPost(`/api/tasks/${taskId}/confirm-chart2`, {});
+    applyTaskRefresh(result);
+    renderWorkspace("ready", { summary: result.summary });
+    setView("overview");
+  } catch (err) {
+    renderWorkspace("error", { error: `配對失敗：${err.message}` });
+  }
+}
+
 async function createTaskFromUpload(onStatus) {
   const formData = new FormData();
   formData.append("task_name", elements.taskNameInput.value.trim() || "未命名任務");
@@ -994,19 +1072,25 @@ async function createTaskFromUpload(onStatus) {
 
   try {
     const task = await pollTask(initTask.id, (t) => {
-      // 根據 task.status 動態更新工作區
       if (t.status === "chart1_ready") {
-        // 圖一完成：先顯示部分結果，讓用戶看到骨架
         hydrateTask(t);
         renderWorkspace("chart1_ready", { summary: t.summary });
       } else if (t.status === "processing_chart2") {
         renderWorkspace("processing_chart2", { msg: "圖二辨識中…" });
+      } else if (t.status === "chart2_ocr_done") {
+        // 等 pollTask return 後再處理，這裡不動
       } else {
         const secs = Math.round((Date.now() - _analysisStart) / 1000);
         renderWorkspace("processing", { msg: `辨識中… 已等候 ${secs} 秒` });
       }
       if (onStatus) onStatus(t.status);
     });
+
+    if (task.status === "chart2_ocr_done") {
+      // 圖二 OCR 完成：顯示確認畫面，不自動 merge
+      renderWorkspace("chart2_confirm", { task });
+      return;
+    }
 
     hydrateTask(task);
     if (task.status === "chart2_error") {

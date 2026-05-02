@@ -681,14 +681,13 @@ def run_chart1_stage(chart1_path: Path) -> dict:
     }
 
 
-def enrich_with_chart2(existing_master_rows: list[dict], chart2_path: Path) -> dict:
-    """第二階段：用圖二補充現有主表，保留用戶已調整的結構（層級、父層、名稱）。
+def enrich_with_chart2_precomputed(existing_master_rows: list[dict], chart2_attrs: list[dict]) -> dict:
+    """用已辨識完成的圖二資料補充主表（跳過 OCR，直接 merge）。
 
     只更新補充欄位：legal_representative, registered_capital, established_date,
     actual_controller_share, company_status, subsidiary_level_label。
     不動：node_id, canonical_name, chart1_level, chart1_parent, chart1_parent_name。
     """
-    chart2_attrs = analyze_chart2(chart2_path)
 
     master_rows = [dict(r) for r in existing_master_rows]  # 深拷貝，不改原始資料
     review_rows: list[dict] = []
@@ -769,6 +768,12 @@ def enrich_with_chart2(existing_master_rows: list[dict], chart2_path: Path) -> d
         "summary": _make_summary(master_rows, review_rows, candidate_rows),
         "graph": _make_graph(master_rows),
     }
+
+
+def enrich_with_chart2(existing_master_rows: list[dict], chart2_path: Path) -> dict:
+    """第二階段：用圖二補充現有主表（含 OCR + merge）。"""
+    chart2_attrs = analyze_chart2(chart2_path)
+    return enrich_with_chart2_precomputed(existing_master_rows, chart2_attrs)
 
 
 def run_analysis(chart1_path: Path, chart2_path: Path) -> dict:

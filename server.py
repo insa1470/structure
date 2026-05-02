@@ -307,20 +307,14 @@ def analyze():
             save_task(task)
             return  # 圖一失敗就停在這裡
 
-        # ── 第二階段：圖二補充 ──────────────────────────────────
+        # ── 第二階段：圖二 OCR（辨識完成後暫停，等用戶確認再 merge）
         try:
-            from analyzer import enrich_with_chart2
-            from pathlib import Path as _Path
-            stage2 = enrich_with_chart2(task["master_rows"], c2_path)
-            task["status"] = "ready"
-            task["summary"] = stage2["summary"]
-            task["master_rows"] = stage2["master_rows"]
-            task["review_rows"] = stage2["review_rows"]
-            task["candidate_rows"] = stage2["candidate_rows"]
-            task["graph"] = stage2["graph"]
+            from analyzer import analyze_chart2
+            chart2_attrs = analyze_chart2(c2_path)
+            task["status"] = "chart2_ocr_done"
+            task["chart2_raw"] = chart2_attrs
             task["error"] = ""
         except Exception as exc:
-            # 圖二失敗：主表保留圖一骨架，提示用戶重新上傳圖二
             task["status"] = "chart2_error"
             task["error"] = f"圖二辨識失敗：{exc}"
         finally:
@@ -361,14 +355,10 @@ def analyze_chart2_only(task_id: str):
 
     def run_async():
         try:
-            from analyzer import enrich_with_chart2
-            stage2 = enrich_with_chart2(existing_master, c2_path)
-            task["status"] = "ready"
-            task["summary"] = stage2["summary"]
-            task["master_rows"] = stage2["master_rows"]
-            task["review_rows"] = stage2["review_rows"]
-            task["candidate_rows"] = stage2["candidate_rows"]
-            task["graph"] = stage2["graph"]
+            from analyzer import analyze_chart2
+            chart2_attrs = analyze_chart2(c2_path)
+            task["status"] = "chart2_ocr_done"
+            task["chart2_raw"] = chart2_attrs
             task["error"] = ""
         except Exception as exc:
             task["status"] = "chart2_error"
@@ -378,6 +368,43 @@ def analyze_chart2_only(task_id: str):
 
     threading.Thread(target=run_async, daemon=True).start()
     return jsonify({"id": task_id, "status": "processing_chart2"}), 202
+
+
+@app.route("/api/tasks/<task_id>/confirm-chart2", methods=["POST"])
+def confirm_chart2(task_id: str):
+    """用戶確認圖二辨識結果後，觸發 merge（純 Python，瞬間完成）。"""
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    if task.get("status") != "chart2_ocr_done":
+        return jsonify({"error": "invalid_status", "message": "任務狀態不是 chart2_ocr_done，無法確認。"}), 400
+
+    chart2_attrs = task.get("chart2_raw", [])
+
+    try:
+        from analyzer import enrich_with_chart2_precomputed
+        stage2 = enrich_with_chart2_precomputed(task["master_rows"], chart2_attrs)
+        task["status"] = "ready"
+        task["summary"] = stage2["summary"]
+        task["master_rows"] = stage2["master_rows"]
+        task["review_rows"] = stage2["review_rows"]
+        task["candidate_rows"] = stage2["candidate_rows"]
+        task["graph"] = stage2["graph"]
+        task["error"] = ""
+        save_task(task)
+        return jsonify({
+            "ok": True,
+            "master_rows": task["master_rows"],
+            "review_rows": task["review_rows"],
+            "candidate_rows": task["candidate_rows"],
+            "summary": task["summary"],
+            "graph": task["graph"],
+        })
+    except Exception as exc:
+        task["status"] = "chart2_error"
+        task["error"] = f"配對失敗：{exc}"
+        save_task(task)
+        return jsonify({"error": "match_failed", "message": str(exc)}), 500
 
 
 @app.route("/api/review-decision", methods=["POST"])
