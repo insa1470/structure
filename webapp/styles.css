@@ -752,6 +752,204 @@ tbody tr.status-slate {
   line-height: 1.6;
 }
 
+/* ── Dropzone thumbnail ─────────────────────────────────────────── */
+.dz-thumb {
+  display: none;
+  width: 100%;
+  max-height: 120px;
+  object-fit: cover;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.dropzone.has-file .dz-thumb {
+  display: block;
+}
+
+.dropzone.has-file {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.dropzone.has-file .drop-title {
+  font-size: 13px;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* ── Workspace card ─────────────────────────────────────────────── */
+.workspace-card {
+  display: flex;
+  flex-direction: column;
+}
+
+#workspaceContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.workspace-eyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.workspace-hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 0;
+}
+
+/* Step list */
+.ws-steps {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.ws-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+
+.ws-step:last-child {
+  border-bottom: none;
+}
+
+.ws-step-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ws-step.pending .ws-step-icon {
+  background: var(--line);
+  color: var(--muted);
+}
+
+.ws-step.active .ws-step-icon {
+  background: var(--primary);
+  color: #fff;
+  animation: ws-pulse 1.4s ease-in-out infinite;
+}
+
+.ws-step.done .ws-step-icon {
+  background: var(--success);
+  color: #fff;
+}
+
+.ws-step.error .ws-step-icon {
+  background: #ef4444;
+  color: #fff;
+}
+
+@keyframes ws-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99,91,255,0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(99,91,255,0); }
+}
+
+.ws-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ws-step-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 2px;
+}
+
+.ws-step.pending .ws-step-title {
+  color: var(--muted);
+}
+
+.ws-step-detail {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Summary block after completion */
+.ws-summary {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--success-soft);
+  border: 1px solid #a7f3d0;
+  border-radius: var(--radius);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  text-align: center;
+}
+
+.ws-stat-val {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--ink);
+  display: block;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.ws-stat-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ws-goto-btn {
+  margin-top: 16px;
+  width: 100%;
+  padding: 10px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms;
+}
+
+.ws-goto-btn:hover {
+  background: #5046e4;
+}
+
+.ws-error-msg {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #fff1f2;
+  border: 1px solid #fca5a5;
+  border-left: 3px solid #ef4444;
+  border-radius: var(--radius);
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 /* ── Level columns (column-per-level table) ─────────────────────── */
 .level-col {
   width: 128px;

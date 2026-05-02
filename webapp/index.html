@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260503a" />
+    <link rel="stylesheet" href="./styles.css?v=20260503b" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
   </head>
@@ -78,14 +78,16 @@
               </label>
 
               <div class="drop-grid">
-                <label class="dropzone">
+                <label class="dropzone" id="dz1">
                   <input id="chart1Input" type="file" accept="image/*" />
+                  <img id="chart1Preview" class="dz-thumb" alt="" />
                   <span class="drop-title">上傳圖一</span>
                   <span class="drop-sub">股權結構圖 / 樹狀圖</span>
                   <span id="chart1Meta" class="drop-meta">尚未選擇檔案</span>
                 </label>
-                <label class="dropzone">
+                <label class="dropzone" id="dz2">
                   <input id="chart2Input" type="file" accept="image/*" />
+                  <img id="chart2Preview" class="dz-thumb" alt="" />
                   <span class="drop-title">上傳圖二</span>
                   <span class="drop-sub">存續公司清單 / 詳細頁</span>
                   <span id="chart2Meta" class="drop-meta">尚未選擇檔案</span>
@@ -98,20 +100,11 @@
               </div>
             </div>
 
-            <div class="card preview-card">
-              <div class="preview-head">
-                <h4>圖片預覽</h4>
-                <p>使用者只要確認有沒有選對圖即可。</p>
-              </div>
-              <div class="preview-grid">
-                <figure class="preview-frame">
-                  <figcaption>圖一</figcaption>
-                  <img id="chart1Preview" alt="圖一預覽" />
-                </figure>
-                <figure class="preview-frame">
-                  <figcaption>圖二</figcaption>
-                  <img id="chart2Preview" alt="圖二預覽" />
-                </figure>
+            <!-- 工作進度工作區 -->
+            <div class="card workspace-card" id="workspaceCard">
+              <div id="workspaceContent" class="workspace-idle">
+                <p class="workspace-eyebrow">工作進度</p>
+                <p class="workspace-hint">上傳兩張圖並按下「開始分析」後，這裡會顯示每個步驟的狀態。</p>
               </div>
             </div>
           </div>
@@ -252,7 +245,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260502g"></script>
-    <script type="module" src="./app.js?v=20260502g"></script>
+    <script src="./config.js?v=20260503b"></script>
+    <script type="module" src="./app.js?v=20260503b"></script>
   </body>
   </html>

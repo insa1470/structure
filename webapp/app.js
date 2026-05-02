@@ -132,11 +132,12 @@ function enableStartIfReady() {
   elements.startAnalysisBtn.disabled = !(state.chart1File && state.chart2File) || state.loading;
 }
 
-function setPreview(file, metaEl, imgEl) {
+function setPreview(file, metaEl, imgEl, dzEl) {
   if (!file) return;
   metaEl.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
   const objectUrl = URL.createObjectURL(file);
   imgEl.src = objectUrl;
+  if (dzEl) dzEl.classList.add("has-file");
 }
 
 function makeMetric(label, value, theme) {
@@ -832,23 +833,133 @@ async function pollTask(taskId, onTick) {
   throw new Error("分析逾時（超過 12 分鐘），請重試或裁切圖片後再上傳");
 }
 
+// ── 工作區渲染 ────────────────────────────────────────────────
+// phase: "idle" | "uploading" | "processing" | "ready" | "error"
+function renderWorkspace(phase, opts = {}) {
+  const el = document.getElementById("workspaceContent");
+  if (!el) return;
+
+  // step 設定
+  const steps = [
+    {
+      key: "upload",
+      title: "上傳圖片",
+      detail: {
+        idle: "等待開始",
+        uploading: "上傳圖一與圖二至伺服器…",
+        processing: `圖一：${state.chart1File?.name || "—"} · 圖二：${state.chart2File?.name || "—"}`,
+        ready: `圖一：${state.chart1File?.name || "—"} · 圖二：${state.chart2File?.name || "—"}`,
+        error: `圖一：${state.chart1File?.name || "—"} · 圖二：${state.chart2File?.name || "—"}`,
+      },
+    },
+    {
+      key: "analyze",
+      title: "AI 辨識圖一（結構骨架）",
+      detail: {
+        idle: "等待上傳",
+        uploading: "等待上傳完成",
+        processing: opts.msg || "Qwen-VL 辨識中…",
+        ready: `辨識完成`,
+        error: "辨識未完成",
+      },
+    },
+    {
+      key: "enrich",
+      title: "AI 辨識圖二（補充資訊）",
+      detail: {
+        idle: "等待上傳",
+        uploading: "等待辨識圖一",
+        processing: opts.msg || "Qwen-VL 辨識中…",
+        ready: "資訊補充完成",
+        error: "辨識未完成",
+      },
+    },
+  ];
+
+  // 每個 step 的狀態
+  function stepState(key) {
+    if (phase === "idle") return "pending";
+    if (phase === "uploading") return key === "upload" ? "active" : "pending";
+    if (phase === "processing") {
+      if (key === "upload") return "done";
+      if (key === "analyze") return "active";
+      return "pending";
+    }
+    if (phase === "ready") return "done";
+    if (phase === "error") {
+      if (key === "upload") return "done";
+      return "error";
+    }
+    return "pending";
+  }
+
+  const icons = { pending: "·", active: "…", done: "✓", error: "!" };
+
+  const stepsHtml = steps.map((s) => {
+    const st = stepState(s.key);
+    const detail = s.detail[phase] || "";
+    return `
+      <li class="ws-step ${st}">
+        <div class="ws-step-icon">${icons[st]}</div>
+        <div class="ws-step-body">
+          <p class="ws-step-title">${s.title}</p>
+          ${detail ? `<p class="ws-step-detail">${detail}</p>` : ""}
+        </div>
+      </li>`;
+  }).join("");
+
+  let extraHtml = "";
+  if (phase === "ready" && opts.summary) {
+    const s = opts.summary;
+    extraHtml = `
+      <div class="ws-summary">
+        <div><span class="ws-stat-val">${s.master_count ?? "—"}</span><span class="ws-stat-lbl">主表公司</span></div>
+        <div><span class="ws-stat-val">${s.review_count ?? "—"}</span><span class="ws-stat-lbl">待確認</span></div>
+        <div><span class="ws-stat-val">${s.candidate_count ?? "—"}</span><span class="ws-stat-lbl">新增候選</span></div>
+      </div>
+      <button class="ws-goto-btn" id="wsGotoBtn">前往總覽 →</button>`;
+  }
+  if (phase === "error" && opts.error) {
+    extraHtml = `<div class="ws-error-msg">${opts.error}</div>`;
+  }
+
+  el.innerHTML = `
+    <p class="workspace-eyebrow">工作進度</p>
+    <ul class="ws-steps">${stepsHtml}</ul>
+    ${extraHtml}`;
+
+  // 綁 goto 按鈕
+  document.getElementById("wsGotoBtn")?.addEventListener("click", () => setView("overview"));
+}
+
 async function createTaskFromUpload(onStatus) {
   const formData = new FormData();
   formData.append("task_name", elements.taskNameInput.value.trim() || "未命名任務");
   formData.append("chart1", state.chart1File);
   formData.append("chart2", state.chart2File);
 
+  renderWorkspace("uploading");
   if (onStatus) onStatus("上傳中…");
   const initTask = await apiPost("/api/tasks/analyze", formData, true);
 
+  renderWorkspace("processing", { msg: "AI 辨識中，請稍候…" });
   if (onStatus) onStatus("AI 辨識中，請稍候…");
   const elapsed = (tick) => {
     const secs = tick * 4;
-    if (onStatus) onStatus(`AI 辨識中… 已等候 ${secs} 秒`);
+    const msg = `Qwen-VL 辨識中… 已等候 ${secs} 秒`;
+    renderWorkspace("processing", { msg });
+    if (onStatus) onStatus(msg);
   };
-  const task = await pollTask(initTask.id, elapsed);
-  hydrateTask(task);
-  setView("overview");
+
+  try {
+    const task = await pollTask(initTask.id, elapsed);
+    hydrateTask(task);
+    renderWorkspace("ready", { summary: task.summary });
+    // 不立刻切頁，讓使用者看到摘要後自行點「前往總覽」
+  } catch (err) {
+    renderWorkspace("error", { error: err.message });
+    throw err;
+  }
 }
 
 async function createDemoTask() {
@@ -1206,12 +1317,12 @@ function bindEvents() {
   });
   elements.chart1Input.addEventListener("change", (event) => {
     state.chart1File = event.target.files[0];
-    setPreview(state.chart1File, elements.chart1Meta, elements.chart1Preview);
+    setPreview(state.chart1File, elements.chart1Meta, elements.chart1Preview, document.getElementById("dz1"));
     enableStartIfReady();
   });
   elements.chart2Input.addEventListener("change", (event) => {
     state.chart2File = event.target.files[0];
-    setPreview(state.chart2File, elements.chart2Meta, elements.chart2Preview);
+    setPreview(state.chart2File, elements.chart2Meta, elements.chart2Preview, document.getElementById("dz2"));
     enableStartIfReady();
   });
   elements.taskNameInput.addEventListener("input", (event) => {
