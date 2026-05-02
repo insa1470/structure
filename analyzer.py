@@ -18,6 +18,8 @@ from pathlib import Path
 QWEN_MODEL = "qwen2.5-vl-72b-instruct"
 
 LEVEL_LABELS = {0: "頂層主體", 1: "一級子公司", 2: "二級子公司", 3: "三級子公司"}
+ACTIVE_COMPANY_MARKERS = ("存续", "存續", "在业", "在業", "开业", "開業", "仍注册", "仍註冊")
+INACTIVE_COMPANY_MARKERS = ("注销", "註銷", "吊销", "吊銷", "清算", "停业", "停業", "歇业", "歇業")
 
 PROMPT_CHART1 = """這是一張企業股權結構圖。方框代表公司，連線代表股權關係。圖可能左右展開，層級以連線方向為準，不以版面位置上下為準。
 
@@ -92,7 +94,7 @@ def _encode_image(image_path: Path) -> tuple[str, str]:
             return base64.b64encode(f.read()).decode("utf-8"), mime
 
 
-MAX_RETRIES = 3  # JSON 解析失敗時最多重試次數
+MAX_RETRIES = 1  # JSON 解析失敗時最多重試次數（失敗就讓用戶重傳，不要讓他等太久）
 
 def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
     """呼叫 Qwen-VL，回傳解析後的 list。JSON 解析失敗時自動重試最多 MAX_RETRIES 次。"""
@@ -272,6 +274,79 @@ def _fuzzy_match(name_a: str, name_b: str) -> float:
     return SequenceMatcher(None, name_a, name_b).ratio()
 
 
+def _normalize_text(value: object) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().split())
+
+
+def _is_active_company_status(status: str | None) -> bool:
+    normalized = _normalize_text(status)
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in INACTIVE_COMPANY_MARKERS):
+        return False
+    return any(marker in normalized for marker in ACTIVE_COMPANY_MARKERS)
+
+
+def _parse_level(value: object, default: int = 0) -> int:
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _sanitize_chart1_nodes(chart1_nodes: list[dict]) -> list[dict]:
+    cleaned: list[dict] = []
+    seen_companies: set[str] = set()
+
+    for node in chart1_nodes:
+        company = _normalize_text(node.get("company"))
+        if not company:
+            continue
+        if company in seen_companies:
+            continue
+        seen_companies.add(company)
+
+        parent = _normalize_text(node.get("parent")) or None
+        if parent == company:
+            parent = None
+
+        cleaned.append({
+            "company": company,
+            "parent": parent,
+            "shareholding_ratio": _normalize_text(node.get("shareholding_ratio")) or None,
+            "level": _parse_level(node.get("level"), 0),
+            "uncertain": bool(node.get("uncertain", False)),
+        })
+
+    companies = {node["company"] for node in cleaned}
+    parent_levels = {node["company"]: node["level"] for node in cleaned}
+    roots = [node for node in cleaned if not node.get("parent")]
+
+    for node in cleaned:
+        parent = node.get("parent")
+        if parent and parent not in companies:
+            node["parent"] = None
+            node["uncertain"] = True
+            continue
+        if parent:
+            expected_level = parent_levels.get(parent, 0) + 1
+            if node["level"] <= parent_levels.get(parent, -1):
+                node["level"] = expected_level
+                node["uncertain"] = True
+        else:
+            if node["level"] != 0:
+                node["level"] = 0
+                node["uncertain"] = True
+
+    if len(roots) > 1:
+        for node in roots[1:]:
+            node["uncertain"] = True
+
+    return cleaned
+
+
 def _find_best_match(name: str, candidates: list[dict], threshold: float = 0.85) -> tuple[dict | None, float]:
     best, best_score = None, 0.0
     for c in candidates:
@@ -293,7 +368,7 @@ def analyze_chart1(image_path: Path) -> list[dict]:
             "level": item.get("level") if item.get("level") is not None else (item.get("l") or 0),
             "uncertain": item.get("uncertain", False),
         })
-    return result
+    return _sanitize_chart1_nodes(result)
 
 
 def analyze_chart2(image_path: Path) -> list[dict]:
@@ -301,16 +376,18 @@ def analyze_chart2(image_path: Path) -> list[dict]:
     raw = _call_qwen_vl(image_path, PROMPT_CHART2)
     result = []
     for item in raw:
-        result.append({
-            "company": item.get("company") or item.get("c") or "",
-            "legal_representative": item.get("legal_representative") or item.get("lr") or None,
-            "registered_capital": item.get("registered_capital") or item.get("rc") or None,
-            "established_date": item.get("established_date") or item.get("ed") or None,
-            "company_status": item.get("company_status") or item.get("cs") or None,
-            "subsidiary_level_label": item.get("subsidiary_level_label") or item.get("sl") or None,
-            "actual_controller_share": item.get("actual_controller_share") or item.get("ac") or None,
+        row = {
+            "company": _normalize_text(item.get("company") or item.get("c") or ""),
+            "legal_representative": _normalize_text(item.get("legal_representative") or item.get("lr") or None) or None,
+            "registered_capital": _normalize_text(item.get("registered_capital") or item.get("rc") or None) or None,
+            "established_date": _normalize_text(item.get("established_date") or item.get("ed") or None) or None,
+            "company_status": _normalize_text(item.get("company_status") or item.get("cs") or None) or None,
+            "subsidiary_level_label": _normalize_text(item.get("subsidiary_level_label") or item.get("sl") or None) or None,
+            "actual_controller_share": _normalize_text(item.get("actual_controller_share") or item.get("ac") or None) or None,
             "uncertain": item.get("uncertain", False),
-        })
+        }
+        if row["company"] and _is_active_company_status(row["company_status"]):
+            result.append(row)
     return result
 
 
@@ -447,42 +524,165 @@ def merge_charts(
     return master_rows, review_rows, candidate_rows
 
 
-def run_analysis(chart1_path: Path, chart2_path: Path) -> dict:
-    """完整分析流程入口。"""
+def _make_graph(master_rows: list[dict]) -> dict:
+    return {
+        "nodes": [{"id": r["node_id"], "label": r["canonical_name"], "level": r["chart1_level"]} for r in master_rows],
+        "edges": [
+            {"source": r["chart1_parent"], "target": r["node_id"], "ratio": r["actual_controller_share"]}
+            for r in master_rows if r.get("chart1_parent")
+        ],
+    }
+
+
+def _make_summary(master_rows: list[dict], review_rows: list[dict], candidate_rows: list[dict]) -> dict:
+    return {
+        "master_count": len(master_rows),
+        "enriched_count": sum(1 for r in master_rows if r.get("node_status") == "enriched"),
+        "review_count": len(review_rows),
+        "chart1_only_count": sum(1 for r in master_rows if r.get("node_status") == "chart1_only"),
+        "candidate_count": len(candidate_rows),
+    }
+
+
+def run_chart1_stage(chart1_path: Path) -> dict:
+    """第一階段：只分析圖一，回傳骨架主表（全部為 chart1_only 狀態）。"""
     chart1_nodes = analyze_chart1(chart1_path)
+
+    master_rows: list[dict] = []
+    node_ids: dict[str, str] = {}
+
+    def get_node_id(name: str) -> str:
+        if name not in node_ids:
+            node_ids[name] = f"N{len(node_ids) + 1:03d}"
+        return node_ids[name]
+
+    for node in chart1_nodes:
+        company = node.get("company", "").strip()
+        parent_name = node.get("parent") or ""
+        level = node.get("level", 0)
+        ratio = node.get("shareholding_ratio") or ""
+        node_id = get_node_id(company)
+        parent_id = get_node_id(parent_name) if parent_name else ""
+        master_rows.append({
+            "node_id": node_id,
+            "chart1_name": company,
+            "canonical_name": company,
+            "chart1_level": level,
+            "chart1_parent": parent_id,
+            "chart1_parent_name": parent_name,
+            "matched_chart2_name": "",
+            "legal_representative": "",
+            "established_date": "",
+            "registered_capital": "",
+            "actual_controller_share": ratio,
+            "subsidiary_level_label": LEVEL_LABELS.get(level, ""),
+            "company_status": "",
+            "match_status": "chart1_only",
+            "node_status": "chart1_only",
+            "review_flag": "",
+            "review_note": "",
+        })
+
+    return {
+        "master_rows": master_rows,
+        "review_rows": [],
+        "candidate_rows": [],
+        "summary": _make_summary(master_rows, [], []),
+        "graph": _make_graph(master_rows),
+    }
+
+
+def enrich_with_chart2(existing_master_rows: list[dict], chart2_path: Path) -> dict:
+    """第二階段：用圖二補充現有主表，保留用戶已調整的結構（層級、父層、名稱）。
+
+    只更新補充欄位：legal_representative, registered_capital, established_date,
+    actual_controller_share, company_status, subsidiary_level_label。
+    不動：node_id, canonical_name, chart1_level, chart1_parent, chart1_parent_name。
+    """
     chart2_attrs = analyze_chart2(chart2_path)
-    master_rows, review_rows, candidate_rows = merge_charts(chart1_nodes, chart2_attrs)
+
+    master_rows = [dict(r) for r in existing_master_rows]  # 深拷貝，不改原始資料
+    review_rows: list[dict] = []
+    candidate_rows: list[dict] = []
+    matched_chart2: set[str] = set()
+
+    for row in master_rows:
+        company = row.get("canonical_name") or row.get("chart1_name", "")
+        chart2_match, match_score = _find_best_match(company, chart2_attrs)
+
+        if chart2_match and match_score >= 0.85:
+            matched_chart2.add(chart2_match.get("company", ""))
+            # 只更新補充欄位
+            row["matched_chart2_name"] = chart2_match.get("company", "")
+            row["legal_representative"] = chart2_match.get("legal_representative") or row.get("legal_representative", "")
+            row["established_date"] = chart2_match.get("established_date") or row.get("established_date", "")
+            row["registered_capital"] = chart2_match.get("registered_capital") or row.get("registered_capital", "")
+            row["actual_controller_share"] = chart2_match.get("actual_controller_share") or row.get("actual_controller_share", "")
+            row["subsidiary_level_label"] = chart2_match.get("subsidiary_level_label") or row.get("subsidiary_level_label", "")
+            row["company_status"] = chart2_match.get("company_status") or row.get("company_status", "")
+            row["match_status"] = "matched"
+            row["node_status"] = "enriched"
+            row["review_flag"] = ""
+            row["review_note"] = ""
+            matched_chart2.add(chart2_match.get("company", ""))
+        elif chart2_match and match_score >= 0.6:
+            row["matched_chart2_name"] = chart2_match.get("company", "")
+            row["match_status"] = "review_match"
+            row["node_status"] = "review_match"
+            row["review_flag"] = "yes"
+            row["review_note"] = f"模糊比對，相似度 {match_score:.2f}"
+            review_rows.append({
+                "issue_type": "review_match",
+                "chart1_name": company,
+                "chart2_name": chart2_match.get("company", ""),
+                "candidate_node_id": row["node_id"],
+                "match_score": f"{match_score:.4f}",
+                "recommended_action": "confirm_match_or_reject",
+                "review_status": "pending",
+                "review_note": f"模糊比對分數 {match_score:.2f}",
+            })
+        else:
+            row["node_status"] = "chart1_only"
+            row["review_flag"] = "yes"
+            review_rows.append({
+                "issue_type": "chart1_only",
+                "chart1_name": company,
+                "chart2_name": "",
+                "candidate_node_id": row["node_id"],
+                "match_score": "",
+                "recommended_action": "check_if_chart2_missing_or_inactive",
+                "review_status": "pending",
+                "review_note": "圖二無安全的對應項目",
+            })
+
+    for attr in chart2_attrs:
+        company = attr.get("company", "").strip()
+        if company and company not in matched_chart2:
+            candidate_rows.append({
+                "node_id": f"C{uuid.uuid4().hex[:6].upper()}",
+                "company": company,
+                "chart2_name": company,
+                "legal_representative": attr.get("legal_representative") or "",
+                "established_date": attr.get("established_date") or "",
+                "registered_capital": attr.get("registered_capital") or "",
+                "actual_controller_share": attr.get("actual_controller_share") or "",
+                "subsidiary_level_label": attr.get("subsidiary_level_label") or "",
+                "company_status": attr.get("company_status") or "",
+                "suggested_parent": "",
+                "decision": "pending",
+                "note": "圖二獨有，圖一無對應節點",
+            })
 
     return {
         "master_rows": master_rows,
         "review_rows": review_rows,
         "candidate_rows": candidate_rows,
-        "summary": {
-            "master_count": len(master_rows),
-            "enriched_count": sum(1 for r in master_rows if r.get("node_status") == "enriched"),
-            "review_count": len(review_rows),
-            "chart1_only_count": sum(1 for r in master_rows if r.get("node_status") == "chart1_only"),
-            "candidate_count": len(candidate_rows),
-        },
-        "graph": {
-            "nodes": [
-                {"id": r["node_id"], "label": r["canonical_name"], "level": r["chart1_level"]}
-                for r in master_rows
-            ],
-            "edges": [
-                {
-                    "source": r["chart1_parent"],
-                    "target": r["node_id"],
-                    "ratio": r["actual_controller_share"],
-                }
-                for r in master_rows
-                if r.get("chart1_parent")
-            ],
-            "stage2": {
-                "status": "reserved",
-                "ready_after_review": True,
-                "target_output": "equity_structure_chart",
-                "note": "第二階段：審核完成後生成最終股權架構圖。",
-            },
-        },
+        "summary": _make_summary(master_rows, review_rows, candidate_rows),
+        "graph": _make_graph(master_rows),
     }
+
+
+def run_analysis(chart1_path: Path, chart2_path: Path) -> dict:
+    """完整分析流程（舊介面相容用，server.py 直接呼叫兩段式）。"""
+    stage1 = run_chart1_stage(chart1_path)
+    return enrich_with_chart2(stage1["master_rows"], chart2_path)

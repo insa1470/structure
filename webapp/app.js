@@ -26,9 +26,7 @@ const elements = {
   chart2Preview: document.getElementById("chart2Preview"),
   taskNameInput: document.getElementById("taskNameInput"),
   startAnalysisBtn: document.getElementById("startAnalysisBtn"),
-  loadDemoBtn: document.getElementById("loadDemoBtn"),
   exportBtn: document.getElementById("exportBtn"),
-  modeBadge: document.getElementById("modeBadge"),
   metricsGrid: document.getElementById("metricsGrid"),
   overviewWarnings: document.getElementById("overviewWarnings"),
   reviewListTitle: document.getElementById("reviewListTitle"),
@@ -107,14 +105,7 @@ function recommendationText(action) {
 }
 
 function updateTaskBadge() {
-  elements.modeBadge.textContent = state.taskId ? `任務 ${state.taskId}` : "尚未建立任務";
-  const copy = document.getElementById("statusCopy");
-  if (!copy) return;
-  if (state.taskId) {
-    copy.textContent = "任務已載入。可從左側導覽切換各審核階段。";
-  } else {
-    copy.textContent = "上傳兩張圖，系統會先整理，再只把少數不確定項目交給使用者決定。";
-  }
+  return;
 }
 
 function setView(viewName) {
@@ -153,15 +144,11 @@ function showAnalysisBanner(task) {
   // 移除舊橫幅
   document.getElementById("analysisBanner")?.remove();
 
-  const isDemo = !task.source_files?.chart1 || task.source_files?.chart1 === "demo_chart1.png";
   const warning = task.analysis_warning;
   const mode = task.analysis_mode || "unknown";
 
   let msg = "", type = "";
-  if (isDemo) {
-    msg = "目前顯示的是示範資料，並非您上傳的圖片。";
-    type = "banner-info";
-  } else if (warning) {
+  if (warning) {
     msg = `⚠ AI 辨識未成功，目前顯示示範資料，非本次上傳內容。<br><small>${warning}</small>`;
     type = "banner-warn";
   } else if (mode === "qwen_vl") {
@@ -191,6 +178,21 @@ function hydrateTask(task) {
   updateTaskBadge();
   showAnalysisBanner(task);
   renderOverview(task.summary || {});
+  renderReviewList();
+  renderReviewDetail();
+  renderCandidateList();
+  renderCandidateDetail();
+  renderResults();
+}
+
+function applyTaskRefresh(payload) {
+  if (!payload) return;
+  if (payload.master_rows) state.masterRows = payload.master_rows;
+  if (payload.review_rows) state.reviewRows = payload.review_rows.filter((row) => row.issue_type !== "chart2_only");
+  if (payload.candidate_rows) state.candidateRows = payload.candidate_rows;
+  if (payload.review_decisions) state.reviewDecisions = payload.review_decisions;
+  if (payload.candidate_decisions) state.candidateDecisions = payload.candidate_decisions;
+  renderOverview(payload.summary || {});
   renderReviewList();
   renderReviewDetail();
   renderCandidateList();
@@ -319,9 +321,7 @@ function renderReviewDetail() {
       note: document.getElementById("reviewNote").value,
     };
     const response = await apiPost("/api/review-decision", payload);
-    state.reviewDecisions = response.review_decisions || {};
-    renderReviewList();
-    renderResults();
+    applyTaskRefresh(response);
   });
   document.getElementById("reviewPrevBtn").addEventListener("click", () => {
     state.selectedReviewIndex = Math.max(0, state.selectedReviewIndex - 1);
@@ -432,8 +432,10 @@ function renderCandidateDetail() {
       note: document.getElementById("candidateNote").value,
     };
     const response = await apiPost("/api/candidate-decision", payload);
-    state.candidateDecisions = response.candidate_decisions || {};
-    renderCandidateList();
+    if (state.selectedCandidateIndex >= Math.max((response.candidate_rows || state.candidateRows).length, 1)) {
+      state.selectedCandidateIndex = Math.max((response.candidate_rows || state.candidateRows).length - 1, 0);
+    }
+    applyTaskRefresh(response);
   });
   document.getElementById("candidatePrevBtn").addEventListener("click", () => {
     state.selectedCandidateIndex = Math.max(0, state.selectedCandidateIndex - 1);
@@ -571,7 +573,7 @@ function attachNameEdit(td, row) {
           const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
             node_id: row.node_id, canonical_name: newVal,
           });
-          state.masterRows = result.master_rows || state.masterRows;
+          applyTaskRefresh(result);
         } catch (err) {
           console.error(err);
           nameSpan.textContent = curName;
@@ -637,7 +639,7 @@ function makeEditable(cell, row, field, displayValue) {
             [field]: newRaw,
           });
         }
-        state.masterRows = result.master_rows || state.masterRows;
+        applyTaskRefresh(result);
         // 連動時重新渲染整張表
         if (CASCADE_FIELDS.has(field)) renderResults();
       } catch (e) {
@@ -727,8 +729,7 @@ function renderResults() {
       if (!confirm(`確定要從主表移除「${row.canonical_name || row.chart1_name}」嗎？`)) return;
       try {
         const result = await apiPost(`/api/tasks/${state.taskId}/delete-row`, { node_id: row.node_id });
-        state.masterRows = result.master_rows || state.masterRows;
-        renderResults();
+        applyTaskRefresh(result);
       } catch (err) { console.error("刪除失敗", err); }
     });
     delTd.appendChild(delBtn);
@@ -816,109 +817,129 @@ function renderResults() {
   });
 }
 
-async function pollTask(taskId, onTick) {
-  const MAX_MS = 12 * 60 * 1000; // 12 分鐘上限
-  const INTERVAL = 4000;          // 每 4 秒查一次
+// 輪詢任務狀態，回呼 onStatus(task) 讓呼叫端更新 UI
+// 終止條件：ready / error / chart2_error
+async function pollTask(taskId, onStatus) {
+  const MAX_MS = 12 * 60 * 1000;
+  const INTERVAL = 4000;
   const start = Date.now();
-  let tick = 0;
   while (Date.now() - start < MAX_MS) {
     await new Promise((r) => setTimeout(r, INTERVAL));
-    tick++;
-    if (onTick) onTick(tick);
     const task = await apiGet(`/api/tasks/${taskId}`);
+    if (onStatus) onStatus(task);
     if (task.status === "ready") return task;
+    if (task.status === "chart2_error") return task;  // 圖一成功但圖二失敗
     if (task.status === "error") throw new Error(task.error || "AI 辨識失敗，請重試");
-    // status === "processing" → 繼續等
+    // processing / chart1_ready / processing_chart2 → 繼續等
   }
   throw new Error("分析逾時（超過 12 分鐘），請重試或裁切圖片後再上傳");
 }
 
 // ── 工作區渲染 ────────────────────────────────────────────────
-// phase: "idle" | "uploading" | "processing" | "ready" | "error"
+// phase: "idle"|"uploading"|"processing"|"chart1_ready"|"processing_chart2"
+//        |"ready"|"chart2_error"|"error"
 function renderWorkspace(phase, opts = {}) {
   const el = document.getElementById("workspaceContent");
   if (!el) return;
 
-  // step 設定
-  const steps = [
-    {
-      key: "upload",
-      title: "上傳圖片",
-      detail: {
-        idle: "等待開始",
-        uploading: "上傳圖一與圖二至伺服器…",
-        processing: `圖一：${state.chart1File?.name || "—"} · 圖二：${state.chart2File?.name || "—"}`,
-        ready: `圖一：${state.chart1File?.name || "—"} · 圖二：${state.chart2File?.name || "—"}`,
-        error: `圖一：${state.chart1File?.name || "—"} · 圖二：${state.chart2File?.name || "—"}`,
-      },
-    },
-    {
-      key: "analyze",
-      title: "AI 辨識圖一（結構骨架）",
-      detail: {
-        idle: "等待上傳",
-        uploading: "等待上傳完成",
-        processing: opts.msg || "Qwen-VL 辨識中…",
-        ready: `辨識完成`,
-        error: "辨識未完成",
-      },
-    },
-    {
-      key: "enrich",
-      title: "AI 辨識圖二（補充資訊）",
-      detail: {
-        idle: "等待上傳",
-        uploading: "等待辨識圖一",
-        processing: opts.msg || "Qwen-VL 辨識中…",
-        ready: "資訊補充完成",
-        error: "辨識未完成",
-      },
-    },
-  ];
+  const c1name = state.chart1File?.name || "—";
+  const c2name = state.chart2File?.name || "—";
 
-  // 每個 step 的狀態
-  function stepState(key) {
-    if (phase === "idle") return "pending";
-    if (phase === "uploading") return key === "upload" ? "active" : "pending";
-    if (phase === "processing") {
-      if (key === "upload") return "done";
-      if (key === "analyze") return "active";
-      return "pending";
+  // ── 每個步驟的狀態 ────────────────────────────────────────
+  function ss(key) {
+    switch (phase) {
+      case "idle":              return "pending";
+      case "uploading":         return key === "upload" ? "active" : "pending";
+      case "processing":        return key === "upload" ? "done" : key === "chart1" ? "active" : "pending";
+      case "chart1_ready":      return key === "enrich" ? "active" : "done";
+      case "processing_chart2": return key === "enrich" ? "active" : "done";
+      case "ready":             return "done";
+      case "chart2_error":      return key === "enrich" ? "error" : "done";
+      case "error":             return key === "upload" ? "error" : "pending";
+      default:                  return "pending";
     }
-    if (phase === "ready") return "done";
-    if (phase === "error") {
-      if (key === "upload") return "done";
-      return "error";
+  }
+
+  function detail(key) {
+    if (key === "upload") {
+      if (phase === "idle") return "等待開始";
+      if (phase === "uploading") return "上傳圖一與圖二至伺服器…";
+      return `${c1name} · ${c2name}`;
     }
-    return "pending";
+    if (key === "chart1") {
+      if (phase === "idle" || phase === "uploading") return "等待上傳完成";
+      if (phase === "processing") return opts.msg || "辨識中…";
+      if (phase === "chart1_ready" || phase === "processing_chart2" || phase === "ready") {
+        const s = opts.summary || {};
+        return `完成 — ${s.master_count ?? "?"} 間公司`;
+      }
+      if (phase === "chart2_error") {
+        const s = opts.summary || {};
+        return `完成 — ${s.master_count ?? "?"} 間公司`;
+      }
+      return "—";
+    }
+    if (key === "enrich") {
+      if (phase === "idle" || phase === "uploading" || phase === "processing") return "等待圖一完成";
+      if (phase === "chart1_ready") return "準備辨識圖二…";
+      if (phase === "processing_chart2") return opts.msg || "辨識中…";
+      if (phase === "ready") return "補充完成";
+      if (phase === "chart2_error") return "辨識失敗，可重新上傳圖二";
+      return "—";
+    }
+    return "";
   }
 
   const icons = { pending: "·", active: "…", done: "✓", error: "!" };
+  const stepDefs = [
+    { key: "upload", title: "上傳圖片" },
+    { key: "chart1", title: "圖一辨識（結構骨架）" },
+    { key: "enrich", title: "圖二辨識（補充資訊）" },
+  ];
 
-  const stepsHtml = steps.map((s) => {
-    const st = stepState(s.key);
-    const detail = s.detail[phase] || "";
+  const stepsHtml = stepDefs.map((s) => {
+    const st = ss(s.key);
+    const d = detail(s.key);
     return `
       <li class="ws-step ${st}">
         <div class="ws-step-icon">${icons[st]}</div>
         <div class="ws-step-body">
           <p class="ws-step-title">${s.title}</p>
-          ${detail ? `<p class="ws-step-detail">${detail}</p>` : ""}
+          ${d ? `<p class="ws-step-detail">${d}</p>` : ""}
         </div>
       </li>`;
   }).join("");
 
+  // ── 額外區塊 ──────────────────────────────────────────────
   let extraHtml = "";
-  if (phase === "ready" && opts.summary) {
+
+  if ((phase === "ready" || phase === "chart1_ready") && opts.summary) {
     const s = opts.summary;
     extraHtml = `
       <div class="ws-summary">
         <div><span class="ws-stat-val">${s.master_count ?? "—"}</span><span class="ws-stat-lbl">主表公司</span></div>
         <div><span class="ws-stat-val">${s.review_count ?? "—"}</span><span class="ws-stat-lbl">待確認</span></div>
-        <div><span class="ws-stat-val">${s.candidate_count ?? "—"}</span><span class="ws-stat-lbl">新增候選</span></div>
+        <div><span class="ws-stat-val">${s.candidate_count ?? "—"}</span><span class="ws-stat-lbl">候選</span></div>
       </div>
       <button class="ws-goto-btn" id="wsGotoBtn">前往總覽 →</button>`;
   }
+
+  if (phase === "chart2_error") {
+    const s = opts.summary || {};
+    extraHtml = `
+      <div class="ws-summary">
+        <div><span class="ws-stat-val">${s.master_count ?? "—"}</span><span class="ws-stat-lbl">主表公司</span></div>
+        <div><span class="ws-stat-val">—</span><span class="ws-stat-lbl">待確認</span></div>
+        <div><span class="ws-stat-val">—</span><span class="ws-stat-lbl">候選</span></div>
+      </div>
+      <div class="ws-error-msg">圖二辨識失敗。圖一結構已保存，可先查看主表，或重新上傳圖二補充資訊。</div>
+      <label class="ws-retry-label">
+        <span>重新上傳圖二</span>
+        <input type="file" id="wsChart2Retry" accept="image/*" />
+      </label>
+      <button class="ws-goto-btn ws-goto-outline" id="wsGotoBtn">查看圖一結果 →</button>`;
+  }
+
   if (phase === "error" && opts.error) {
     extraHtml = `<div class="ws-error-msg">${opts.error}</div>`;
   }
@@ -928,8 +949,34 @@ function renderWorkspace(phase, opts = {}) {
     <ul class="ws-steps">${stepsHtml}</ul>
     ${extraHtml}`;
 
-  // 綁 goto 按鈕
+  // ── 事件綁定 ──────────────────────────────────────────────
   document.getElementById("wsGotoBtn")?.addEventListener("click", () => setView("overview"));
+
+  const retryInput = document.getElementById("wsChart2Retry");
+  if (retryInput) {
+    retryInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file || !state.taskId) return;
+      renderWorkspace("processing_chart2", { msg: "重新上傳圖二中…" });
+      try {
+        const fd = new FormData();
+        fd.append("chart2", file);
+        await apiPost(`/api/tasks/${state.taskId}/analyze-chart2`, fd, true);
+        renderWorkspace("processing_chart2", { msg: "圖二辨識中…" });
+        const task = await pollTask(state.taskId, (t) => {
+          if (t.status === "ready") hydrateTask(t);
+        });
+        hydrateTask(task);
+        if (task.status === "chart2_error") {
+          renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+        } else {
+          renderWorkspace("ready", { summary: task.summary });
+        }
+      } catch (err) {
+        renderWorkspace("error", { error: err.message });
+      }
+    });
+  }
 }
 
 async function createTaskFromUpload(onStatus) {
@@ -942,31 +989,38 @@ async function createTaskFromUpload(onStatus) {
   if (onStatus) onStatus("上傳中…");
   const initTask = await apiPost("/api/tasks/analyze", formData, true);
 
-  renderWorkspace("processing", { msg: "AI 辨識中，請稍候…" });
+  renderWorkspace("processing", { msg: "圖一辨識中…" });
   if (onStatus) onStatus("AI 辨識中，請稍候…");
-  const elapsed = (tick) => {
-    const secs = tick * 4;
-    const msg = `Qwen-VL 辨識中… 已等候 ${secs} 秒`;
-    renderWorkspace("processing", { msg });
-    if (onStatus) onStatus(msg);
-  };
 
   try {
-    const task = await pollTask(initTask.id, elapsed);
+    const task = await pollTask(initTask.id, (t) => {
+      // 根據 task.status 動態更新工作區
+      if (t.status === "chart1_ready") {
+        // 圖一完成：先顯示部分結果，讓用戶看到骨架
+        hydrateTask(t);
+        renderWorkspace("chart1_ready", { summary: t.summary });
+      } else if (t.status === "processing_chart2") {
+        renderWorkspace("processing_chart2", { msg: "圖二辨識中…" });
+      } else {
+        const secs = Math.round((Date.now() - _analysisStart) / 1000);
+        renderWorkspace("processing", { msg: `辨識中… 已等候 ${secs} 秒` });
+      }
+      if (onStatus) onStatus(t.status);
+    });
+
     hydrateTask(task);
-    renderWorkspace("ready", { summary: task.summary });
-    // 不立刻切頁，讓使用者看到摘要後自行點「前往總覽」
+    if (task.status === "chart2_error") {
+      renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+    } else {
+      renderWorkspace("ready", { summary: task.summary });
+    }
   } catch (err) {
     renderWorkspace("error", { error: err.message });
     throw err;
   }
 }
 
-async function createDemoTask() {
-  const task = await apiGet("/api/demo-task");
-  hydrateTask(task);
-  setView("overview");
-}
+let _analysisStart = 0;
 
 function exportWorkbook() {
   if (!window.XLSX) {
@@ -1350,14 +1404,6 @@ function bindEvents() {
       enableStartIfReady();
     }
   });
-  elements.loadDemoBtn.addEventListener("click", async () => {
-    try {
-      await createDemoTask();
-    } catch (error) {
-      console.error(error);
-      alert("目前無法載入示範任務。");
-    }
-  });
   elements.searchInput.addEventListener("input", renderResults);
   elements.statusFilter.addEventListener("change", renderResults);
   elements.exportBtn.addEventListener("click", exportWorkbook);
@@ -1371,4 +1417,3 @@ updateTaskBadge();
 
 // 頁面載入時靜默 ping 後端，提前喚醒 Railway（冷啟動可能需 10–30 秒）
 fetch(API_BASE + "/api/health").catch(() => {});
-

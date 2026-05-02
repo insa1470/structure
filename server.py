@@ -62,6 +62,86 @@ def summary_from_rows(master_rows, review_rows, candidate_rows) -> dict:
     }
 
 
+def level_label(level: int) -> str:
+    if level <= 0:
+        return "集團本級"
+    labels = {
+        1: "一級子公司",
+        2: "二級子公司",
+        3: "三級子公司",
+        4: "四級子公司",
+    }
+    return labels.get(level, f"{level}級子公司")
+
+
+def parse_level_value(value) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.search(r"\d+", text)
+    if match:
+        return int(match.group(0))
+    chinese = {
+        "集團本級": 0,
+        "頂層主體": 0,
+        "一級子公司": 1,
+        "二級子公司": 2,
+        "三級子公司": 3,
+        "四級子公司": 4,
+        "五級子公司": 5,
+    }
+    return chinese.get(text)
+
+
+def find_row_by_name(master_rows: list[dict], name: str) -> dict | None:
+    target = str(name or "").strip()
+    if not target:
+        return None
+    for row in master_rows:
+        if target in {str(row.get("canonical_name", "")).strip(), str(row.get("chart1_name", "")).strip()}:
+            return row
+    return None
+
+
+def refresh_children_parent_names(master_rows: list[dict], parent_id: str, parent_name: str) -> None:
+    for row in master_rows:
+        if row.get("chart1_parent") == parent_id:
+            row["chart1_parent_name"] = parent_name
+
+
+def rebuild_task_state(task: dict) -> None:
+    from analyzer import _make_graph
+
+    task["summary"] = summary_from_rows(
+        task.get("master_rows", []),
+        task.get("review_rows", []),
+        task.get("candidate_rows", []),
+    )
+    task["graph"] = _make_graph(task.get("master_rows", []))
+
+
+def update_review_status(task: dict, key: str, decision: str, note: str = "") -> None:
+    for row in task.get("review_rows", []):
+        row_key = row.get("candidate_node_id") or row.get("chart2_name")
+        if row_key == key:
+            row["review_status"] = "done" if decision and decision != "暫不處理" else "pending"
+            if note:
+                row["review_note"] = note
+            break
+
+
+def apply_chart2_attrs_to_row(target_row: dict, candidate_row: dict) -> None:
+    target_row["matched_chart2_name"] = candidate_row.get("chart2_name", "") or candidate_row.get("company", "")
+    target_row["legal_representative"] = candidate_row.get("legal_representative", "")
+    target_row["established_date"] = candidate_row.get("established_date", "")
+    target_row["registered_capital"] = candidate_row.get("registered_capital", "")
+    target_row["actual_controller_share"] = candidate_row.get("actual_controller_share", "") or target_row.get("actual_controller_share", "")
+    target_row["subsidiary_level_label"] = candidate_row.get("subsidiary_level_label", "") or target_row.get("subsidiary_level_label", "")
+    target_row["company_status"] = candidate_row.get("company_status", "")
+
+
 def load_sample_payload() -> dict:
     out_dir = BASE_DIR / "reconciliation_outputs"
     master_rows = parse_csv(out_dir / "master_nodes_enriched.csv")
@@ -206,23 +286,43 @@ def analyze():
     }
     save_task(task)
 
-    # 背景執行 Qwen-VL 分析
+    # 背景執行兩段式 Qwen-VL 分析
     def run_async():
+        # ── 第一階段：圖一骨架 ──────────────────────────────────
         try:
-            from analyzer import run_analysis
-            analysis = run_analysis(c1_path, c2_path)
-            # 直接更新欄位，不覆蓋 task_id
-            task["status"] = "ready"
+            from analyzer import run_chart1_stage
+            stage1 = run_chart1_stage(c1_path)
+            task["status"] = "chart1_ready"
             task["analysis_mode"] = "qwen_vl"
-            task["summary"] = analysis["summary"]
-            task["master_rows"] = analysis["master_rows"]
-            task["review_rows"] = analysis["review_rows"]
-            task["candidate_rows"] = analysis["candidate_rows"]
-            task["graph"] = analysis["graph"]
+            task["summary"] = stage1["summary"]
+            task["master_rows"] = stage1["master_rows"]
+            task["review_rows"] = []
+            task["candidate_rows"] = []
+            task["graph"] = stage1["graph"]
             task["error"] = ""
+            save_task(task)
         except Exception as exc:
             task["status"] = "error"
-            task["error"] = str(exc)
+            task["error"] = f"圖一辨識失敗：{exc}"
+            save_task(task)
+            return  # 圖一失敗就停在這裡
+
+        # ── 第二階段：圖二補充 ──────────────────────────────────
+        try:
+            from analyzer import enrich_with_chart2
+            from pathlib import Path as _Path
+            stage2 = enrich_with_chart2(task["master_rows"], c2_path)
+            task["status"] = "ready"
+            task["summary"] = stage2["summary"]
+            task["master_rows"] = stage2["master_rows"]
+            task["review_rows"] = stage2["review_rows"]
+            task["candidate_rows"] = stage2["candidate_rows"]
+            task["graph"] = stage2["graph"]
+            task["error"] = ""
+        except Exception as exc:
+            # 圖二失敗：主表保留圖一骨架，提示用戶重新上傳圖二
+            task["status"] = "chart2_error"
+            task["error"] = f"圖二辨識失敗：{exc}"
         finally:
             save_task(task)
 
@@ -230,6 +330,54 @@ def analyze():
 
     # 立刻回傳 202，前端輪詢 /api/tasks/<task_id>
     return jsonify({"id": task_id, "status": "processing"}), 202
+
+
+@app.route("/api/tasks/<task_id>/analyze-chart2", methods=["POST"])
+def analyze_chart2_only(task_id: str):
+    """單獨重新上傳圖二，保留現有圖一骨架與用戶調整。"""
+    import threading
+
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+
+    chart2 = request.files.get("chart2")
+    if not chart2:
+        return jsonify({"error": "chart2_required"}), 400
+
+    # 存新的圖二
+    upload_dir = DATA_DIR / task_id / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    c2_path = upload_dir / f"chart2_retry_{sanitize_filename(chart2.filename or 'upload.jpg')}"
+    chart2.save(str(c2_path))
+
+    # 標記為處理中，保留現有骨架
+    task["status"] = "processing_chart2"
+    task["error"] = ""
+    task["source_files"]["chart2"] = chart2.filename or ""
+    save_task(task)
+
+    existing_master = list(task.get("master_rows", []))
+
+    def run_async():
+        try:
+            from analyzer import enrich_with_chart2
+            stage2 = enrich_with_chart2(existing_master, c2_path)
+            task["status"] = "ready"
+            task["summary"] = stage2["summary"]
+            task["master_rows"] = stage2["master_rows"]
+            task["review_rows"] = stage2["review_rows"]
+            task["candidate_rows"] = stage2["candidate_rows"]
+            task["graph"] = stage2["graph"]
+            task["error"] = ""
+        except Exception as exc:
+            task["status"] = "chart2_error"
+            task["error"] = f"圖二辨識失敗：{exc}"
+        finally:
+            save_task(task)
+
+    threading.Thread(target=run_async, daemon=True).start()
+    return jsonify({"id": task_id, "status": "processing_chart2"}), 202
 
 
 @app.route("/api/review-decision", methods=["POST"])
@@ -241,15 +389,75 @@ def review_decision():
     key = payload.get("key")
     if not key:
         return jsonify({"error": "key_required"}), 400
+
+    decision = payload.get("decision", "")
+    corrected_name = payload.get("corrected_name", "").strip()
+    corrected_level = payload.get("corrected_level", "")
+    corrected_parent = payload.get("corrected_parent", "").strip()
+    note = payload.get("note", "")
+
     task["review_decisions"][key] = {
-        "decision": payload.get("decision", ""),
-        "corrected_name": payload.get("corrected_name", ""),
-        "corrected_level": payload.get("corrected_level", ""),
-        "corrected_parent": payload.get("corrected_parent", ""),
-        "note": payload.get("note", ""),
+        "decision": decision,
+        "corrected_name": corrected_name,
+        "corrected_level": corrected_level,
+        "corrected_parent": corrected_parent,
+        "note": note,
     }
+
+    target_row = next((row for row in task.get("master_rows", []) if row.get("node_id") == key), None)
+    if target_row:
+        matched_candidate = next(
+            (
+                row for row in task.get("candidate_rows", [])
+                if row.get("chart2_name") and row.get("chart2_name") == target_row.get("matched_chart2_name")
+            ),
+            None,
+        )
+        if corrected_name:
+            target_row["canonical_name"] = corrected_name
+            refresh_children_parent_names(task["master_rows"], target_row["node_id"], corrected_name)
+
+        parent_row = find_row_by_name(task.get("master_rows", []), corrected_parent) if corrected_parent else None
+        if corrected_parent:
+            target_row["chart1_parent"] = parent_row.get("node_id", "") if parent_row else ""
+            target_row["chart1_parent_name"] = parent_row.get("canonical_name") if parent_row else corrected_parent
+        parsed_level = parse_level_value(corrected_level)
+        if parsed_level is not None:
+            target_row["chart1_level"] = parsed_level
+            target_row["subsidiary_level_label"] = level_label(parsed_level)
+        elif parent_row:
+            parent_level = parse_level_value(parent_row.get("chart1_level")) or 0
+            target_row["chart1_level"] = parent_level + 1
+            target_row["subsidiary_level_label"] = level_label(parent_level + 1)
+
+        if decision == "確認一致":
+            if matched_candidate:
+                apply_chart2_attrs_to_row(target_row, matched_candidate)
+                task["candidate_rows"] = [
+                    row for row in task.get("candidate_rows", [])
+                    if row.get("chart2_name") != matched_candidate.get("chart2_name")
+                ]
+            target_row["node_status"] = "enriched" if target_row.get("matched_chart2_name") else target_row.get("node_status", "review_match")
+            target_row["review_flag"] = ""
+        elif decision == "不是同一家公司":
+            target_row["matched_chart2_name"] = ""
+            target_row["node_status"] = "chart1_only"
+            target_row["review_flag"] = "yes"
+        if note:
+            target_row["review_note"] = note
+
+    update_review_status(task, key, decision, note)
+    rebuild_task_state(task)
     save_task(task)
-    return jsonify({"ok": True, "review_decisions": task["review_decisions"]})
+    return jsonify({
+        "ok": True,
+        "review_decisions": task["review_decisions"],
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
 
 
 @app.route("/api/tasks/<task_id>/update-row", methods=["POST"])
@@ -273,6 +481,8 @@ def update_row(task_id: str):
             for row in task.get("master_rows", []):
                 if row.get(field) == original:
                     row[field] = new_val
+                    if field == "canonical_name":
+                        refresh_children_parent_names(task["master_rows"], row["node_id"], new_val)
     else:
         node_id = payload.get("node_id")
         if not node_id:
@@ -282,10 +492,20 @@ def update_row(task_id: str):
                 for field in editable:
                     if field in payload:
                         row[field] = payload[field]
+                        if field == "canonical_name":
+                            refresh_children_parent_names(task["master_rows"], row["node_id"], payload[field])
                 break
 
+    rebuild_task_state(task)
     save_task(task)
-    return jsonify({"ok": True, "master_rows": task["master_rows"]})
+    return jsonify({
+        "ok": True,
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
 
 
 @app.route("/api/tasks/<task_id>/delete-row", methods=["POST"])
@@ -298,8 +518,22 @@ def delete_row(task_id: str):
     if not node_id:
         return jsonify({"error": "node_id_required"}), 400
     task["master_rows"] = [r for r in task.get("master_rows", []) if r.get("node_id") != node_id]
+    for row in task["master_rows"]:
+        if row.get("chart1_parent") == node_id:
+            row["chart1_parent"] = ""
+            row["chart1_parent_name"] = ""
+            row["chart1_level"] = 0
+            row["subsidiary_level_label"] = level_label(0)
+    rebuild_task_state(task)
     save_task(task)
-    return jsonify({"ok": True, "master_rows": task["master_rows"]})
+    return jsonify({
+        "ok": True,
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
 
 
 @app.route("/api/candidate-decision", methods=["POST"])
@@ -311,14 +545,59 @@ def candidate_decision():
     key = payload.get("key")
     if not key:
         return jsonify({"error": "key_required"}), 400
+
+    decision = payload.get("decision", "")
+    parent_name = payload.get("parent", "").strip()
+    corrected_name = payload.get("corrected_name", "").strip()
+    note = payload.get("note", "")
+
     task["candidate_decisions"][key] = {
-        "decision": payload.get("decision", ""),
-        "parent": payload.get("parent", ""),
-        "corrected_name": payload.get("corrected_name", ""),
-        "note": payload.get("note", ""),
+        "decision": decision,
+        "parent": parent_name,
+        "corrected_name": corrected_name,
+        "note": note,
     }
+
+    if decision == "加入主表":
+        candidate = next((row for row in task.get("candidate_rows", []) if row.get("chart2_name") == key), None)
+        if candidate:
+            parent_row = find_row_by_name(task.get("master_rows", []), parent_name) if parent_name else None
+            parent_level = parse_level_value(parent_row.get("chart1_level")) if parent_row else None
+            level = (parent_level + 1) if parent_level is not None else parse_level_value(candidate.get("subsidiary_level_label")) or 0
+            final_name = corrected_name or candidate.get("chart2_name") or candidate.get("company") or ""
+            new_row = {
+                "node_id": f"A{uuid.uuid4().hex[:6].upper()}",
+                "chart1_name": final_name,
+                "canonical_name": final_name,
+                "chart1_level": level,
+                "chart1_parent": parent_row.get("node_id", "") if parent_row else "",
+                "chart1_parent_name": parent_row.get("canonical_name", "") if parent_row else parent_name,
+                "matched_chart2_name": candidate.get("chart2_name", ""),
+                "legal_representative": candidate.get("legal_representative", ""),
+                "established_date": candidate.get("established_date", ""),
+                "registered_capital": candidate.get("registered_capital", ""),
+                "actual_controller_share": candidate.get("actual_controller_share", ""),
+                "subsidiary_level_label": candidate.get("subsidiary_level_label") or level_label(level),
+                "company_status": candidate.get("company_status", ""),
+                "match_status": "matched",
+                "node_status": "enriched",
+                "review_flag": "",
+                "review_note": note,
+            }
+            task["master_rows"].append(new_row)
+            task["candidate_rows"] = [row for row in task.get("candidate_rows", []) if row.get("chart2_name") != key]
+
+    rebuild_task_state(task)
     save_task(task)
-    return jsonify({"ok": True, "candidate_decisions": task["candidate_decisions"]})
+    return jsonify({
+        "ok": True,
+        "candidate_decisions": task["candidate_decisions"],
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
