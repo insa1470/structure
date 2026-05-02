@@ -541,8 +541,51 @@ function flattenTree(nodes, depth = 0, result = []) {
 // ── 資本額格式化 ───────────────────────────────────────────────
 function formatCapital(str) {
   if (!str || str === "—") return str;
-  // 把開頭的數字部分加千分位，例如 28500萬元 → 28,500萬元
   return str.replace(/^(\d+)/, (_, n) => parseInt(n, 10).toLocaleString("en-US"));
+}
+
+// ── 公司名稱 inline 編輯（contenteditable）────────────────────
+function attachNameEdit(td, row) {
+  td.addEventListener("click", (e) => {
+    const t = e.target;
+    if (t.classList.contains("drag-handle")) return;
+    const nameSpan = td.querySelector(".company-name");
+    if (!nameSpan || nameSpan.contentEditable === "true") return;
+    const curName = nameSpan.textContent;
+    nameSpan.contentEditable = "true";
+    nameSpan.spellcheck = false;
+    nameSpan.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(nameSpan);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const finish = async (save) => {
+      nameSpan.contentEditable = "false";
+      const newVal = nameSpan.textContent.trim();
+      if (save && newVal && newVal !== curName) {
+        row.canonical_name = newVal;
+        try {
+          const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
+            node_id: row.node_id, canonical_name: newVal,
+          });
+          state.masterRows = result.master_rows || state.masterRows;
+        } catch (err) {
+          console.error(err);
+          nameSpan.textContent = curName;
+          row.canonical_name = curName;
+        }
+      } else if (!save) {
+        nameSpan.textContent = curName;
+      }
+    };
+    nameSpan.addEventListener("blur", () => finish(true), { once: true });
+    nameSpan.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter")  { ev.preventDefault(); nameSpan.blur(); }
+      if (ev.key === "Escape") { finish(false); }
+    }, { once: true });
+  });
 }
 
 function unformatCapital(str) {
@@ -611,47 +654,75 @@ function makeEditable(cell, row, field, displayValue) {
 }
 
 function renderResults() {
-  const query = elements.searchInput.value.trim();
+  const query  = elements.searchInput.value.trim();
   const filter = elements.statusFilter.value;
+  const isDraggable = !(query || filter !== "all");
 
   const filteredRows = state.masterRows.filter((row) => {
     const inFilter = filter === "all" || row.node_status === filter;
     const haystack = [row.canonical_name, row.chart1_name, row.chart1_parent_name, row.legal_representative]
       .join(" ").toLowerCase();
-    const inQuery = !query || haystack.includes(query.toLowerCase());
-    return inFilter && inQuery;
+    return inFilter && (!query || haystack.includes(query.toLowerCase()));
   });
 
-  // 搜尋時用篩選後的平面清單，否則用樹狀
-  const rows = query || filter !== "all"
-    ? filteredRows.map((r) => ({ ...r, _depth: 0 }))
+  // 樹狀 DFS 順序（搜尋/篩選時用平面清單）
+  const rows = (query || filter !== "all")
+    ? filteredRows
     : flattenTree(buildTree(state.masterRows));
 
   elements.resultTableTitle.textContent = `${filteredRows.length} 家公司`;
 
+  // ── 動態層級欄數 ────────────────────────────────────────────
+  const maxLevel = Math.max(0, ...state.masterRows.map((r) => Number(r.chart1_level) || 0));
+  const LEVEL_HEADERS = { 0: "集團主體", 1: "一級子公司", 2: "二級子公司", 3: "三級子公司", 4: "四級子公司" };
+
+  // 更新表頭
+  const theadTr = document.querySelector("#results table thead tr");
+  let headHtml = `<th class="del-col"></th>`;
+  for (let lv = 0; lv <= maxLevel; lv++) {
+    headHtml += `<th class="level-col">${LEVEL_HEADERS[lv] || `${lv}級子公司`} ✏️</th>`;
+  }
+  headHtml += `<th class="editable-col">法定代表人 ✏️</th>
+    <th class="editable-col">資本額 ✏️</th>
+    <th class="editable-col">成立日期 ✏️</th>
+    <th class="editable-col">持股比例 ✏️</th>
+    <th class="editable-col">公司狀態 ✏️</th>
+    <th>系統狀態</th>`;
+  theadTr.innerHTML = headHtml;
+
+  // ── 分組底色（依一級祖先交替）──────────────────────────────
+  const byId = {};
+  state.masterRows.forEach((r) => { byId[r.node_id] = r; });
+  const GROUP_COLORS = ["#f0f9ff", "#f0fdf4", "#fefce8", "#fdf4ff", "#fff7ed"];
+  const groupBgMap = {};
+  let ci = 0;
+  function assignBg(nodeId, color) {
+    groupBgMap[nodeId] = color;
+    state.masterRows.filter((r) => r.chart1_parent === nodeId).forEach((c) => assignBg(c.node_id, color));
+  }
+  state.masterRows.filter((r) => (Number(r.chart1_level) || 0) === 0).forEach((r) => assignBg(r.node_id, "#ffffff"));
+  state.masterRows.filter((r) => (Number(r.chart1_level) || 0) === 1).forEach((r) => assignBg(r.node_id, GROUP_COLORS[ci++ % GROUP_COLORS.length]));
+
+  // ── 渲染每一行 ──────────────────────────────────────────────
   elements.resultTableBody.innerHTML = "";
   rows.forEach((row) => {
-    const depth = row._depth || 0;
-    const statusClass =
-      row.node_status === "enriched" ? "status-enriched"
-      : row.node_status === "review_match" ? "status-review"
-      : "status-slate";
+    const level = Number(row.chart1_level) || 0;
+    const statusClass = row.node_status === "enriched" ? "status-enriched"
+      : row.node_status === "review_match" ? "status-review" : "status-slate";
 
     const tr = document.createElement("tr");
     tr.className = statusClass;
     tr.dataset.nodeId = row.node_id;
+    const bg = groupBgMap[row.node_id];
+    if (bg) tr.style.backgroundColor = bg;
 
-    // ── 拖曳事件 ────────────────────────────────────────────
-    const isDraggable = !(query || filter !== "all"); // 搜尋/篩選模式不啟用拖曳
+    // 拖曳事件
     if (isDraggable) {
       tr.draggable = true;
-
       tr.addEventListener("dragstart", (e) => {
         _dragNodeId = row.node_id;
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", row.node_id);
-
-        // 自訂幽靈：小膠囊，不是整行
         const ghost = document.createElement("div");
         ghost.textContent = row.canonical_name || row.chart1_name || "";
         ghost.style.cssText = "position:fixed;top:-200px;left:0;background:#4f46e5;color:#fff;padding:5px 14px;border-radius:99px;font-size:13px;font-weight:600;white-space:nowrap;";
@@ -659,58 +730,38 @@ function renderResults() {
         e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, 18);
         setTimeout(() => { ghost.remove(); tr.classList.add("row-dragging"); }, 0);
       });
-
       tr.addEventListener("dragend", () => {
         tr.classList.remove("row-dragging");
         document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
         document.getElementById("drag-tooltip")?.remove();
         _dragNodeId = null;
       });
-
       tr.addEventListener("dragover", (e) => {
         if (!_dragNodeId || _dragNodeId === row.node_id) return;
         if (isAncestor(_dragNodeId, row.node_id)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
-
-        // 高亮目標行
         document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
         tr.classList.add("drag-target");
-
-        // 跟隨滑鼠的提示浮層
         let tip = document.getElementById("drag-tooltip");
-        if (!tip) {
-          tip = document.createElement("div");
-          tip.id = "drag-tooltip";
-          document.body.appendChild(tip);
-        }
-        const targetName = row.canonical_name || row.chart1_name || "";
-        tip.textContent = `↳ 放入「${targetName}」底下`;
+        if (!tip) { tip = document.createElement("div"); tip.id = "drag-tooltip"; document.body.appendChild(tip); }
+        tip.textContent = `↳ 放入「${row.canonical_name || row.chart1_name}」底下`;
         tip.style.left = e.clientX + "px";
         tip.style.top  = e.clientY + "px";
       });
-
-      tr.addEventListener("dragleave", (e) => {
-        if (!tr.contains(e.relatedTarget)) {
-          tr.classList.remove("drag-target");
-        }
-      });
-
+      tr.addEventListener("dragleave", (e) => { if (!tr.contains(e.relatedTarget)) tr.classList.remove("drag-target"); });
       tr.addEventListener("drop", async (e) => {
         e.preventDefault();
         tr.classList.remove("drag-target");
         document.getElementById("drag-tooltip")?.remove();
         const draggedId = e.dataTransfer.getData("text/plain");
-        if (!draggedId || draggedId === row.node_id) return;
-        if (isAncestor(draggedId, row.node_id)) return;
+        if (!draggedId || draggedId === row.node_id || isAncestor(draggedId, row.node_id)) return;
         await reparentNode(draggedId, row.node_id);
-        // drop 後捲動到被移動的行
-        const movedTr = document.querySelector(`tr[data-node-id="${draggedId}"]`);
-        movedTr?.scrollIntoView({ behavior: "smooth", block: "center" });
+        document.querySelector(`tr[data-node-id="${draggedId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     }
 
-    // ── 刪除按鈕（第一欄）──────────────────────────────────
+    // 刪除按鈕
     const delTd = document.createElement("td");
     delTd.className = "del-td";
     const delBtn = document.createElement("button");
@@ -729,73 +780,29 @@ function renderResults() {
     delTd.appendChild(delBtn);
     tr.appendChild(delTd);
 
-    // ── 公司名稱（含縮排與層級線，可點擊編輯）──────────────
-    const nameTd = document.createElement("td");
-    nameTd.style.paddingLeft = `${8 + depth * 22}px`;
-    nameTd.className = "tree-name-cell";
-    const prefix = depth > 0 ? `<span class="tree-branch">${depth > 1 ? "　".repeat(depth - 1) + "└─ " : "└─ "}</span>` : "";
-    const levelBadge = row.subsidiary_level_label
-      ? `<span class="level-badge">${row.subsidiary_level_label}</span>` : "";
+    // 層級欄：公司名放在對應層級欄，其餘空白
     const curName = row.canonical_name || row.chart1_name || "";
-    const dragHandle = isDraggable ? `<span class="drag-handle" title="拖曳調整層級">⠿</span>` : "";
-    nameTd.innerHTML = `${dragHandle}${prefix}<span class="company-name editable-name" title="點擊編輯名稱">${curName}</span>${levelBadge}`;
+    for (let lv = 0; lv <= maxLevel; lv++) {
+      const td = document.createElement("td");
+      if (lv === level) {
+        td.className = "tree-name-cell";
+        const dragHandle = isDraggable ? `<span class="drag-handle" title="拖曳調整層級">⠿</span>` : "";
+        td.innerHTML = `${dragHandle}<span class="company-name editable-name" title="點擊編輯名稱">${curName}</span>`;
+        attachNameEdit(td, row);
+      } else {
+        td.className = "level-empty-td";
+      }
+      tr.appendChild(td);
+    }
 
-    nameTd.addEventListener("click", (e) => {
-      const t = e.target;
-      if (t.classList.contains("tree-branch") || t.classList.contains("level-badge") || t.classList.contains("drag-handle")) return;
-      const nameSpan = nameTd.querySelector(".company-name");
-      if (!nameSpan || nameSpan.contentEditable === "true") return;
-
-      // contenteditable 直接在 span 上編輯，不改版面
-      nameSpan.contentEditable = "true";
-      nameSpan.spellcheck = false;
-      nameSpan.focus();
-      // 移到末尾
-      const sel = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(nameSpan);
-      range.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(range);
-
-      const finish = async (save) => {
-        nameSpan.contentEditable = "false";
-        const newVal = nameSpan.textContent.trim();
-        if (save && newVal && newVal !== curName) {
-          row.canonical_name = newVal;
-          try {
-            const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
-              node_id: row.node_id, canonical_name: newVal,
-            });
-            state.masterRows = result.master_rows || state.masterRows;
-          } catch (err) {
-            console.error(err);
-            nameSpan.textContent = curName;
-            row.canonical_name = curName;
-          }
-        } else if (!save) {
-          nameSpan.textContent = curName;
-        }
-      };
-      nameSpan.addEventListener("blur", () => finish(true), { once: true });
-      nameSpan.addEventListener("keydown", (e) => {
-        if (e.key === "Enter")  { e.preventDefault(); nameSpan.blur(); }
-        if (e.key === "Escape") { finish(false); }
-      }, { once: true });
-    });
-
-    tr.appendChild(nameTd);
-
-    // ── 可編輯欄位 ───────────────────────────────────────────
-    const editableFields = [
+    // 資料欄
+    [
       { key: "legal_representative",    display: row.legal_representative },
       { key: "registered_capital",      display: formatCapital(row.registered_capital) },
       { key: "established_date",        display: row.established_date },
       { key: "actual_controller_share", display: row.actual_controller_share },
       { key: "company_status",          display: row.company_status },
-    ];
-
-    editableFields.forEach(({ key, display }) => {
+    ].forEach(({ key, display }) => {
       const td = document.createElement("td");
       td.textContent = display || "—";
       td.className = "editable-cell";
@@ -803,7 +810,7 @@ function renderResults() {
       tr.appendChild(td);
     });
 
-    // ── 狀態（不可編輯）──────────────────────────────────────
+    // 系統狀態欄
     const statusTd = document.createElement("td");
     statusTd.textContent = statusText(row);
     tr.appendChild(statusTd);

@@ -614,8 +614,10 @@ tbody tr.status-slate {
   }
 }
 
-/* ── 樹狀主表 ─────────────────────────────────────────── */
-.tree-name-cell { white-space: nowrap; cursor: pointer; transition: background 0.15s; }
+/* ── 層級欄式主表 ─────────────────────────────────────── */
+.level-col { min-width: 160px; font-weight: 600; font-size: 0.8em; color: #6366f1; border-bottom: 2px solid #e0e7ff; }
+.level-empty-td { border-right: 1px dashed #e2e8f0; }
+.tree-name-cell { white-space: nowrap; cursor: pointer; transition: background 0.15s; border-right: 1px solid #e2e8f0; }
 .tree-name-cell:hover { background: #f1f5f9; }
 .tree-branch { color: #94a3b8; font-size: 0.85em; margin-right: 2px; font-family: monospace; }
 .company-name { font-weight: 500; }
