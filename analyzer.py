@@ -21,6 +21,12 @@ LEVEL_LABELS = {0: "頂層主體", 1: "一級子公司", 2: "二級子公司", 3
 ACTIVE_COMPANY_MARKERS = ("存续", "存續", "在业", "在業", "开业", "開業", "仍注册", "仍註冊")
 INACTIVE_COMPANY_MARKERS = ("注销", "註銷", "吊销", "吊銷", "清算", "停业", "停業", "歇业", "歇業")
 
+# ── 圖二分塊參數 ─────────────────────────────────────────────────────
+# 手機截圖每張公司卡片約 90–110px（縮放後），1500px ≈ 15 家，辨識品質最佳
+CHUNK_HEIGHT_PX    = 1500   # 每塊高度（縮放後 px）
+CHUNK_OVERLAP_PX   = 180    # 相鄰塊重疊區，防止邊界公司被裁掉
+CHUNK_THRESHOLD_PX = 1800   # 高於此值才切塊（≈ 18 家以上）
+
 PROMPT_CHART1 = """這是一張企業股權結構圖。方框代表公司，連線代表股權關係。圖可能左右展開，層級以連線方向為準，不以版面位置上下為準。
 
 請由上而下逐層辨識：
@@ -441,15 +447,86 @@ def analyze_chart1(image_path: Path) -> list[dict]:
     return _sanitize_chart1_nodes(result)
 
 
-def analyze_chart2(image_path: Path) -> list[dict]:
-    """解析圖二（集團概覽），回傳公司屬性清單。"""
+def _split_image_into_chunks(image_path: Path) -> list[Path]:
+    """將長截圖垂直切割成多個重疊小塊，回傳暫存檔路徑清單。
+    若圖片不夠長或 PIL 未安裝，回傳原路徑的單元素清單。
+    """
+    import io
+    import sys
+    import tempfile
+
+    try:
+        from PIL import Image
+    except ImportError:
+        return [image_path]
+
+    img = Image.open(image_path)
+    if img.mode in ("RGBA", "LA", "P"):
+        img = img.convert("RGB")
+    w, h = img.size
+
+    # 先縮到 900px 寬（與 _encode_image 直式圖邏輯一致）
+    if w > 900:
+        ratio = 900 / w
+        img = img.resize((900, int(h * ratio)), Image.LANCZOS)
+        w, h = img.size
+
+    if h <= CHUNK_THRESHOLD_PX:
+        return [image_path]
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="codex_c2_"))
+    chunks: list[Path] = []
+    step = CHUNK_HEIGHT_PX - CHUNK_OVERLAP_PX
+    y = 0
+    idx = 0
+    while True:
+        y_end = min(y + CHUNK_HEIGHT_PX, h)
+        chunk_img = img.crop((0, y, w, y_end))
+        chunk_path = tmp_dir / f"chunk_{idx:02d}.jpg"
+        buf = io.BytesIO()
+        chunk_img.save(buf, format="JPEG", quality=85)
+        chunk_path.write_bytes(buf.getvalue())
+        chunks.append(chunk_path)
+        if y_end >= h:
+            break
+        y += step
+        idx += 1
+
+    print(
+        f"[Chart2] 圖高 {h}px，切成 {len(chunks)} 塊"
+        f"（每塊 {CHUNK_HEIGHT_PX}px，重疊 {CHUNK_OVERLAP_PX}px）",
+        file=sys.stderr,
+    )
+    return chunks
+
+
+def _dedup_merge_chart2(rows: list[dict], threshold: float = 0.85) -> list[dict]:
+    """合併多塊辨識結果：相似度 >= threshold 視為同一家公司。
+    重複時保留較完整的欄位（非空優先）。
+    """
+    merged: list[dict] = []
+    for row in rows:
+        company = row.get("company", "").strip()
+        if not company:
+            continue
+        existing, _ = _find_best_match(company, merged, threshold)
+        if existing:
+            # 用本塊的非空值填充舊紀錄的空欄位
+            for field in ("legal_representative", "registered_capital", "established_date"):
+                if not existing.get(field) and row.get(field):
+                    existing[field] = row[field]
+        else:
+            merged.append(dict(row))
+    return merged
+
+
+def _analyze_chart2_single(image_path: Path) -> list[dict]:
+    """對單一圖片（或單塊）執行 STAGE1 + STAGE2，回傳合併結果。"""
     raw_stage1 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE1)
     raw_stage2 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE2)
 
     stage1_rows = _dedupe_companies([
-        {
-            "company": _normalize_text(item.get("company") or item.get("c") or ""),
-        }
+        {"company": _normalize_text(item.get("company") or item.get("c") or "")}
         for item in raw_stage1
     ])
 
@@ -476,8 +553,40 @@ def analyze_chart2(image_path: Path) -> list[dict]:
             "actual_controller_share": None,
             "uncertain": False,
         })
-
     return result
+
+
+def analyze_chart2(image_path: Path) -> list[dict]:
+    """解析圖二（集團概覽），回傳公司屬性清單。超長截圖自動切塊處理。"""
+    import shutil
+    import sys
+
+    chunk_paths = _split_image_into_chunks(image_path)
+    is_chunked = not (len(chunk_paths) == 1 and chunk_paths[0] == image_path)
+    tmp_dir = chunk_paths[0].parent if is_chunked else None
+
+    try:
+        all_rows: list[dict] = []
+        for i, chunk_path in enumerate(chunk_paths):
+            try:
+                rows = _analyze_chart2_single(chunk_path)
+                print(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 辨識到 {len(rows)} 家", file=sys.stderr)
+                all_rows.extend(rows)
+            except RuntimeError as exc:
+                print(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 失敗，跳過：{exc}", file=sys.stderr)
+
+        if not all_rows:
+            raise RuntimeError("圖二所有分塊均辨識失敗，請確認圖片品質後重試")
+
+        if is_chunked:
+            deduped = _dedup_merge_chart2(all_rows)
+            print(f"[Chart2] 合併後共 {len(deduped)} 家（原始 {len(all_rows)} 筆）", file=sys.stderr)
+            return deduped
+
+        return all_rows
+    finally:
+        if tmp_dir and tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def merge_charts(
