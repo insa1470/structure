@@ -497,7 +497,7 @@ def update_row(task_id: str):
     editable = ["canonical_name", "legal_representative", "registered_capital",
                 "established_date", "actual_controller_share", "company_status",
                 "chart1_parent_name", "chart1_parent", "chart1_level",
-                "subsidiary_level_label"]
+                "subsidiary_level_label", "role_label", "chart_note"]
 
     # 連動更新模式：同欄位相同原始值的列全部更新
     if payload.get("cascade") and payload.get("field") and "original_value" in payload:
@@ -606,6 +606,8 @@ def candidate_decision():
                 "actual_controller_share": candidate.get("actual_controller_share", ""),
                 "subsidiary_level_label": candidate.get("subsidiary_level_label") or level_label(level),
                 "company_status": candidate.get("company_status", ""),
+                "role_label": "",
+                "chart_note": "",
                 "match_status": "matched",
                 "node_status": "enriched",
                 "review_flag": "",

@@ -604,6 +604,7 @@ function unformatCapital(str) {
 
 // 連動更新欄位（修改一個，同值的全部跟著改）
 const CASCADE_FIELDS = new Set(["legal_representative"]);
+const BLANK_DISPLAY_FIELDS = new Set(["role_label", "chart_note"]);
 
 // ── 行內編輯 ──────────────────────────────────────────────────
 function makeEditable(cell, row, field, displayValue) {
@@ -626,7 +627,7 @@ function makeEditable(cell, row, field, displayValue) {
 
       // 顯示格式化後的值
       const display = field === "registered_capital" ? formatCapital(newRaw) : newRaw;
-      cell.textContent = display || "—";
+      cell.textContent = display || (BLANK_DISPLAY_FIELDS.has(field) ? "" : "—");
 
       if (newRaw === rawOriginal) return; // 沒有改變
 
@@ -651,7 +652,7 @@ function makeEditable(cell, row, field, displayValue) {
         if (CASCADE_FIELDS.has(field)) renderResults();
       } catch (e) {
         console.error("儲存失敗", e);
-        cell.textContent = displayValue || "—";
+        cell.textContent = displayValue || (BLANK_DISPLAY_FIELDS.has(field) ? "" : "—");
       }
     };
 
@@ -793,20 +794,15 @@ function renderResults() {
       { key: "registered_capital",      display: formatCapital(row.registered_capital) },
       { key: "established_date",        display: row.established_date },
       { key: "actual_controller_share", display: row.actual_controller_share },
-      { key: "company_status",          display: row.company_status },
+      { key: "role_label",              display: row.role_label },
+      { key: "chart_note",              display: row.chart_note },
     ].forEach(({ key, display }) => {
       const td = document.createElement("td");
-      td.textContent = display || "—";
+      td.textContent = display || (BLANK_DISPLAY_FIELDS.has(key) ? "" : "—");
       td.className = "editable-cell";
       makeEditable(td, row, key, display);
       tr.appendChild(td);
     });
-
-    // 備註欄
-    const statusTd = document.createElement("td");
-    statusTd.className = "status-col";
-    statusTd.textContent = statusText(row);
-    tr.appendChild(statusTd);
 
     elements.resultTableBody.appendChild(tr);
   });
@@ -1155,7 +1151,7 @@ const CHART_PROFILES = {
   a4: {
     label: "A4 橫式",
     nodeW: 220,
-    nodeH: 94,
+    nodeH: 84,
     maxNodeW: 285,
     nameLen: 11,
     nameLines: 2,
@@ -1172,11 +1168,11 @@ const CHART_PROFILES = {
   a3: {
     label: "A3 橫式",
     nodeW: 250,
-    nodeH: 108,
+    nodeH: 96,
     maxNodeW: 330,
     nameLen: 12,
     nameLines: 3,
-    detailLines: 2,
+    detailLines: 3,
     nodeSpacing: 52,
     layerSpacing: 92,
     pad: 48,
@@ -1187,13 +1183,13 @@ const CHART_PROFILES = {
     minHeight: 1130,
   },
   large: {
-    label: "大圖",
+    label: "詳細圖",
     nodeW: 280,
-    nodeH: 122,
+    nodeH: 112,
     maxNodeW: 370,
     nameLen: 13,
     nameLines: 3,
-    detailLines: 3,
+    detailLines: 4,
     nodeSpacing: 70,
     layerSpacing: 116,
     pad: 56,
@@ -1204,13 +1200,13 @@ const CHART_PROFILES = {
     minHeight: 1200,
   },
   paged: {
-    label: "分頁",
+    label: "分頁圖",
     nodeW: 240,
-    nodeH: 102,
+    nodeH: 96,
     maxNodeW: 315,
     nameLen: 12,
     nameLines: 2,
-    detailLines: 1,
+    detailLines: 4,
     nodeSpacing: 42,
     layerSpacing: 82,
     pad: 44,
@@ -1506,10 +1502,15 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
     const uncertain = r.node_status !== "enriched";
     const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", profile.nameLen, profile.nameLines);
-    const details = [
+    const repCap = [
       r.legal_representative ? `法代：${r.legal_representative}` : "",
       r.registered_capital ? `資本：${formatCapital(r.registered_capital)}` : "",
+    ].filter(Boolean).join("  ");
+    const details = [
+      repCap,
       r.established_date ? `成立：${r.established_date}` : "",
+      r.role_label ? `定位：${r.role_label}` : "",
+      r.chart_note ? `備註：${r.chart_note}` : "",
     ].filter(Boolean).slice(0, profile.detailLines);
     const nameStart = profile.nodeH <= 96 ? 31 - (nameLines.length - 1) * 8 : 36 - (nameLines.length - 1) * 9;
     const detailStart = profile.nodeH - (details.length > 1 ? 35 : 26);
@@ -1520,7 +1521,7 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
           ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 18}">${svgEscape(line)}</tspan>`).join("")}
         </text>
         <text x="${node.width / 2}" y="${detailStart}" text-anchor="middle" fill="rgba(255,255,255,0.92)" font-size="${profile.detailFont}" font-weight="600">
-          ${details.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 17}">${svgEscape(line)}</tspan>`).join("")}
+          ${details.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 15}">${svgEscape(line)}</tspan>`).join("")}
         </text>
         ${uncertain ? `<text x="${node.width - 14}" y="20" text-anchor="middle" fill="#fef3c7" font-size="15" font-weight="900">!</text>` : ""}
       </g>`;
@@ -1698,6 +1699,8 @@ function renderListTree() {
       node.legal_representative ? `法代：${node.legal_representative}` : "",
       node.registered_capital   ? `資本：${formatCapital(node.registered_capital)}` : "",
       node.established_date     ? `成立：${node.established_date}` : "",
+      node.role_label           ? `定位：${node.role_label}` : "",
+      node.chart_note            ? `備註：${node.chart_note}` : "",
     ].filter(Boolean).join("｜");
 
     rows.push({ prefix, name, attrs, color, uncertain, isRoot, level });
