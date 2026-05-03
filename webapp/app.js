@@ -104,6 +104,15 @@ function issueText(issueType) {
   );
 }
 
+function getRootRow() {
+  return state.masterRows.find((row) => !row.chart1_parent || Number(row.chart1_level) === 0) || null;
+}
+
+function getGroupName() {
+  const root = getRootRow();
+  return (state.taskName || root?.canonical_name || root?.chart1_name || "未命名集團").trim();
+}
+
 function recommendationText(action) {
   return (
     {
@@ -668,18 +677,19 @@ function makeEditable(cell, row, field, displayValue) {
 }
 
 function renderResults() {
-  const rows = flattenTree(buildTree(state.masterRows));
+  const rows = flattenTree(buildTree(state.masterRows)).filter((row) => (Number(row.chart1_level) || 0) > 0);
+  const companyCount = Math.max(state.masterRows.length - (getRootRow() ? 1 : 0), 0);
 
-  elements.resultTableTitle.textContent = `${state.masterRows.length} 家公司`;
+  elements.resultTableTitle.textContent = `${getGroupName()}共 ${companyCount} 間公司`;
 
   // ── 動態層級欄數 ────────────────────────────────────────────
   const maxLevel = Math.max(0, ...state.masterRows.map((r) => Number(r.chart1_level) || 0));
-  const LEVEL_HEADERS = { 0: "集團主體", 1: "一級子公司", 2: "二級子公司", 3: "三級子公司", 4: "四級子公司" };
+  const LEVEL_HEADERS = { 1: "一級子公司", 2: "二級子公司", 3: "三級子公司", 4: "四級子公司" };
 
   // 更新表頭
   const theadTr = document.querySelector("#results table thead tr");
   let headHtml = `<th class="del-col"></th>`;
-  for (let lv = 0; lv <= maxLevel; lv++) {
+  for (let lv = 1; lv <= maxLevel; lv++) {
     headHtml += `<th class="level-col">${LEVEL_HEADERS[lv] || `${lv}級子公司`}</th>`;
   }
   headHtml += `<th class="editable-col">法定代表人</th>
@@ -779,7 +789,7 @@ function renderResults() {
 
     // ── 層級欄：公司名在對應欄，其餘空白 ────────────────────
     const curName = row.canonical_name || row.chart1_name || "";
-    for (let lv = 0; lv <= maxLevel; lv++) {
+    for (let lv = 1; lv <= maxLevel; lv++) {
       const td = document.createElement("td");
       if (lv === level) {
         td.className = "tree-name-cell";
@@ -1053,7 +1063,7 @@ async function confirmChart2Match(taskId) {
 
 async function createTaskFromUpload(onStatus) {
   const formData = new FormData();
-  formData.append("task_name", elements.taskNameInput.value.trim() || "未命名任務");
+  formData.append("task_name", elements.taskNameInput.value.trim() || "未命名集團");
   formData.append("chart1", state.chart1File);
   formData.append("chart2", state.chart2File);
 
@@ -1107,7 +1117,7 @@ function exportWorkbook() {
   }
 
   const summaryRows = [
-    ["任務名稱", state.taskName || "未命名任務"],
+    ["集團名稱", state.taskName || "未命名集團"],
     ["任務 ID", state.taskId],
     ["主表公司數", state.masterRows.length],
     ["待確認數", state.reviewRows.length],
@@ -1286,8 +1296,7 @@ function syncChartModeButtons() {
 }
 
 function getChartTitle() {
-  const root = state.masterRows.find((row) => !row.chart1_parent || Number(row.chart1_level) === 0);
-  const base = (state.taskName || root?.canonical_name || root?.chart1_name || "股權架構圖").trim();
+  const base = getGroupName();
   return base.includes("股權架構圖") ? base : `${base}股權架構圖`;
 }
 
