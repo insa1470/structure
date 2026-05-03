@@ -116,6 +116,9 @@ textarea {
 .sidebar-note {
   margin: 0 0 16px;
   font-size: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--slate-soft);
 }
 
 /* ── Navigation ────────────────────────────────────────────────── */
@@ -241,8 +244,8 @@ textarea {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
+  margin-bottom: 16px;
+  padding: 10px 0 14px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -252,9 +255,54 @@ textarea {
   color: var(--ink);
 }
 
+.topbar-status {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.topbar-status.status-ok {
+  color: #047857;
+}
+
+.topbar-status.status-warn {
+  color: #92400e;
+}
+
 .topbar-actions {
   display: flex;
   gap: 8px;
+}
+
+.main.chart-mode {
+  padding-top: 14px;
+}
+
+.main.chart-mode .topbar {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.main.chart-mode .topbar .eyebrow {
+  display: none;
+}
+
+.main.chart-mode .topbar h2 {
+  font-size: 14px;
+}
+
+.main.chart-mode .topbar-status {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.main.chart-mode .topbar-actions {
+  display: none;
 }
 
 /* ── Buttons ────────────────────────────────────────────────────── */
@@ -1322,6 +1370,18 @@ tr:hover .row-del-btn {
   margin-bottom: 12px;
 }
 
+.main.chart-mode .chart-header {
+  margin-bottom: 8px;
+}
+
+.main.chart-mode .chart-header .eyebrow {
+  display: none;
+}
+
+.main.chart-mode .chart-header h3 {
+  font-size: 15px;
+}
+
 .chart-actions {
   display: flex;
   align-items: center;
@@ -1338,6 +1398,11 @@ tr:hover .row-del-btn {
   background: var(--panel);
   border-radius: var(--radius);
   border: 1px solid var(--line);
+}
+
+.main.chart-mode .chart-legend {
+  margin-bottom: 8px;
+  padding: 7px 10px;
 }
 
 .legend-item {
@@ -1368,6 +1433,33 @@ tr:hover .row-del-btn {
   overflow: hidden;
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
+}
+
+.main.chart-mode .chart-container {
+  height: calc(100vh - 170px);
+  min-height: 620px;
+}
+
+.chart-container-elk {
+  overflow: auto;
+  background: #f8fafc;
+}
+
+.elk-svg {
+  display: block;
+  min-width: 100%;
+  min-height: 100%;
+  background: #f8fafc;
+}
+
+.elk-empty,
+.elk-loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  min-height: 420px;
+  color: var(--muted);
+  font-weight: 700;
 }
 
 /* ── List-style tree (>20 nodes) ────────────────────────────────── */

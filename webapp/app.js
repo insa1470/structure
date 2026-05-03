@@ -18,6 +18,7 @@ const elements = {
   pageTitle: document.getElementById("pageTitle"),
   navButtons: [...document.querySelectorAll(".nav-btn")],
   views: [...document.querySelectorAll(".view")],
+  main: document.querySelector(".main"),
   chart1Input: document.getElementById("chart1Input"),
   chart2Input: document.getElementById("chart2Input"),
   chart1Meta: document.getElementById("chart1Meta"),
@@ -25,6 +26,7 @@ const elements = {
   chart1Preview: document.getElementById("chart1Preview"),
   chart2Preview: document.getElementById("chart2Preview"),
   taskNameInput: document.getElementById("taskNameInput"),
+  taskStatusLine: document.getElementById("taskStatusLine"),
   startAnalysisBtn: document.getElementById("startAnalysisBtn"),
   exportBtn: document.getElementById("exportBtn"),
   metricsGrid: document.getElementById("metricsGrid"),
@@ -115,6 +117,7 @@ function setView(viewName) {
   elements.views.forEach((view) => {
     view.classList.toggle("active", view.id === viewName);
   });
+  elements.main?.classList.toggle("chart-mode", viewName === "chart");
   elements.pageTitle.textContent = pageTitles[viewName];
   if (viewName === "chart") setTimeout(renderChart, 50); // 等 DOM 顯示後再渲染
 }
@@ -141,27 +144,25 @@ function makeMetric(label, value, theme) {
 }
 
 function showAnalysisBanner(task) {
-  // 移除舊橫幅
+  // 舊版使用大橫幅；現在改成上方精簡狀態列。
   document.getElementById("analysisBanner")?.remove();
 
   const warning = task.analysis_warning;
   const mode = task.analysis_mode || "unknown";
 
-  let msg = "", type = "";
+  let msg = "尚未建立任務", type = "";
   if (warning) {
-    msg = `⚠ AI 辨識未成功，目前顯示示範資料，非本次上傳內容。<br><small>${warning}</small>`;
-    type = "banner-warn";
+    msg = `AI 辨識未成功，目前顯示示範資料｜${warning}`;
+    type = "status-warn";
   } else if (mode === "qwen_vl") {
-    msg = `✓ AI 辨識完成（Qwen-VL），任務 ID：${task.id}`;
-    type = "banner-ok";
+    const count = (task.master_rows || []).length;
+    msg = `AI 辨識完成（Qwen-VL）｜任務 ID：${task.id}${count ? `｜${count} 家公司` : ""}`;
+    type = "status-ok";
   }
 
-  if (!msg) return;
-  const banner = document.createElement("div");
-  banner.id = "analysisBanner";
-  banner.className = `analysis-banner ${type}`;
-  banner.innerHTML = msg;
-  document.querySelector(".main")?.prepend(banner);
+  if (!elements.taskStatusLine) return;
+  elements.taskStatusLine.textContent = msg;
+  elements.taskStatusLine.className = `topbar-status ${type}`;
 }
 
 function hydrateTask(task) {
@@ -1148,16 +1149,196 @@ function exportWorkbook() {
 const LEVEL_COLORS = ["#1e3a5f", "#1d4ed8", "#0891b2", "#0d9488", "#059669", "#d97706"];
 const LEVEL_NAMES  = ["頂層主體", "一級子公司", "二級子公司", "三級子公司", "四級子公司", "五級以上"];
 let _chart = null;
+let _elk = null;
+let _elkRenderSeq = 0;
 
 // 節點尺寸
 const NODE_W = 220;
 const NODE_H = 110;
+const ELK_NODE_W = 260;
+const ELK_NODE_H = 116;
+
+function svgEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 function wrapName(name, maxLen = 12) {
   if (!name || name.length <= maxLen) return name || "";
   const lines = [];
   for (let i = 0; i < name.length; i += maxLen) lines.push(name.slice(i, i + maxLen));
   return lines.join("\n");
+}
+
+function wrapTextLines(text, maxLen = 12, maxLines = 3) {
+  const value = String(text || "").trim();
+  if (!value) return [];
+  const lines = [];
+  for (let i = 0; i < value.length && lines.length < maxLines; i += maxLen) {
+    lines.push(value.slice(i, i + maxLen));
+  }
+  if (value.length > maxLen * maxLines) {
+    lines[lines.length - 1] = `${lines[lines.length - 1].slice(0, -1)}...`;
+  }
+  return lines;
+}
+
+function getElk() {
+  if (_elk) return _elk;
+  if (!window.ELK) return null;
+  _elk = new window.ELK({
+    defaultLayoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": "DOWN",
+      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.spacing.nodeNode": "54",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "92",
+      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+    },
+  });
+  return _elk;
+}
+
+function buildElkGraph(rows) {
+  const validRows = rows.filter((r) => r.node_id);
+  const ids = new Set(validRows.map((r) => r.node_id));
+
+  return {
+    id: "root",
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": "DOWN",
+      "elk.edgeRouting": "ORTHOGONAL",
+    },
+    children: validRows.map((r) => {
+      const name = r.canonical_name || r.chart1_name || "—";
+      const width = Math.min(340, Math.max(ELK_NODE_W, 190 + Math.ceil(name.length / 8) * 18));
+      return { id: r.node_id, width, height: ELK_NODE_H, row: r };
+    }),
+    edges: validRows
+      .filter((r) => r.chart1_parent && ids.has(r.chart1_parent))
+      .map((r) => ({
+        id: `edge_${r.chart1_parent}_${r.node_id}`,
+        sources: [r.chart1_parent],
+        targets: [r.node_id],
+        ratio: r.actual_controller_share || "",
+      })),
+  };
+}
+
+function polylinePoints(edge) {
+  const section = edge.sections?.[0];
+  if (!section) return "";
+  return [section.startPoint, ...(section.bendPoints || []), section.endPoint]
+    .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+    .join(" ");
+}
+
+function edgeLabelPosition(edge) {
+  const section = edge.sections?.[0];
+  if (!section) return null;
+  const points = [section.startPoint, ...(section.bendPoints || []), section.endPoint];
+  const mid = points[Math.floor(points.length / 2)];
+  const next = points[Math.min(Math.floor(points.length / 2) + 1, points.length - 1)] || mid;
+  return { x: (mid.x + next.x) / 2, y: (mid.y + next.y) / 2 };
+}
+
+function renderElkSvg(layout) {
+  const pad = 48;
+  const width = Math.ceil((layout.width || 1000) + pad * 2);
+  const height = Math.ceil((layout.height || 700) + pad * 2);
+  const nodes = layout.children || [];
+  const edges = layout.edges || [];
+
+  const edgeSvg = edges.map((edge) => {
+    const points = polylinePoints(edge);
+    if (!points) return "";
+    const labelPos = edge.ratio ? edgeLabelPosition(edge) : null;
+    return `
+      <g class="elk-edge" transform="translate(${pad}, ${pad})">
+        <polyline points="${points}" fill="none" stroke="#94a3b8" stroke-width="1.7" marker-end="url(#elkArrow)" />
+        ${labelPos ? `
+          <g transform="translate(${labelPos.x}, ${labelPos.y - 8})">
+            <rect x="-34" y="-14" width="68" height="24" rx="4" fill="#ffffff" stroke="#cbd5e1" />
+            <text text-anchor="middle" dominant-baseline="middle" font-size="12" font-weight="800" fill="#1e293b">${svgEscape(edge.ratio)}</text>
+          </g>
+        ` : ""}
+      </g>`;
+  }).join("");
+
+  const nodeSvg = nodes.map((node) => {
+    const r = node.row || {};
+    const level = Number(r.chart1_level) || 0;
+    const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
+    const uncertain = r.node_status !== "enriched";
+    const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", 13, 3);
+    const details = [
+      r.legal_representative ? `法代：${r.legal_representative}` : "",
+      r.registered_capital ? `資本：${formatCapital(r.registered_capital)}` : "",
+      r.established_date ? `成立：${r.established_date}` : "",
+    ].filter(Boolean).slice(0, 2);
+    const nameStart = 36 - (nameLines.length - 1) * 9;
+    return `
+      <g class="elk-node" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
+        <rect width="${node.width}" height="${node.height}" rx="7" fill="${color}" stroke="${uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)"}" stroke-width="${uncertain ? 3 : 1.2}" ${uncertain ? 'stroke-dasharray="7 4"' : ""} />
+        <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="800">
+          ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 19}">${svgEscape(line)}</tspan>`).join("")}
+        </text>
+        <text x="${node.width / 2}" y="${node.height - 34}" text-anchor="middle" fill="rgba(255,255,255,0.92)" font-size="10.5" font-weight="600">
+          ${details.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 17}">${svgEscape(line)}</tspan>`).join("")}
+        </text>
+        ${uncertain ? `<text x="${node.width - 14}" y="20" text-anchor="middle" fill="#fef3c7" font-size="15" font-weight="900">!</text>` : ""}
+      </g>`;
+  }).join("");
+
+  return `
+    <svg class="elk-svg" id="elkChartSvg" xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="股權架構圖">
+      <defs>
+        <marker id="elkArrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"></path>
+        </marker>
+      </defs>
+      <rect width="100%" height="100%" fill="#f8fafc"></rect>
+      ${edgeSvg}
+      ${nodeSvg}
+    </svg>`;
+}
+
+async function renderElkChart() {
+  const elk = getElk();
+  if (!elk) {
+    elements.chartContainer.classList.add("chart-container-list");
+    elements.chartContainer.classList.remove("chart-container-elk");
+    renderListTree();
+    elements.chartLayoutBadge.textContent = `${state.masterRows.length} 家公司 · ELK 未載入，使用條列樹狀`;
+    return;
+  }
+
+  const seq = ++_elkRenderSeq;
+  if (_chart) { _chart.dispose(); _chart = null; }
+  elements.chartContainer.innerHTML = `<div class="elk-loading">正式版股權圖排版中...</div>`;
+
+  const graph = buildElkGraph(state.masterRows);
+  if (!graph.children.length) {
+    elements.chartContainer.innerHTML = `<div class="elk-empty">沒有可顯示的公司資料</div>`;
+    return;
+  }
+
+  try {
+    const layout = await elk.layout(graph);
+    if (seq !== _elkRenderSeq) return;
+    elements.chartContainer.innerHTML = renderElkSvg(layout);
+  } catch (error) {
+    console.error(error);
+    elements.chartContainer.classList.add("chart-container-list");
+    elements.chartContainer.classList.remove("chart-container-elk");
+    renderListTree();
+    elements.chartLayoutBadge.textContent = `${state.masterRows.length} 家公司 · ELK 排版失敗，使用條列樹狀`;
+  }
 }
 
 function buildEChartsTree(rows) {
@@ -1365,23 +1546,48 @@ function renderChart() {
   if (!state.started || !state.masterRows.length) return;
 
   const total = state.masterRows.length;
-  const useList = total > 20;
+  const useList = false;
 
-  elements.chartLayoutBadge.textContent = `${total} 家公司 · ${useList ? "條列樹狀" : "視覺圖"}`;
+  elements.chartLayoutBadge.textContent = `${total} 家公司 · ELK 正式版 SVG`;
 
   // 切換容器樣式
   elements.chartContainer.classList.toggle("chart-container-list", useList);
-  elements.chartContainer.classList.toggle("chart-container-echart", !useList);
+  elements.chartContainer.classList.toggle("chart-container-echart", false);
+  elements.chartContainer.classList.toggle("chart-container-elk", true);
 
-  // PNG / HTML 匯出按鈕只在 ECharts 模式下有意義
-  elements.exportPngBtn.style.display  = useList ? "none" : "";
-  elements.exportHtmlBtn.style.display = useList ? "none" : "";
+  elements.exportPngBtn.style.display  = "";
+  elements.exportHtmlBtn.style.display = "";
 
-  if (useList) renderListTree();
-  else renderEChart();
+  renderElkChart();
 }
 
 function exportPNG() {
+  const svg = document.getElementById("elkChartSvg");
+  if (svg) {
+    const serializer = new XMLSerializer();
+    const source = serializer.serializeToString(svg);
+    const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width * 2;
+      canvas.height = img.height * 2;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(2, 2);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      const a = document.createElement("a");
+      a.href = canvas.toDataURL("image/png");
+      a.download = `${state.taskName || "股權架構圖"}.png`;
+      a.click();
+    };
+    img.src = url;
+    return;
+  }
+
   if (!_chart) return;
   const url = _chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#f8fafc" });
   const a = document.createElement("a");
@@ -1392,6 +1598,29 @@ function exportPNG() {
 
 function exportHTML() {
   const title = state.taskName || "股權架構圖";
+  const svg = document.getElementById("elkChartSvg");
+  if (svg) {
+    const html = `<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="UTF-8"><title>${svgEscape(title)}</title>
+<style>
+@page { size: A4 landscape; margin: 12mm; }
+body { margin: 0; background: #f8fafc; font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
+.wrap { padding: 18px; }
+h2 { margin: 0 0 12px; color: #1e293b; font-size: 16px; }
+svg { max-width: 100%; height: auto; background: #f8fafc; }
+</style></head>
+<body><div class="wrap"><h2>${svgEscape(title)} — 股權架構圖</h2>${svg.outerHTML}</div></body></html>`;
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${title}.html`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    return;
+  }
+
   const useList = state.masterRows.length > 20;
 
   if (useList) {

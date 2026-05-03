@@ -10,9 +10,10 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260504a" />
+    <link rel="stylesheet" href="./styles.css?v=20260504c" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
   </head>
   <body>
     <div class="shell">
@@ -25,7 +26,7 @@
           </div>
         </div>
         <p class="sidebar-note">
-          先上傳兩張圖，系統會先整理，再只把少數不確定項目交給使用者決定。
+          上傳、審核、輸出股權架構圖。
         </p>
         <nav class="nav">
           <button class="nav-btn active" data-view="upload">上傳任務</button>
@@ -42,6 +43,7 @@
           <div>
             <p class="eyebrow">MVP Prototype</p>
             <h2 id="pageTitle">建立新任務</h2>
+            <p id="taskStatusLine" class="topbar-status">尚未建立任務</p>
           </div>
           <div class="topbar-actions">
             <button id="exportBtn" class="ghost-btn">匯出審核結果</button>
@@ -244,7 +246,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260504a"></script>
-    <script type="module" src="./app.js?v=20260504a"></script>
+    <script src="./config.js?v=20260504c"></script>
+    <script type="module" src="./app.js?v=20260504c"></script>
   </body>
   </html>
