@@ -713,14 +713,14 @@ function renderResults() {
   const theadTr = document.querySelector("#results table thead tr");
   let headHtml = `<th class="del-col"></th>`;
   for (let lv = 1; lv <= maxLevel; lv++) {
-    headHtml += `<th class="level-col">${LEVEL_HEADERS[lv] || `${lv}級子公司`}</th>`;
+    headHtml += `<th class="level-col" title="公司名稱可點擊修改；層級關係用拖曳調整">${LEVEL_HEADERS[lv] || `${lv}級子公司`} ✏️</th>`;
   }
-  headHtml += `<th class="editable-col">法定代表人</th>
-    <th class="editable-col">資本額</th>
-    <th class="editable-col">成立日期</th>
-    <th class="editable-col">持股%</th>
-    <th class="editable-col">定位</th>
-    <th class="status-col">備註</th>`;
+  headHtml += `<th class="editable-col">法定代表人 ✏️</th>
+    <th class="editable-col">資本額 ✏️</th>
+    <th class="editable-col">成立日期 ✏️</th>
+    <th class="editable-col">持股% ✏️</th>
+    <th class="editable-col">定位 ✏️</th>
+    <th class="status-col">備註 ✏️</th>`;
   theadTr.innerHTML = headHtml;
 
   // ── 分組底色（依一級祖先交替）──────────────────────────────
@@ -820,6 +820,7 @@ function renderResults() {
         attachNameEdit(td, row);
       } else {
         td.className = "level-empty-td";
+        td.title = "此公司不在這個層級；要調整層級請拖曳公司名稱列";
       }
       tr.appendChild(td);
     }
@@ -1217,23 +1218,6 @@ const CHART_PROFILES = {
     edgeFont: 12,
     minWidth: 1600,
     minHeight: 1130,
-  },
-  large: {
-    label: "詳細圖",
-    nodeW: 280,
-    nodeH: 112,
-    maxNodeW: 370,
-    nameLen: 13,
-    nameLines: 3,
-    detailLines: 4,
-    nodeSpacing: 70,
-    layerSpacing: 116,
-    pad: 56,
-    nameFont: 14,
-    detailFont: 11,
-    edgeFont: 12,
-    minWidth: 1800,
-    minHeight: 1200,
   },
   paged: {
     label: "依一級子公司分頁",
