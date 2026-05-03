@@ -16,6 +16,7 @@ const state = {
   chartDirection: "down",
   chartStyle: "mono",
   chartMode: "a4",
+  showGroupRoot: false,
 };
 
 const elements = {
@@ -49,6 +50,7 @@ const elements = {
   chartDirectionButtons: [...document.querySelectorAll(".chart-direction-btn")],
   chartStyleButtons: [...document.querySelectorAll(".chart-style-btn")],
   chartModeButtons: [...document.querySelectorAll(".chart-mode-btn")],
+  chartShowRootToggle: document.getElementById("chartShowRootToggle"),
   printChartTitle: document.getElementById("printChartTitle"),
   chartContainer: document.getElementById("chartContainer"),
   chartLayoutBadge: document.getElementById("chartLayoutBadge"),
@@ -111,6 +113,13 @@ function getRootRow() {
 function getGroupName() {
   const root = getRootRow();
   return (state.taskName || root?.canonical_name || root?.chart1_name || "未命名集團").trim();
+}
+
+function getChartRows() {
+  if (state.showGroupRoot) return state.masterRows;
+  const root = getRootRow();
+  if (!root?.node_id) return state.masterRows;
+  return state.masterRows.filter((row) => row.node_id !== root.node_id);
 }
 
 function recommendationText(action) {
@@ -1063,7 +1072,7 @@ async function confirmChart2Match(taskId) {
 
 async function createTaskFromUpload(onStatus) {
   const formData = new FormData();
-  formData.append("task_name", elements.taskNameInput.value.trim() || "未命名集團");
+  formData.append("task_name", elements.taskNameInput.value.trim());
   formData.append("chart1", state.chart1File);
   formData.append("chart2", state.chart2File);
 
@@ -1293,6 +1302,7 @@ function syncChartModeButtons() {
   elements.chartModeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.chartMode === state.chartMode);
   });
+  if (elements.chartShowRootToggle) elements.chartShowRootToggle.checked = state.showGroupRoot;
 }
 
 function getChartTitle() {
@@ -1354,6 +1364,16 @@ function buildPagedRowSets(rows) {
     const current = byId[id] ? [byId[id]] : [];
     const childRows = (childrenByParent[id] || []).flatMap((childId) => collectSubtree(childId, seen));
     return [...current, ...childRows];
+  }
+
+  if (!state.showGroupRoot) {
+    roots.forEach((root) => {
+      pages.push({
+        title: root.canonical_name || root.chart1_name || "分頁",
+        rows: collectSubtree(root.node_id),
+      });
+    });
+    return pages.length ? pages : [{ title: "完整架構", rows }];
   }
 
   roots.forEach((root) => {
@@ -1570,11 +1590,12 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
 async function renderElkChart() {
   const elk = getElk();
   const profile = getChartProfile();
+  const chartRows = getChartRows();
   if (!elk) {
     elements.chartContainer.classList.add("chart-container-list");
     elements.chartContainer.classList.remove("chart-container-elk");
     renderListTree();
-    elements.chartLayoutBadge.textContent = `${state.masterRows.length} 家公司 · ELK 未載入，使用條列樹狀`;
+    elements.chartLayoutBadge.textContent = `${chartRows.length} 家公司 · ELK 未載入，使用條列樹狀`;
     return;
   }
 
@@ -1584,7 +1605,7 @@ async function renderElkChart() {
 
   try {
     if (state.chartMode === "paged") {
-      const pages = buildPagedRowSets(state.masterRows);
+      const pages = buildPagedRowSets(chartRows);
       const svgs = [];
       for (let i = 0; i < pages.length; i += 1) {
         const graph = buildElkGraph(pages[i].rows, profile, `page_${i + 1}`);
@@ -1602,7 +1623,7 @@ async function renderElkChart() {
       return;
     }
 
-    const graph = buildElkGraph(state.masterRows, profile);
+    const graph = buildElkGraph(chartRows, profile);
     if (!graph.children.length) {
       elements.chartContainer.innerHTML = `<div class="elk-empty">沒有可顯示的公司資料</div>`;
       return;
@@ -1615,7 +1636,7 @@ async function renderElkChart() {
     elements.chartContainer.classList.add("chart-container-list");
     elements.chartContainer.classList.remove("chart-container-elk");
     renderListTree();
-    elements.chartLayoutBadge.textContent = `${state.masterRows.length} 家公司 · ELK 排版失敗，使用條列樹狀`;
+    elements.chartLayoutBadge.textContent = `${chartRows.length} 家公司 · ELK 排版失敗，使用條列樹狀`;
   }
 }
 
@@ -1695,10 +1716,11 @@ function buildEChartsTree(rows) {
 // ── 條列式樹狀（>20 家） ──────────────────────────────────────
 function renderListTree() {
   const container = elements.chartContainer;
-  const roots = buildTree(state.masterRows);
+  const chartRows = getChartRows();
+  const roots = buildTree(chartRows);
 
   // 更新圖例
-  const levels = [...new Set(state.masterRows.map((r) => Number(r.chart1_level) || 0))].sort();
+  const levels = [...new Set(chartRows.map((r) => Number(r.chart1_level) || 0))].sort();
   elements.chartLegend.innerHTML = [
     ...levels.map((l) => {
       const color = LEVEL_COLORS[Math.min(l, LEVEL_COLORS.length - 1)];
@@ -1763,7 +1785,8 @@ function renderEChart() {
   const container = elements.chartContainer;
   _chart = echarts.init(container, null, { renderer: "canvas" });
 
-  const treeData = buildEChartsTree(state.masterRows);
+  const chartRows = getChartRows();
+  const treeData = buildEChartsTree(chartRows);
   if (!treeData) return;
 
   const option = {
@@ -1809,7 +1832,7 @@ function renderEChart() {
 
   _chart.setOption(option);
 
-  const levels = [...new Set(state.masterRows.map((r) => Number(r.chart1_level) || 0))].sort();
+  const levels = [...new Set(chartRows.map((r) => Number(r.chart1_level) || 0))].sort();
   elements.chartLegend.innerHTML = [
     ...levels.map((l) => {
       const color = LEVEL_COLORS[Math.min(l, LEVEL_COLORS.length - 1)];
@@ -1825,7 +1848,8 @@ function renderEChart() {
 function renderChart() {
   if (!state.started || !state.masterRows.length) return;
 
-  const total = state.masterRows.length;
+  const chartRows = getChartRows();
+  const total = chartRows.length;
   const profile = getChartProfile();
   syncChartModeButtons();
   const isList = state.chartView === "list";
@@ -1834,7 +1858,7 @@ function renderChart() {
 
   elements.chartLayoutBadge.textContent = isList
     ? `${total} 家公司 · 條列層級`
-    : `${total} 家公司 · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}`;
+    : `${total} 家公司 · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
 
   // 切換容器樣式
   elements.chartContainer.classList.toggle("chart-container-list", isList);
@@ -2024,10 +2048,20 @@ function bindEvents() {
   });
   elements.taskNameInput.addEventListener("input", (event) => {
     state.taskName = event.target.value.trim();
+    if (state.taskName) document.getElementById("uploadError")?.remove();
   });
   elements.startAnalysisBtn.addEventListener("click", async () => {
     const originalText = elements.startAnalysisBtn.textContent;
     document.getElementById("uploadError")?.remove();
+    if (!elements.taskNameInput.value.trim()) {
+      const errDiv = document.createElement("div");
+      errDiv.id = "uploadError";
+      errDiv.className = "upload-error-msg";
+      errDiv.innerHTML = `<strong>請先填寫集團名稱</strong><br><small>系統會用它作為結果主表與股權架構圖標題。</small>`;
+      elements.startAnalysisBtn.closest(".cta-row")?.after(errDiv);
+      elements.taskNameInput.focus();
+      return;
+    }
     try {
       state.loading = true;
       enableStartIfReady();
@@ -2072,6 +2106,10 @@ function bindEvents() {
       state.chartMode = button.dataset.chartMode || "a4";
       renderChart();
     });
+  });
+  elements.chartShowRootToggle?.addEventListener("change", (event) => {
+    state.showGroupRoot = event.target.checked;
+    renderChart();
   });
   elements.exportBtn.addEventListener("click", exportWorkbook);
   elements.exportPngBtn.addEventListener("click", exportPNG);

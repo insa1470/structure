@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260504j" />
+    <link rel="stylesheet" href="./styles.css?v=20260504k" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
@@ -224,6 +224,10 @@
                 <button class="chart-style-btn active" data-chart-style="mono" type="button">黑白正式</button>
                 <button class="chart-style-btn" data-chart-style="color" type="button">層級彩色</button>
               </div>
+              <label class="chart-root-toggle" title="預設不把集團名稱畫成最上層節點">
+                <input id="chartShowRootToggle" type="checkbox" />
+                <span>顯示集團主體</span>
+              </label>
               <span id="chartLayoutBadge" class="pill info"></span>
               <button id="exportPngBtn" class="ghost-btn">⬇ 下載 PNG</button>
               <button id="exportHtmlBtn" class="ghost-btn">⬇ 下載 HTML</button>
@@ -237,7 +241,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260504j"></script>
-    <script type="module" src="./app.js?v=20260504j"></script>
+    <script src="./config.js?v=20260504k"></script>
+    <script type="module" src="./app.js?v=20260504k"></script>
   </body>
   </html>
