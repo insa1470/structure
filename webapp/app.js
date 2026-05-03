@@ -17,6 +17,10 @@ const state = {
   chartStyle: "mono",
   chartMode: "a4",
   showGroupRoot: false,
+  selectedBranchId: "__all__",
+  chartScale: 1,
+  chartPanX: 0,
+  chartPanY: 0,
 };
 
 const elements = {
@@ -50,6 +54,10 @@ const elements = {
   chartDirectionButtons: [...document.querySelectorAll(".chart-direction-btn")],
   chartStyleButtons: [...document.querySelectorAll(".chart-style-btn")],
   chartModeButtons: [...document.querySelectorAll(".chart-mode-btn")],
+  chartBranchPicker: document.getElementById("chartBranchPicker"),
+  chartBranchSelect: document.getElementById("chartBranchSelect"),
+  chartZoomButtons: [...document.querySelectorAll(".chart-zoom-btn")],
+  chartZoomLabel: document.getElementById("chartZoomLabel"),
   chartShowRootToggle: document.getElementById("chartShowRootToggle"),
   printChartTitle: document.getElementById("printChartTitle"),
   chartContainer: document.getElementById("chartContainer"),
@@ -70,6 +78,12 @@ const pageTitles = {
 };
 
 const API_BASE = (window.API_BASE || "").replace(/\/$/, "");
+const CHART_ZOOM_MIN = 0.35;
+const CHART_ZOOM_MAX = 2.5;
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 
 async function apiGet(url) {
   const response = await fetch(API_BASE + url);
@@ -1222,7 +1236,7 @@ const CHART_PROFILES = {
     minHeight: 1200,
   },
   paged: {
-    label: "分支分頁",
+    label: "依一級子公司分頁",
     nodeW: 240,
     nodeH: 96,
     maxNodeW: 315,
@@ -1290,6 +1304,7 @@ function getChartProfile() {
 }
 
 function syncChartModeButtons() {
+  const isGraph = state.chartView === "graph";
   elements.chartViewButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.chartView === state.chartView);
   });
@@ -1303,6 +1318,16 @@ function syncChartModeButtons() {
     button.classList.toggle("active", button.dataset.chartMode === state.chartMode);
   });
   if (elements.chartShowRootToggle) elements.chartShowRootToggle.checked = state.showGroupRoot;
+  if (elements.chartBranchPicker) {
+    elements.chartBranchPicker.style.display = isGraph && state.chartMode === "paged" ? "" : "none";
+  }
+  elements.chartZoomButtons.forEach((button) => {
+    button.style.display = isGraph ? "" : "none";
+  });
+  if (elements.chartZoomLabel) {
+    elements.chartZoomLabel.style.display = isGraph ? "" : "none";
+    elements.chartZoomLabel.textContent = `${Math.round(state.chartScale * 100)}%`;
+  }
 }
 
 function getChartTitle() {
@@ -1369,6 +1394,7 @@ function buildPagedRowSets(rows) {
   if (!state.showGroupRoot) {
     roots.forEach((root) => {
       pages.push({
+        id: root.node_id,
         title: root.canonical_name || root.chart1_name || "分頁",
         rows: collectSubtree(root.node_id),
       });
@@ -1379,12 +1405,13 @@ function buildPagedRowSets(rows) {
   roots.forEach((root) => {
     const firstLevel = childrenByParent[root.node_id] || [];
     if (!firstLevel.length) {
-      pages.push({ title: root.canonical_name || root.chart1_name || "完整架構", rows: [root] });
+      pages.push({ id: root.node_id, title: root.canonical_name || root.chart1_name || "完整架構", rows: [root] });
       return;
     }
     firstLevel.forEach((childId) => {
       const child = byId[childId];
       pages.push({
+        id: childId,
         title: child?.canonical_name || child?.chart1_name || root.canonical_name || "分頁",
         rows: [root, ...collectSubtree(childId)],
       });
@@ -1587,6 +1614,106 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     </svg>`;
 }
 
+function renderChartViewport(markup) {
+  return `
+    <div class="chart-panzoom-shell" id="chartPanZoomShell">
+      <div class="chart-panzoom-content" id="chartPanZoomContent">
+        ${markup}
+      </div>
+    </div>`;
+}
+
+function applyChartViewport() {
+  const content = document.getElementById("chartPanZoomContent");
+  if (!content) return;
+  content.style.transform = `translate(${state.chartPanX}px, ${state.chartPanY}px) scale(${state.chartScale})`;
+  if (elements.chartZoomLabel) elements.chartZoomLabel.textContent = `${Math.round(state.chartScale * 100)}%`;
+}
+
+function setChartZoom(nextScale, anchor = null) {
+  const previous = state.chartScale;
+  const scale = clampNumber(nextScale, CHART_ZOOM_MIN, CHART_ZOOM_MAX);
+  if (anchor) {
+    state.chartPanX = anchor.x - ((anchor.x - state.chartPanX) * scale) / previous;
+    state.chartPanY = anchor.y - ((anchor.y - state.chartPanY) * scale) / previous;
+  }
+  state.chartScale = scale;
+  applyChartViewport();
+}
+
+function resetChartViewport(scale = 1) {
+  state.chartScale = clampNumber(scale, CHART_ZOOM_MIN, CHART_ZOOM_MAX);
+  state.chartPanX = 0;
+  state.chartPanY = 0;
+  applyChartViewport();
+}
+
+function fitChartToViewport() {
+  const shell = document.getElementById("chartPanZoomShell");
+  const svg = document.querySelector(".elk-svg");
+  if (!shell || !svg) return;
+  const width = Number(svg.getAttribute("width")) || svg.viewBox?.baseVal?.width || svg.scrollWidth || 1;
+  const available = Math.max(shell.clientWidth - 48, 320);
+  resetChartViewport(Math.min(1.25, available / width));
+}
+
+function bindChartViewport() {
+  const shell = document.getElementById("chartPanZoomShell");
+  if (!shell) return;
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let originX = 0;
+  let originY = 0;
+
+  shell.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    dragging = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    originX = state.chartPanX;
+    originY = state.chartPanY;
+    shell.setPointerCapture(event.pointerId);
+    shell.classList.add("is-panning");
+  });
+  shell.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    state.chartPanX = originX + event.clientX - startX;
+    state.chartPanY = originY + event.clientY - startY;
+    applyChartViewport();
+  });
+  shell.addEventListener("pointerup", (event) => {
+    dragging = false;
+    shell.releasePointerCapture(event.pointerId);
+    shell.classList.remove("is-panning");
+  });
+  shell.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const rect = shell.getBoundingClientRect();
+    const anchor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    setChartZoom(state.chartScale + (event.deltaY > 0 ? -0.08 : 0.08), anchor);
+  }, { passive: false });
+  applyChartViewport();
+}
+
+function syncBranchSelect(pages) {
+  if (!elements.chartBranchSelect) return;
+  const options = pages.map((page) => ({
+    value: page.id || page.title,
+    label: page.title,
+  }));
+  const validValues = new Set(options.map((option) => option.value));
+  if (state.selectedBranchId !== "__all__" && !validValues.has(state.selectedBranchId)) {
+    state.selectedBranchId = "__all__";
+  }
+  elements.chartBranchSelect.innerHTML = [
+    `<option value="__all__">全部一級分支</option>`,
+    ...options.map((option) => `<option value="${svgEscape(option.value)}">${svgEscape(option.label)}</option>`),
+  ].join("");
+  elements.chartBranchSelect.value = state.selectedBranchId;
+}
+
 async function renderElkChart() {
   const elk = getElk();
   const profile = getChartProfile();
@@ -1606,23 +1733,34 @@ async function renderElkChart() {
   try {
     if (state.chartMode === "paged") {
       const pages = buildPagedRowSets(chartRows);
+      syncBranchSelect(pages);
+      const visiblePages = state.selectedBranchId === "__all__"
+        ? pages
+        : pages.filter((page) => (page.id || page.title) === state.selectedBranchId);
       const svgs = [];
-      for (let i = 0; i < pages.length; i += 1) {
-        const graph = buildElkGraph(pages[i].rows, profile, `page_${i + 1}`);
+      for (let i = 0; i < visiblePages.length; i += 1) {
+        const page = visiblePages[i];
+        const sourceIndex = pages.findIndex((item) => (item.id || item.title) === (page.id || page.title));
+        const graph = buildElkGraph(page.rows, profile, `page_${i + 1}`);
         if (!graph.children.length) continue;
         const layout = await elk.layout(graph);
+        const pageTitle = state.selectedBranchId === "__all__"
+          ? `第 ${sourceIndex + 1} 頁 / ${pages.length}：${page.title}`
+          : `分支：${page.title}`;
         svgs.push(`
           <article class="elk-page">
-            <div class="elk-page-title">第 ${i + 1} 頁 / ${pages.length}：${svgEscape(pages[i].title)}</div>
+            <div class="elk-page-title">${svgEscape(pageTitle)}</div>
             ${renderElkSvg(layout, profile, { id: `elkChartSvg_${i + 1}` })}
           </article>
         `);
       }
       if (seq !== _elkRenderSeq) return;
-      elements.chartContainer.innerHTML = svgs.length ? `<div id="elkPagedChart" class="elk-pages">${svgs.join("")}</div>` : `<div class="elk-empty">沒有可顯示的公司資料</div>`;
+      elements.chartContainer.innerHTML = svgs.length ? renderChartViewport(`<div id="elkPagedChart" class="elk-pages">${svgs.join("")}</div>`) : `<div class="elk-empty">沒有可顯示的公司資料</div>`;
+      bindChartViewport();
       return;
     }
 
+    syncBranchSelect([]);
     const graph = buildElkGraph(chartRows, profile);
     if (!graph.children.length) {
       elements.chartContainer.innerHTML = `<div class="elk-empty">沒有可顯示的公司資料</div>`;
@@ -1630,7 +1768,8 @@ async function renderElkChart() {
     }
     const layout = await elk.layout(graph);
     if (seq !== _elkRenderSeq) return;
-    elements.chartContainer.innerHTML = renderElkSvg(layout, profile);
+    elements.chartContainer.innerHTML = renderChartViewport(renderElkSvg(layout, profile));
+    bindChartViewport();
   } catch (error) {
     console.error(error);
     elements.chartContainer.classList.add("chart-container-list");
@@ -2086,12 +2225,14 @@ function bindEvents() {
   elements.chartViewButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartView = button.dataset.chartView || "graph";
+      resetChartViewport();
       renderChart();
     });
   });
   elements.chartDirectionButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartDirection = button.dataset.chartDirection || "down";
+      resetChartViewport();
       renderChart();
     });
   });
@@ -2104,11 +2245,29 @@ function bindEvents() {
   elements.chartModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartMode = button.dataset.chartMode || "a4";
+      state.selectedBranchId = "__all__";
+      resetChartViewport();
       renderChart();
+    });
+  });
+  elements.chartBranchSelect?.addEventListener("change", (event) => {
+    state.selectedBranchId = event.target.value || "__all__";
+    resetChartViewport();
+    renderChart();
+  });
+  elements.chartZoomButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.chartZoom;
+      if (action === "in") setChartZoom(state.chartScale + 0.12);
+      if (action === "out") setChartZoom(state.chartScale - 0.12);
+      if (action === "fit") fitChartToViewport();
+      if (action === "reset") resetChartViewport();
     });
   });
   elements.chartShowRootToggle?.addEventListener("change", (event) => {
     state.showGroupRoot = event.target.checked;
+    state.selectedBranchId = "__all__";
+    resetChartViewport();
     renderChart();
   });
   elements.exportBtn.addEventListener("click", exportWorkbook);

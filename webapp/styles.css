@@ -1428,6 +1428,65 @@ tr:hover .row-del-btn {
   background: rgba(99, 91, 255, 0.08);
 }
 
+.chart-branch-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.chart-branch-picker select {
+  max-width: 240px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}
+
+.chart-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.chart-zoom-controls span {
+  min-width: 42px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.chart-zoom-btn {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 800;
+  min-width: 30px;
+  padding: 6px 8px;
+}
+
+.chart-zoom-btn:hover {
+  background: var(--slate-soft);
+  color: var(--ink);
+}
+
 .chart-view-btn,
 .chart-direction-btn,
 .chart-style-btn,
@@ -1528,6 +1587,32 @@ tr:hover .row-del-btn {
   background: #f8fafc;
 }
 
+.chart-panzoom-shell {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  cursor: grab;
+  background: #f8fafc;
+}
+
+.chart-panzoom-shell.is-panning {
+  cursor: grabbing;
+}
+
+.chart-panzoom-content {
+  width: max-content;
+  min-width: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.chart-panzoom-content > .elk-svg,
+.chart-panzoom-content .elk-page .elk-svg {
+  width: auto;
+  max-width: none;
+  min-width: 0;
+}
+
 .elk-svg {
   display: block;
   min-width: 100%;
@@ -1539,6 +1624,10 @@ tr:hover .row-del-btn {
   width: 100%;
   height: auto;
   min-width: 0;
+}
+
+.chart-container-elk:not(.chart-container-paged) .chart-panzoom-content > .elk-svg {
+  width: auto;
 }
 
 .elk-empty,
@@ -1698,6 +1787,18 @@ tr:hover .row-del-btn {
     min-height: 0 !important;
     overflow: visible !important;
     border-radius: 0;
+  }
+
+  .chart-panzoom-shell {
+    height: auto;
+    overflow: visible;
+    cursor: default;
+  }
+
+  .chart-panzoom-content {
+    width: auto;
+    min-width: 0;
+    transform: none !important;
   }
 
   .chart-container-elk:not(.chart-container-paged) .elk-svg,

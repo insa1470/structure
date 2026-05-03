@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260504k" />
+    <link rel="stylesheet" href="./styles.css?v=20260504l" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
@@ -218,11 +218,22 @@
                 <button class="chart-mode-btn active" data-chart-mode="a4" type="button">A4</button>
                 <button class="chart-mode-btn" data-chart-mode="a3" type="button">A3</button>
                 <button class="chart-mode-btn" data-chart-mode="large" type="button">詳細圖</button>
-                <button class="chart-mode-btn" data-chart-mode="paged" type="button">分支分頁</button>
+                <button class="chart-mode-btn" data-chart-mode="paged" type="button">依一級子公司分頁</button>
               </div>
+              <label class="chart-branch-picker" id="chartBranchPicker">
+                <span>分支</span>
+                <select id="chartBranchSelect"></select>
+              </label>
               <div class="chart-toggle-tabs chart-style-tabs" aria-label="圖形樣式">
                 <button class="chart-style-btn active" data-chart-style="mono" type="button">黑白正式</button>
                 <button class="chart-style-btn" data-chart-style="color" type="button">層級彩色</button>
+              </div>
+              <div class="chart-zoom-controls" aria-label="縮放工具">
+                <button class="chart-zoom-btn" data-chart-zoom="out" type="button">−</button>
+                <span id="chartZoomLabel">100%</span>
+                <button class="chart-zoom-btn" data-chart-zoom="in" type="button">＋</button>
+                <button class="chart-zoom-btn" data-chart-zoom="fit" type="button">適合</button>
+                <button class="chart-zoom-btn" data-chart-zoom="reset" type="button">重置</button>
               </div>
               <label class="chart-root-toggle" title="預設不把集團名稱畫成最上層節點">
                 <input id="chartShowRootToggle" type="checkbox" />
@@ -241,7 +252,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260504k"></script>
-    <script type="module" src="./app.js?v=20260504k"></script>
+    <script src="./config.js?v=20260504l"></script>
+    <script type="module" src="./app.js?v=20260504l"></script>
   </body>
   </html>
