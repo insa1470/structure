@@ -3,6 +3,7 @@ const state = {
   taskName: "",
   chart1File: null,
   chart2File: null,
+  imageChecks: { chart1: null, chart2: null },
   started: false,
   loading: false,
   masterRows: [],
@@ -36,6 +37,7 @@ const elements = {
   chart1Preview: document.getElementById("chart1Preview"),
   chart2Preview: document.getElementById("chart2Preview"),
   taskNameInput: document.getElementById("taskNameInput"),
+  imagePrecheck: document.getElementById("imagePrecheck"),
   taskStatusLine: document.getElementById("taskStatusLine"),
   startAnalysisBtn: document.getElementById("startAnalysisBtn"),
   exportBtn: document.getElementById("exportBtn"),
@@ -185,6 +187,264 @@ function setPreview(file, metaEl, imgEl, dzEl) {
   if (dzEl) dzEl.classList.add("has-file");
 }
 
+function estimateChart2Chunks(width, height) {
+  const scaledHeight = width > 900 ? Math.round(height * (900 / width)) : height;
+  if (scaledHeight <= 3600) return 1;
+  return Math.ceil((scaledHeight - 1500) / (1500 - 180)) + 1;
+}
+
+function gradeLabel(score) {
+  if (score >= 78) return { label: "高", tone: "high" };
+  if (score >= 55) return { label: "中", tone: "mid" };
+  return { label: "低", tone: "low" };
+}
+
+function inspectImageFile(file, kind) {
+  return new Promise((resolve) => {
+    if (!file) return resolve(null);
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const width = img.naturalWidth || img.width;
+      const height = img.naturalHeight || img.height;
+      const canvas = document.createElement("canvas");
+      const maxSide = 360;
+      const scale = Math.min(1, maxSide / Math.max(width, height));
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let edgeSum = 0;
+      let samples = 0;
+      for (let y = 1; y < canvas.height - 1; y += 3) {
+        for (let x = 1; x < canvas.width - 1; x += 3) {
+          const i = (y * canvas.width + x) * 4;
+          const left = i - 4;
+          const right = i + 4;
+          const up = i - canvas.width * 4;
+          const down = i + canvas.width * 4;
+          const g = (data[i] + data[i + 1] + data[i + 2]) / 3;
+          const lap = Math.abs(
+            g * 4
+            - (data[left] + data[left + 1] + data[left + 2]) / 3
+            - (data[right] + data[right + 1] + data[right + 2]) / 3
+            - (data[up] + data[up + 1] + data[up + 2]) / 3
+            - (data[down] + data[down + 1] + data[down + 2]) / 3
+          );
+          edgeSum += lap;
+          samples += 1;
+        }
+      }
+      const sharpness = samples ? edgeSum / samples : 0;
+      const minSide = Math.min(width, height);
+      const longRatio = height / Math.max(width, 1);
+      const chunks = kind === "chart2" ? estimateChart2Chunks(width, height) : 1;
+      const notes = [];
+      let score = 100;
+
+      if (minSide < 800) {
+        score -= 25;
+        notes.push("解析度偏低");
+      } else if (minSide < 1100) {
+        score -= 12;
+        notes.push("解析度普通");
+      }
+
+      if (sharpness < 9) {
+        score -= 24;
+        notes.push("文字邊緣可能偏模糊");
+      } else if (sharpness < 14) {
+        score -= 10;
+        notes.push("清晰度普通");
+      }
+
+      if (kind === "chart2") {
+        if (chunks >= 7) {
+          score -= 26;
+          notes.push(`長截圖約需切成 ${chunks} 段`);
+        } else if (chunks >= 4) {
+          score -= 12;
+          notes.push(`長截圖約需切成 ${chunks} 段`);
+        }
+      } else if (longRatio > 2.4 || longRatio < 0.35) {
+        score -= 10;
+        notes.push("版面比例較極端");
+      }
+
+      URL.revokeObjectURL(url);
+      resolve({
+        kind,
+        width,
+        height,
+        sizeMb: file.size / 1024 / 1024,
+        sharpness,
+        chunks,
+        score: clampNumber(Math.round(score), 0, 100),
+        notes,
+        ...gradeLabel(score),
+      });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve({
+        kind,
+        width: 0,
+        height: 0,
+        sizeMb: file.size / 1024 / 1024,
+        sharpness: 0,
+        chunks: 0,
+        score: 0,
+        notes: ["圖片無法預覽"],
+        label: "低",
+        tone: "low",
+      });
+    };
+    img.src = url;
+  });
+}
+
+function renderImagePrecheck() {
+  if (!elements.imagePrecheck) return;
+  const checks = [state.imageChecks.chart1, state.imageChecks.chart2].filter(Boolean);
+  if (!checks.length) {
+    elements.imagePrecheck.innerHTML = "";
+    elements.imagePrecheck.classList.remove("active");
+    return;
+  }
+  const cards = [
+    ["chart1", "圖一圖片條件"],
+    ["chart2", "圖二圖片條件"],
+  ].map(([key, title]) => {
+    const item = state.imageChecks[key];
+    if (!item) {
+      return `<article class="precheck-card waiting"><h4>${title}</h4><p>尚未選擇圖片</p></article>`;
+    }
+    const extra = key === "chart2" && item.chunks > 1 ? ` · 約 ${item.chunks} 段辨識` : "";
+    const advice = item.notes.length ? item.notes.join("、") : "圖片條件適合辨識";
+    return `
+      <article class="precheck-card ${item.tone}">
+        <div class="precheck-head">
+          <h4>${title}</h4>
+          <span>成功率 ${item.label}</span>
+        </div>
+        <p>${item.width} × ${item.height}px${extra}</p>
+        <small>${advice}</small>
+      </article>`;
+  }).join("");
+  elements.imagePrecheck.innerHTML = `
+    <div class="precheck-title">圖片條件成功率</div>
+    <div class="precheck-grid">${cards}</div>`;
+  elements.imagePrecheck.classList.add("active");
+}
+
+async function updateImageCheck(kind, file) {
+  state.imageChecks[kind] = null;
+  renderImagePrecheck();
+  const result = await inspectImageFile(file, kind);
+  if (state[`${kind}File`] !== file) return;
+  state.imageChecks[kind] = result;
+  renderImagePrecheck();
+}
+
+function normalizeCompanyName(name) {
+  return String(name || "")
+    .replace(/[（）()]/g, "")
+    .replace(/有限责任公司|有限公司|股份有限公司|集团|集團|公司/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+function hasLooseNameOverlap(a, b) {
+  const x = normalizeCompanyName(a);
+  const y = normalizeCompanyName(b);
+  if (!x || !y) return false;
+  return x.includes(y) || y.includes(x) || (x.length >= 4 && y.length >= 4 && x.slice(0, 4) === y.slice(0, 4));
+}
+
+function evaluateRecognitionSuccess({ masterRows = state.masterRows, chart2Rows = [] } = {}) {
+  const rows = masterRows || [];
+  const companyCount = rows.length;
+  const levels = rows.map((row) => Number(row.chart1_level) || 0);
+  const maxLevel = levels.length ? Math.max(...levels) : 0;
+  const ids = new Set(rows.map((row) => row.node_id).filter(Boolean));
+  const rootCount = rows.filter((row) => !row.chart1_parent || Number(row.chart1_level) === 0).length;
+  const orphanCount = rows.filter((row) => row.chart1_parent && !ids.has(row.chart1_parent)).length;
+  const chart1Names = rows.map((row) => row.canonical_name || row.chart1_name).filter(Boolean);
+  const chart2Names = (chart2Rows || []).map((row) => row.company || row.chart2_name || row.c || "").filter(Boolean);
+  const overlapCount = chart2Names.length
+    ? chart2Names.filter((name) => chart1Names.some((other) => hasLooseNameOverlap(name, other))).length
+    : 0;
+  const overlapRate = chart2Names.length ? overlapCount / chart2Names.length : null;
+  const prefixCounts = {};
+  chart1Names.forEach((name) => {
+    const normalized = normalizeCompanyName(name);
+    const prefix = normalized.slice(0, 4);
+    if (prefix.length >= 4) prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
+  });
+  const largestPrefixGroup = Math.max(0, ...Object.values(prefixCounts));
+
+  const notes = [];
+  let score = 100;
+  if (companyCount > 70) {
+    score -= 25;
+    notes.push(`公司數 ${companyCount} 家，建議拆分範圍`);
+  } else if (companyCount > 40) {
+    score -= 12;
+    notes.push(`公司數 ${companyCount} 家，建議優先檢查主表`);
+  } else if (companyCount) {
+    notes.push(`公司數 ${companyCount} 家`);
+  }
+
+  if (maxLevel >= 5) {
+    score -= 22;
+    notes.push(`最大層級 ${maxLevel} 層`);
+  } else if (maxLevel >= 4) {
+    score -= 10;
+    notes.push(`最大層級 ${maxLevel} 層`);
+  }
+
+  if (rootCount !== 1 && companyCount) {
+    score -= 18;
+    notes.push(`頂層主體 ${rootCount} 個，建議確認圖一骨架`);
+  }
+  if (orphanCount) {
+    score -= 16;
+    notes.push(`${orphanCount} 筆父層關係需確認`);
+  }
+  if (overlapRate !== null) {
+    if (overlapRate < 0.12) {
+      score -= 30;
+      notes.push("圖一與圖二公司名稱重疊偏低");
+    } else if (overlapRate < 0.3) {
+      score -= 15;
+      notes.push("圖一與圖二公司名稱重疊普通");
+    } else {
+      notes.push("圖一與圖二有合理重疊");
+    }
+  }
+  if (largestPrefixGroup >= 18 && largestPrefixGroup / Math.max(companyCount, 1) > 0.7) {
+    score -= 12;
+    notes.push("公司名稱高度相似，建議確認是否有誤讀");
+  }
+
+  const finalScore = clampNumber(Math.round(score), 0, 100);
+  return {
+    score: finalScore,
+    ...gradeLabel(finalScore),
+    notes: notes.length ? notes : ["結果結構適合進入審核"],
+  };
+}
+
+function recognitionSuccessHtml(result) {
+  if (!result) return "";
+  return `
+    <div class="recognition-success ${result.tone}">
+      <strong>辨識成功率預估：${result.label}</strong>
+      <span>${result.notes.join("；")}</span>
+    </div>`;
+}
+
 function makeMetric(label, value, theme) {
   return `
     <article class="metric-card ${theme}">
@@ -267,7 +527,9 @@ function renderOverview(summary) {
     makeMetric("圖二新增候選", candidates, "orange"),
   ].join("");
 
+  const success = evaluateRecognitionSuccess();
   const warnings = [
+    `辨識成功率預估：${success.label}。${success.notes.join("；")}。`,
     `${pending} 筆資料仍需要人工確認，請先處理這一區。`,
     `${candidates} 筆圖二新增候選尚未決定是否加入主表。`,
     "第二階段股權架構圖會依賴這裡的最終審核結果，所以名稱與上層公司要盡量確認乾淨。",
@@ -888,6 +1150,7 @@ function renderWorkspace(phase, opts = {}) {
     const chart1Count = (task.master_rows || []).length;
     const chart2Count = chart2Raw.length;
     const discrepancy = chart1Count > 0 && chart2Count < chart1Count * 0.5;
+    const success = evaluateRecognitionSuccess({ masterRows: task.master_rows || [], chart2Rows: chart2Raw });
 
     const companyListHtml = chart2Raw.length
       ? chart2Raw.map((c) => `<li class="ws-company-item">${c.company || "（未知）"}</li>`).join("")
@@ -906,6 +1169,7 @@ function renderWorkspace(phase, opts = {}) {
           <span class="ws-cc-val ${discrepancy ? "ws-cc-warn" : ""}">${chart2Count} 家</span>
         </div>
       </div>
+      ${recognitionSuccessHtml(success)}
       ${discrepancy ? `<div class="ws-warn-box">⚠ 圖二辨識到的公司數量明顯少於圖一，建議確認圖片清晰度後再繼續。</div>` : ""}
       <p class="ws-company-list-label">圖二辨識到的公司（${chart2Count} 筆）</p>
       <ul class="ws-company-list">${companyListHtml}</ul>
@@ -1019,7 +1283,9 @@ function renderWorkspace(phase, opts = {}) {
 
   if ((phase === "ready" || phase === "chart1_ready") && opts.summary) {
     const s = opts.summary;
+    const success = evaluateRecognitionSuccess();
     extraHtml = `
+      ${recognitionSuccessHtml(success)}
       <div class="ws-summary">
         <div><span class="ws-stat-val">${s.master_count ?? "—"}</span><span class="ws-stat-lbl">主表公司</span></div>
         <div><span class="ws-stat-val">${s.review_count ?? "—"}</span><span class="ws-stat-lbl">待確認</span></div>
@@ -2176,11 +2442,13 @@ function bindEvents() {
   elements.chart1Input.addEventListener("change", (event) => {
     state.chart1File = event.target.files[0];
     setPreview(state.chart1File, elements.chart1Meta, elements.chart1Preview, document.getElementById("dz1"));
+    updateImageCheck("chart1", state.chart1File);
     enableStartIfReady();
   });
   elements.chart2Input.addEventListener("change", (event) => {
     state.chart2File = event.target.files[0];
     setPreview(state.chart2File, elements.chart2Meta, elements.chart2Preview, document.getElementById("dz2"));
+    updateImageCheck("chart2", state.chart2File);
     enableStartIfReady();
   });
   elements.taskNameInput.addEventListener("input", (event) => {

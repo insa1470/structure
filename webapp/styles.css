@@ -497,6 +497,83 @@ textarea {
   margin-top: 16px;
 }
 
+.image-precheck {
+  display: none;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.image-precheck.active {
+  display: block;
+}
+
+.precheck-title {
+  margin-bottom: 10px;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.precheck-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.precheck-card {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--slate-soft);
+}
+
+.precheck-card.high {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.precheck-card.mid {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.precheck-card.low {
+  border-color: #fca5a5;
+  background: #fff1f2;
+}
+
+.precheck-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.precheck-head h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.precheck-head span {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.precheck-card p,
+.precheck-card small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* ── Preview ────────────────────────────────────────────────────── */
 .preview-head {
   margin-bottom: 14px;
@@ -1030,6 +1107,38 @@ tbody tr.status-slate {
   color: #991b1b;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.recognition-success {
+  margin-top: 14px;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--slate-soft);
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.recognition-success strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink);
+}
+
+.recognition-success.high {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.recognition-success.mid {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.recognition-success.low {
+  border-color: #fca5a5;
+  background: #fff1f2;
 }
 
 /* ── chart2 confirm screen ──────────────────────────────────── */
@@ -1746,6 +1855,7 @@ tr:hover .row-del-btn {
 
   .preview-grid,
   .drop-grid,
+  .precheck-grid,
   .detail-grid,
   .toolbar {
     grid-template-columns: 1fr;
