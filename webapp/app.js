@@ -239,6 +239,7 @@ function inspectImageFile(file, kind) {
       const sharpness = samples ? edgeSum / samples : 0;
       const minSide = Math.min(width, height);
       const longRatio = height / Math.max(width, 1);
+      const aspectRatio = Math.max(width / Math.max(height, 1), height / Math.max(width, 1));
       const chunks = kind === "chart2" ? estimateChart2Chunks(width, height) : 1;
       const notes = [];
       let score = 100;
@@ -260,16 +261,19 @@ function inspectImageFile(file, kind) {
       }
 
       if (kind === "chart2") {
-        if (chunks >= 7) {
-          score -= 26;
-          notes.push(`長截圖約需切成 ${chunks} 段`);
+        if (chunks >= 6) {
+          score -= 45;
+          notes.push(`長截圖約需切成 ${chunks} 段，漏讀機率較高`);
         } else if (chunks >= 4) {
-          score -= 12;
-          notes.push(`長截圖約需切成 ${chunks} 段`);
+          score -= 25;
+          notes.push(`長截圖約需切成 ${chunks} 段，建議確認結果`);
         }
-      } else if (longRatio > 2.4 || longRatio < 0.35) {
-        score -= 10;
-        notes.push("版面比例較極端");
+      } else if (aspectRatio >= 3.2) {
+        score -= 35;
+        notes.push("超寬圖，文字容易過小或漏讀");
+      } else if (aspectRatio >= 2.4) {
+        score -= 20;
+        notes.push("版面比例較寬，建議確認圖一骨架");
       }
 
       URL.revokeObjectURL(url);
@@ -326,15 +330,16 @@ function renderImagePrecheck() {
       <article class="precheck-card ${item.tone}">
         <div class="precheck-head">
           <h4>${title}</h4>
-          <span>成功率 ${item.label}</span>
+          <span>條件 ${item.label}</span>
         </div>
         <p>${item.width} × ${item.height}px${extra}</p>
         <small>${advice}</small>
       </article>`;
   }).join("");
   elements.imagePrecheck.innerHTML = `
-    <div class="precheck-title">圖片條件成功率</div>
-    <div class="precheck-grid">${cards}</div>`;
+    <div class="precheck-title">圖片條件檢查</div>
+    <div class="precheck-grid">${cards}</div>
+    <p class="precheck-note">這裡只評估清晰度、尺寸與長圖程度；實際辨識成功率會在 AI 完成後再估算。</p>`;
   elements.imagePrecheck.classList.add("active");
 }
 
@@ -353,6 +358,48 @@ function normalizeCompanyName(name) {
     .replace(/有限责任公司|有限公司|股份有限公司|集团|集團|公司/g, "")
     .replace(/\s+/g, "")
     .trim();
+}
+
+const REGION_PREFIXES = [
+  "北京市", "天津市", "上海市", "重庆市", "重慶市",
+  "河北省", "山西省", "辽宁省", "遼寧省", "吉林省", "黑龙江省", "黑龍江省",
+  "江苏省", "江蘇省", "浙江省", "安徽省", "福建省", "江西省", "山东省", "山東省",
+  "河南省", "湖北省", "湖南省", "广东省", "廣東省", "海南省", "四川省", "贵州省",
+  "貴州省", "云南省", "雲南省", "陕西省", "陝西省", "甘肃省", "甘肅省", "青海省",
+  "台湾省", "台灣省", "内蒙古", "內蒙古", "广西", "廣西", "西藏", "宁夏", "寧夏",
+  "新疆", "北京", "天津", "上海", "重庆", "重慶", "河北", "山西", "辽宁", "遼寧",
+  "吉林", "黑龙江", "黑龍江", "江苏", "江蘇", "浙江", "安徽", "福建", "江西",
+  "山东", "山東", "河南", "湖北", "湖南", "广东", "廣東", "海南", "四川", "贵州",
+  "貴州", "云南", "雲南", "陕西", "陝西", "甘肃", "甘肅", "青海", "台湾", "台灣",
+  "深圳市", "广州市", "廣州市", "南京市", "杭州市", "宁波市", "寧波市", "苏州市",
+  "蘇州市", "无锡市", "無錫市", "常州市", "扬州市", "揚州市", "泰州市", "南通市",
+  "盐城市", "鹽城市", "淮安市", "连云港市", "連雲港市", "徐州市", "福州市", "厦门市",
+  "廈門市", "清远市", "清遠市", "永州市", "道县", "道縣",
+  "深圳", "广州", "廣州", "南京", "杭州", "宁波", "寧波", "苏州", "蘇州", "无锡",
+  "無錫", "常州", "扬州", "揚州", "泰州", "南通", "盐城", "鹽城", "淮安", "连云港",
+  "連雲港", "徐州", "福州", "厦门", "廈門", "清远", "清遠", "永州",
+].sort((a, b) => b.length - a.length);
+
+function stripLeadingRegion(name) {
+  let text = normalizeCompanyName(name);
+  let changed = true;
+  while (changed && text.length >= 4) {
+    changed = false;
+    for (const region of REGION_PREFIXES) {
+      if (text.startsWith(region) && text.length - region.length >= 4) {
+        text = text.slice(region.length);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return text;
+}
+
+function companyCoreForPattern(name) {
+  return stripLeadingRegion(name)
+    .replace(/发展|發展|科技|实业|實業|贸易|貿易|产业|產業|投资|投資|管理|控股/g, "")
+    .slice(0, 6);
 }
 
 function hasLooseNameOverlap(a, b) {
@@ -376,13 +423,19 @@ function evaluateRecognitionSuccess({ masterRows = state.masterRows, chart2Rows 
     ? chart2Names.filter((name) => chart1Names.some((other) => hasLooseNameOverlap(name, other))).length
     : 0;
   const overlapRate = chart2Names.length ? overlapCount / chart2Names.length : null;
+  const levelOneCount = rows.filter((row) => Number(row.chart1_level) === 1).length;
+  const flatLevelOneRatio = companyCount ? levelOneCount / companyCount : 0;
   const prefixCounts = {};
+  const coreCounts = {};
   chart1Names.forEach((name) => {
     const normalized = normalizeCompanyName(name);
     const prefix = normalized.slice(0, 4);
     if (prefix.length >= 4) prefixCounts[prefix] = (prefixCounts[prefix] || 0) + 1;
+    const core = companyCoreForPattern(name);
+    if (core.length >= 4) coreCounts[core] = (coreCounts[core] || 0) + 1;
   });
   const largestPrefixGroup = Math.max(0, ...Object.values(prefixCounts));
+  const largestCoreGroup = Math.max(0, ...Object.values(coreCounts));
 
   const notes = [];
   let score = 100;
@@ -415,7 +468,7 @@ function evaluateRecognitionSuccess({ masterRows = state.masterRows, chart2Rows 
   if (overlapRate !== null) {
     if (overlapRate < 0.12) {
       score -= 30;
-      notes.push("圖一與圖二公司名稱重疊偏低");
+      notes.push("圖一與圖二公司名稱幾乎不相符");
     } else if (overlapRate < 0.3) {
       score -= 15;
       notes.push("圖一與圖二公司名稱重疊普通");
@@ -426,6 +479,15 @@ function evaluateRecognitionSuccess({ masterRows = state.masterRows, chart2Rows 
   if (largestPrefixGroup >= 18 && largestPrefixGroup / Math.max(companyCount, 1) > 0.7) {
     score -= 12;
     notes.push("公司名稱高度相似，建議確認是否有誤讀");
+  }
+  if (largestCoreGroup >= 15 && largestCoreGroup / Math.max(companyCount, 1) > 0.45) {
+    const severePattern = overlapRate !== null && overlapRate < 0.12;
+    score -= severePattern ? 30 : 14;
+    notes.push("圖一出現大量同型公司名稱，可能是 AI 補全城市或地區名");
+  }
+  if (companyCount >= 30 && flatLevelOneRatio > 0.82 && overlapRate !== null && overlapRate < 0.12) {
+    score -= 12;
+    notes.push("圖一層級過於扁平，建議先確認骨架是否誤讀");
   }
 
   const finalScore = clampNumber(Math.round(score), 0, 100);
@@ -1285,7 +1347,7 @@ function renderWorkspace(phase, opts = {}) {
     const s = opts.summary;
     const success = evaluateRecognitionSuccess();
     extraHtml = `
-      ${recognitionSuccessHtml(success)}
+      ${phase === "ready" ? recognitionSuccessHtml(success) : `<div class="recognition-success mid"><strong>圖一辨識已完成</strong><span>整體辨識成功率會在圖二辨識完成後，依公司重疊度與結構合理性估算。</span></div>`}
       <div class="ws-summary">
         <div><span class="ws-stat-val">${s.master_count ?? "—"}</span><span class="ws-stat-lbl">主表公司</span></div>
         <div><span class="ws-stat-val">${s.review_count ?? "—"}</span><span class="ws-stat-lbl">待確認</span></div>

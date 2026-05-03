@@ -574,6 +574,13 @@ textarea {
   line-height: 1.5;
 }
 
+.precheck-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* ── Preview ────────────────────────────────────────────────────── */
 .preview-head {
   margin-bottom: 14px;
