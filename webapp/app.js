@@ -12,6 +12,7 @@ const state = {
   candidateDecisions: {},
   selectedReviewIndex: 0,
   selectedCandidateIndex: 0,
+  chartMode: "a4",
 };
 
 const elements = {
@@ -41,6 +42,7 @@ const elements = {
   statusFilter: document.getElementById("statusFilter"),
   resultTableTitle: document.getElementById("resultTableTitle"),
   resultTableBody: document.getElementById("resultTableBody"),
+  chartModeButtons: [...document.querySelectorAll(".chart-mode-btn")],
   chartContainer: document.getElementById("chartContainer"),
   chartLayoutBadge: document.getElementById("chartLayoutBadge"),
   chartLegend: document.getElementById("chartLegend"),
@@ -50,7 +52,7 @@ const elements = {
 };
 
 const pageTitles = {
-  upload: "建立新任務",
+  upload: "上傳任務",
   overview: "總覽",
   review: "待確認",
   candidates: "圖二新增候選",
@@ -658,21 +660,9 @@ function makeEditable(cell, row, field, displayValue) {
 }
 
 function renderResults() {
-  const query  = elements.searchInput.value.trim();
-  const filter = elements.statusFilter.value;
+  const rows = flattenTree(buildTree(state.masterRows));
 
-  const filteredRows = state.masterRows.filter((row) => {
-    const inFilter = filter === "all" || row.node_status === filter;
-    const haystack = [row.canonical_name, row.chart1_name, row.chart1_parent_name, row.legal_representative]
-      .join(" ").toLowerCase();
-    return inFilter && (!query || haystack.includes(query.toLowerCase()));
-  });
-
-  const rows = (query || filter !== "all")
-    ? filteredRows
-    : flattenTree(buildTree(state.masterRows));
-
-  elements.resultTableTitle.textContent = `${filteredRows.length} 家公司`;
+  elements.resultTableTitle.textContent = `${state.masterRows.length} 家公司`;
 
   // ── 動態層級欄數 ────────────────────────────────────────────
   const maxLevel = Math.max(0, ...state.masterRows.map((r) => Number(r.chart1_level) || 0));
@@ -688,8 +678,8 @@ function renderResults() {
     <th class="editable-col">資本額</th>
     <th class="editable-col">成立日期</th>
     <th class="editable-col">持股%</th>
-    <th class="editable-col">狀態</th>
-    <th class="status-col">系統</th>`;
+    <th class="editable-col">定位</th>
+    <th class="status-col">備註</th>`;
   theadTr.innerHTML = headHtml;
 
   // ── 分組底色（依一級祖先交替）──────────────────────────────
@@ -808,7 +798,7 @@ function renderResults() {
       tr.appendChild(td);
     });
 
-    // 系統狀態欄
+    // 備註欄
     const statusTd = document.createElement("td");
     statusTd.className = "status-col";
     statusTd.textContent = statusText(row);
@@ -1157,6 +1147,76 @@ const NODE_W = 220;
 const NODE_H = 110;
 const ELK_NODE_W = 260;
 const ELK_NODE_H = 116;
+const CHART_PROFILES = {
+  a4: {
+    label: "A4 橫式",
+    nodeW: 220,
+    nodeH: 94,
+    maxNodeW: 285,
+    nameLen: 11,
+    nameLines: 2,
+    detailLines: 1,
+    nodeSpacing: 34,
+    layerSpacing: 72,
+    pad: 40,
+    nameFont: 12,
+    detailFont: 9.8,
+    edgeFont: 11,
+    minWidth: 1280,
+    minHeight: 900,
+  },
+  a3: {
+    label: "A3 橫式",
+    nodeW: 250,
+    nodeH: 108,
+    maxNodeW: 330,
+    nameLen: 12,
+    nameLines: 3,
+    detailLines: 2,
+    nodeSpacing: 52,
+    layerSpacing: 92,
+    pad: 48,
+    nameFont: 13,
+    detailFont: 10.5,
+    edgeFont: 12,
+    minWidth: 1600,
+    minHeight: 1130,
+  },
+  large: {
+    label: "大圖",
+    nodeW: 280,
+    nodeH: 122,
+    maxNodeW: 370,
+    nameLen: 13,
+    nameLines: 3,
+    detailLines: 3,
+    nodeSpacing: 70,
+    layerSpacing: 116,
+    pad: 56,
+    nameFont: 14,
+    detailFont: 11,
+    edgeFont: 12,
+    minWidth: 1800,
+    minHeight: 1200,
+  },
+  paged: {
+    label: "分頁",
+    nodeW: 240,
+    nodeH: 102,
+    maxNodeW: 315,
+    nameLen: 12,
+    nameLines: 2,
+    detailLines: 1,
+    nodeSpacing: 42,
+    layerSpacing: 82,
+    pad: 44,
+    nameFont: 12.5,
+    detailFont: 10,
+    edgeFont: 11,
+    minWidth: 1280,
+    minHeight: 900,
+  },
+};
 
 function svgEscape(value) {
   return String(value ?? "")
@@ -1203,21 +1263,35 @@ function getElk() {
   return _elk;
 }
 
-function buildElkGraph(rows) {
+function getChartProfile() {
+  return CHART_PROFILES[state.chartMode] || CHART_PROFILES.a4;
+}
+
+function syncChartModeButtons() {
+  elements.chartModeButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.chartMode === state.chartMode);
+  });
+}
+
+function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
   const validRows = rows.filter((r) => r.node_id);
   const ids = new Set(validRows.map((r) => r.node_id));
 
   return {
-    id: "root",
+    id: graphId,
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "DOWN",
       "elk.edgeRouting": "ORTHOGONAL",
+      "elk.spacing.nodeNode": String(profile.nodeSpacing),
+      "elk.layered.spacing.nodeNodeBetweenLayers": String(profile.layerSpacing),
+      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
     },
     children: validRows.map((r) => {
       const name = r.canonical_name || r.chart1_name || "—";
-      const width = Math.min(340, Math.max(ELK_NODE_W, 190 + Math.ceil(name.length / 8) * 18));
-      return { id: r.node_id, width, height: ELK_NODE_H, row: r };
+      const width = Math.min(profile.maxNodeW, Math.max(profile.nodeW, 172 + Math.ceil(name.length / 8) * 18));
+      return { id: r.node_id, width, height: profile.nodeH, row: r };
     }),
     edges: validRows
       .filter((r) => r.chart1_parent && ids.has(r.chart1_parent))
@@ -1228,6 +1302,49 @@ function buildElkGraph(rows) {
         ratio: r.actual_controller_share || "",
       })),
   };
+}
+
+function buildPagedRowSets(rows) {
+  const byId = {};
+  rows.forEach((row) => {
+    if (row.node_id) byId[row.node_id] = row;
+  });
+
+  const childrenByParent = {};
+  rows.forEach((row) => {
+    if (!row.chart1_parent || !byId[row.chart1_parent]) return;
+    if (!childrenByParent[row.chart1_parent]) childrenByParent[row.chart1_parent] = [];
+    childrenByParent[row.chart1_parent].push(row.node_id);
+  });
+
+  const roots = rows.filter((row) => !row.chart1_parent || !byId[row.chart1_parent]);
+  if (!roots.length) return [{ title: "完整架構", rows }];
+
+  const pages = [];
+  function collectSubtree(id, seen = new Set()) {
+    if (seen.has(id)) return [];
+    seen.add(id);
+    const current = byId[id] ? [byId[id]] : [];
+    const childRows = (childrenByParent[id] || []).flatMap((childId) => collectSubtree(childId, seen));
+    return [...current, ...childRows];
+  }
+
+  roots.forEach((root) => {
+    const firstLevel = childrenByParent[root.node_id] || [];
+    if (!firstLevel.length) {
+      pages.push({ title: root.canonical_name || root.chart1_name || "完整架構", rows: [root] });
+      return;
+    }
+    firstLevel.forEach((childId) => {
+      const child = byId[childId];
+      pages.push({
+        title: child?.canonical_name || child?.chart1_name || root.canonical_name || "分頁",
+        rows: [root, ...collectSubtree(childId)],
+      });
+    });
+  });
+
+  return pages.length ? pages : [{ title: "完整架構", rows }];
 }
 
 function polylinePoints(edge) {
@@ -1247,48 +1364,108 @@ function edgeLabelPosition(edge) {
   return { x: (mid.x + next.x) / 2, y: (mid.y + next.y) / 2 };
 }
 
-function renderElkSvg(layout) {
-  const pad = 48;
-  const width = Math.ceil((layout.width || 1000) + pad * 2);
-  const height = Math.ceil((layout.height || 700) + pad * 2);
-  const nodes = layout.children || [];
-  const edges = layout.edges || [];
+function renderBranchEdges(layout, profile) {
+  const nodesById = {};
+  (layout.children || []).forEach((node) => {
+    nodesById[node.id] = node;
+  });
 
-  const edgeSvg = edges.map((edge) => {
-    const points = polylinePoints(edge);
-    if (!points) return "";
-    const labelPos = edge.ratio ? edgeLabelPosition(edge) : null;
+  const edgesByParent = {};
+  (layout.edges || []).forEach((edge) => {
+    const source = edge.sources?.[0];
+    const target = edge.targets?.[0];
+    if (!source || !target || !nodesById[source] || !nodesById[target]) return;
+    if (!edgesByParent[source]) edgesByParent[source] = [];
+    edgesByParent[source].push({ edge, child: nodesById[target] });
+  });
+
+  return Object.entries(edgesByParent).map(([parentId, childEdges]) => {
+    const parent = nodesById[parentId];
+    if (!parent || !childEdges.length) return "";
+
+    const parentX = (parent.x || 0) + parent.width / 2;
+    const parentBottom = (parent.y || 0) + parent.height;
+    const children = childEdges
+      .map(({ edge, child }) => ({
+        edge,
+        child,
+        x: (child.x || 0) + child.width / 2,
+        top: child.y || 0,
+      }))
+      .sort((a, b) => a.x - b.x);
+
+    if (children.length === 1) {
+      const item = children[0];
+      const midY = parentBottom + Math.max(28, Math.min(64, (item.top - parentBottom) * 0.5));
+      return `
+        <g class="elk-edge elk-edge-branch">
+          <polyline points="${parentX.toFixed(1)},${parentBottom.toFixed(1)} ${parentX.toFixed(1)},${midY.toFixed(1)} ${item.x.toFixed(1)},${midY.toFixed(1)} ${item.x.toFixed(1)},${item.top.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
+          ${item.edge.ratio ? renderEdgeRatioLabel(item.x, item.top - 15, item.edge.ratio, profile) : ""}
+        </g>`;
+    }
+
+    const minChildTop = Math.min(...children.map((item) => item.top));
+    const minX = Math.min(...children.map((item) => item.x));
+    const maxX = Math.max(...children.map((item) => item.x));
+    const naturalBusY = parentBottom + Math.max(32, Math.min(76, (minChildTop - parentBottom) * 0.45));
+    const busY = Math.min(minChildTop - 34, naturalBusY);
+
+    const drops = children.map((item) => `
+      <polyline points="${item.x.toFixed(1)},${busY.toFixed(1)} ${item.x.toFixed(1)},${item.top.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
+      ${item.edge.ratio ? renderEdgeRatioLabel(item.x, item.top - 15, item.edge.ratio, profile) : ""}
+    `).join("");
+
     return `
-      <g class="elk-edge" transform="translate(${pad}, ${pad})">
-        <polyline points="${points}" fill="none" stroke="#94a3b8" stroke-width="1.7" marker-end="url(#elkArrow)" />
-        ${labelPos ? `
-          <g transform="translate(${labelPos.x}, ${labelPos.y - 8})">
-            <rect x="-34" y="-14" width="68" height="24" rx="4" fill="#ffffff" stroke="#cbd5e1" />
-            <text text-anchor="middle" dominant-baseline="middle" font-size="12" font-weight="800" fill="#1e293b">${svgEscape(edge.ratio)}</text>
-          </g>
-        ` : ""}
+      <g class="elk-edge elk-edge-branch">
+        <polyline points="${parentX.toFixed(1)},${parentBottom.toFixed(1)} ${parentX.toFixed(1)},${busY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
+        <polyline points="${minX.toFixed(1)},${busY.toFixed(1)} ${maxX.toFixed(1)},${busY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
+        ${drops}
       </g>`;
   }).join("");
+}
+
+function renderEdgeRatioLabel(x, y, ratio, profile) {
+  return `
+    <g transform="translate(${x.toFixed(1)}, ${y.toFixed(1)})">
+      <rect x="-34" y="-13" width="68" height="23" rx="4" fill="#ffffff" stroke="#cbd5e1" />
+      <text text-anchor="middle" dominant-baseline="middle" font-size="${profile.edgeFont}" font-weight="800" fill="#1e293b">${svgEscape(ratio)}</text>
+    </g>`;
+}
+
+function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
+  const pad = profile.pad;
+  const width = Math.max(profile.minWidth, Math.ceil((layout.width || 1000) + pad * 2));
+  const height = Math.max(profile.minHeight, Math.ceil((layout.height || 700) + pad * 2));
+  const nodes = layout.children || [];
+  const edges = layout.edges || [];
+  const title = opts.title || "";
+  const svgId = opts.id || "elkChartSvg";
+  const titleSvg = title ? `
+    <text x="${pad}" y="${pad - 14}" fill="#1e293b" font-size="16" font-weight="800">${svgEscape(title)}</text>
+  ` : "";
+
+  const edgeSvg = `<g transform="translate(${pad}, ${pad})">${renderBranchEdges(layout, profile)}</g>`;
 
   const nodeSvg = nodes.map((node) => {
     const r = node.row || {};
     const level = Number(r.chart1_level) || 0;
     const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
     const uncertain = r.node_status !== "enriched";
-    const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", 13, 3);
+    const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", profile.nameLen, profile.nameLines);
     const details = [
       r.legal_representative ? `法代：${r.legal_representative}` : "",
       r.registered_capital ? `資本：${formatCapital(r.registered_capital)}` : "",
       r.established_date ? `成立：${r.established_date}` : "",
-    ].filter(Boolean).slice(0, 2);
-    const nameStart = 36 - (nameLines.length - 1) * 9;
+    ].filter(Boolean).slice(0, profile.detailLines);
+    const nameStart = profile.nodeH <= 96 ? 31 - (nameLines.length - 1) * 8 : 36 - (nameLines.length - 1) * 9;
+    const detailStart = profile.nodeH - (details.length > 1 ? 35 : 26);
     return `
       <g class="elk-node" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
         <rect width="${node.width}" height="${node.height}" rx="7" fill="${color}" stroke="${uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)"}" stroke-width="${uncertain ? 3 : 1.2}" ${uncertain ? 'stroke-dasharray="7 4"' : ""} />
-        <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="800">
-          ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 19}">${svgEscape(line)}</tspan>`).join("")}
+        <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="#ffffff" font-size="${profile.nameFont}" font-weight="800">
+          ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 18}">${svgEscape(line)}</tspan>`).join("")}
         </text>
-        <text x="${node.width / 2}" y="${node.height - 34}" text-anchor="middle" fill="rgba(255,255,255,0.92)" font-size="10.5" font-weight="600">
+        <text x="${node.width / 2}" y="${detailStart}" text-anchor="middle" fill="rgba(255,255,255,0.92)" font-size="${profile.detailFont}" font-weight="600">
           ${details.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 17}">${svgEscape(line)}</tspan>`).join("")}
         </text>
         ${uncertain ? `<text x="${node.width - 14}" y="20" text-anchor="middle" fill="#fef3c7" font-size="15" font-weight="900">!</text>` : ""}
@@ -1296,13 +1473,14 @@ function renderElkSvg(layout) {
   }).join("");
 
   return `
-    <svg class="elk-svg" id="elkChartSvg" xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="股權架構圖">
+    <svg class="elk-svg" id="${svgId}" data-chart-mode="${state.chartMode}" xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="股權架構圖">
       <defs>
         <marker id="elkArrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"></path>
         </marker>
       </defs>
       <rect width="100%" height="100%" fill="#f8fafc"></rect>
+      ${titleSvg}
       ${edgeSvg}
       ${nodeSvg}
     </svg>`;
@@ -1310,6 +1488,7 @@ function renderElkSvg(layout) {
 
 async function renderElkChart() {
   const elk = getElk();
+  const profile = getChartProfile();
   if (!elk) {
     elements.chartContainer.classList.add("chart-container-list");
     elements.chartContainer.classList.remove("chart-container-elk");
@@ -1320,18 +1499,36 @@ async function renderElkChart() {
 
   const seq = ++_elkRenderSeq;
   if (_chart) { _chart.dispose(); _chart = null; }
-  elements.chartContainer.innerHTML = `<div class="elk-loading">正式版股權圖排版中...</div>`;
-
-  const graph = buildElkGraph(state.masterRows);
-  if (!graph.children.length) {
-    elements.chartContainer.innerHTML = `<div class="elk-empty">沒有可顯示的公司資料</div>`;
-    return;
-  }
+  elements.chartContainer.innerHTML = `<div class="elk-loading">${profile.label} 排版中...</div>`;
 
   try {
+    if (state.chartMode === "paged") {
+      const pages = buildPagedRowSets(state.masterRows);
+      const svgs = [];
+      for (let i = 0; i < pages.length; i += 1) {
+        const graph = buildElkGraph(pages[i].rows, profile, `page_${i + 1}`);
+        if (!graph.children.length) continue;
+        const layout = await elk.layout(graph);
+        svgs.push(`
+          <article class="elk-page">
+            <div class="elk-page-title">第 ${i + 1} 頁 / ${pages.length}：${svgEscape(pages[i].title)}</div>
+            ${renderElkSvg(layout, profile, { id: `elkChartSvg_${i + 1}` })}
+          </article>
+        `);
+      }
+      if (seq !== _elkRenderSeq) return;
+      elements.chartContainer.innerHTML = svgs.length ? `<div id="elkPagedChart" class="elk-pages">${svgs.join("")}</div>` : `<div class="elk-empty">沒有可顯示的公司資料</div>`;
+      return;
+    }
+
+    const graph = buildElkGraph(state.masterRows, profile);
+    if (!graph.children.length) {
+      elements.chartContainer.innerHTML = `<div class="elk-empty">沒有可顯示的公司資料</div>`;
+      return;
+    }
     const layout = await elk.layout(graph);
     if (seq !== _elkRenderSeq) return;
-    elements.chartContainer.innerHTML = renderElkSvg(layout);
+    elements.chartContainer.innerHTML = renderElkSvg(layout, profile);
   } catch (error) {
     console.error(error);
     elements.chartContainer.classList.add("chart-container-list");
@@ -1547,13 +1744,16 @@ function renderChart() {
 
   const total = state.masterRows.length;
   const useList = false;
+  const profile = getChartProfile();
+  syncChartModeButtons();
 
-  elements.chartLayoutBadge.textContent = `${total} 家公司 · ELK 正式版 SVG`;
+  elements.chartLayoutBadge.textContent = `${total} 家公司 · ${profile.label}`;
 
   // 切換容器樣式
   elements.chartContainer.classList.toggle("chart-container-list", useList);
   elements.chartContainer.classList.toggle("chart-container-echart", false);
   elements.chartContainer.classList.toggle("chart-container-elk", true);
+  elements.chartContainer.classList.toggle("chart-container-paged", state.chartMode === "paged");
 
   elements.exportPngBtn.style.display  = "";
   elements.exportHtmlBtn.style.display = "";
@@ -1562,7 +1762,7 @@ function renderChart() {
 }
 
 function exportPNG() {
-  const svg = document.getElementById("elkChartSvg");
+  const svg = document.querySelector(".elk-svg");
   if (svg) {
     const serializer = new XMLSerializer();
     const source = serializer.serializeToString(svg);
@@ -1598,19 +1798,23 @@ function exportPNG() {
 
 function exportHTML() {
   const title = state.taskName || "股權架構圖";
-  const svg = document.getElementById("elkChartSvg");
-  if (svg) {
+  const svgMarkup = document.getElementById("elkPagedChart")?.outerHTML || document.querySelector(".elk-svg")?.outerHTML;
+  if (svgMarkup) {
+    const profile = getChartProfile();
     const html = `<!DOCTYPE html>
 <html lang="zh-Hant"><head>
 <meta charset="UTF-8"><title>${svgEscape(title)}</title>
 <style>
-@page { size: A4 landscape; margin: 12mm; }
+@page { size: ${state.chartMode === "a3" ? "A3" : "A4"} landscape; margin: 12mm; }
 body { margin: 0; background: #f8fafc; font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
 .wrap { padding: 18px; }
 h2 { margin: 0 0 12px; color: #1e293b; font-size: 16px; }
 svg { max-width: 100%; height: auto; background: #f8fafc; }
+.elk-page { break-after: page; page-break-after: always; margin-bottom: 24px; }
+.elk-page:last-child { break-after: auto; page-break-after: auto; }
+.elk-page-title { color: #425466; font-size: 12px; font-weight: 700; margin: 0 0 8px; }
 </style></head>
-<body><div class="wrap"><h2>${svgEscape(title)} — 股權架構圖</h2>${svg.outerHTML}</div></body></html>`;
+<body><div class="wrap"><h2>${svgEscape(title)} — ${profile.label}股權架構圖</h2>${svgMarkup}</div></body></html>`;
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1717,8 +1921,14 @@ function bindEvents() {
       enableStartIfReady();
     }
   });
-  elements.searchInput.addEventListener("input", renderResults);
-  elements.statusFilter.addEventListener("change", renderResults);
+  elements.searchInput?.addEventListener("input", renderResults);
+  elements.statusFilter?.addEventListener("change", renderResults);
+  elements.chartModeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.chartMode = button.dataset.chartMode || "a4";
+      renderChart();
+    });
+  });
   elements.exportBtn.addEventListener("click", exportWorkbook);
   elements.exportPngBtn.addEventListener("click", exportPNG);
   elements.exportHtmlBtn.addEventListener("click", exportHTML);

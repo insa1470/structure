@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260504c" />
+    <link rel="stylesheet" href="./styles.css?v=20260504f" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
@@ -42,7 +42,7 @@
         <header class="topbar">
           <div>
             <p class="eyebrow">MVP Prototype</p>
-            <h2 id="pageTitle">建立新任務</h2>
+            <h2 id="pageTitle">上傳任務</h2>
             <p id="taskStatusLine" class="topbar-status">尚未建立任務</p>
           </div>
           <div class="topbar-actions">
@@ -51,16 +51,6 @@
         </header>
 
         <section id="upload" class="view active">
-          <div class="hero">
-            <div>
-              <p class="eyebrow">Step 1</p>
-              <h3>上傳兩張圖，開始一次新的整併審核</h3>
-              <p class="hero-copy">
-                圖一用來抓結構骨架，圖二用來補充各公司詳細資訊，AI 辨識完成後再由人工確認少數不確定項目。
-              </p>
-            </div>
-          </div>
-
           <div class="upload-layout">
             <div class="card form-card">
               <label class="field">
@@ -181,24 +171,6 @@
         </section>
 
         <section id="results" class="view">
-          <div class="card filters-card">
-            <div class="toolbar">
-              <label class="field compact">
-                <span>搜尋公司</span>
-                <input id="searchInput" type="text" placeholder="輸入公司名、上層公司或法人代表" />
-              </label>
-              <label class="field compact">
-                <span>結果篩選</span>
-                <select id="statusFilter">
-                  <option value="all">全部</option>
-                  <option value="enriched">已自動補完</option>
-                  <option value="review_match">待人工確認</option>
-                  <option value="chart1_only">圖一獨有</option>
-                </select>
-              </label>
-            </div>
-          </div>
-
           <div class="card table-card">
             <div class="section-head">
               <div>
@@ -216,8 +188,8 @@
                     <th class="editable-col">資本額 ✏️</th>
                     <th class="editable-col">成立日期 ✏️</th>
                     <th class="editable-col">持股比例 ✏️</th>
-                    <th class="editable-col">公司狀態 ✏️</th>
-                    <th>系統狀態</th>
+                    <th class="editable-col">定位 ✏️</th>
+                    <th>備註</th>
                   </tr>
                 </thead>
                 <tbody id="resultTableBody"></tbody>
@@ -234,6 +206,12 @@
               <h3>股權架構圖</h3>
             </div>
             <div class="chart-actions">
+              <div class="chart-mode-tabs" aria-label="股權圖版面">
+                <button class="chart-mode-btn active" data-chart-mode="a4" type="button">A4</button>
+                <button class="chart-mode-btn" data-chart-mode="a3" type="button">A3</button>
+                <button class="chart-mode-btn" data-chart-mode="large" type="button">大圖</button>
+                <button class="chart-mode-btn" data-chart-mode="paged" type="button">分頁</button>
+              </div>
               <span id="chartLayoutBadge" class="pill info"></span>
               <button id="exportPngBtn" class="ghost-btn">⬇ 下載 PNG</button>
               <button id="exportHtmlBtn" class="ghost-btn">⬇ 下載 HTML</button>
@@ -246,7 +224,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260504c"></script>
-    <script type="module" src="./app.js?v=20260504c"></script>
+    <script src="./config.js?v=20260504f"></script>
+    <script type="module" src="./app.js?v=20260504f"></script>
   </body>
   </html>
