@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260504f" />
+    <link rel="stylesheet" href="./styles.css?v=20260504g" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
@@ -206,6 +206,14 @@
               <h3>股權架構圖</h3>
             </div>
             <div class="chart-actions">
+              <div class="chart-toggle-tabs" aria-label="顯示方式">
+                <button class="chart-view-btn active" data-chart-view="graph" type="button">圖形關係</button>
+                <button class="chart-view-btn" data-chart-view="list" type="button">條列層級</button>
+              </div>
+              <div class="chart-toggle-tabs chart-direction-tabs" aria-label="圖形方向">
+                <button class="chart-direction-btn active" data-chart-direction="down" type="button">上到下</button>
+                <button class="chart-direction-btn" data-chart-direction="right" type="button">左到右</button>
+              </div>
               <div class="chart-mode-tabs" aria-label="股權圖版面">
                 <button class="chart-mode-btn active" data-chart-mode="a4" type="button">A4</button>
                 <button class="chart-mode-btn" data-chart-mode="a3" type="button">A3</button>
@@ -224,7 +232,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260504f"></script>
-    <script type="module" src="./app.js?v=20260504f"></script>
+    <script src="./config.js?v=20260504g"></script>
+    <script type="module" src="./app.js?v=20260504g"></script>
   </body>
   </html>

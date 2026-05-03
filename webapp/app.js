@@ -12,6 +12,8 @@ const state = {
   candidateDecisions: {},
   selectedReviewIndex: 0,
   selectedCandidateIndex: 0,
+  chartView: "graph",
+  chartDirection: "down",
   chartMode: "a4",
 };
 
@@ -42,6 +44,8 @@ const elements = {
   statusFilter: document.getElementById("statusFilter"),
   resultTableTitle: document.getElementById("resultTableTitle"),
   resultTableBody: document.getElementById("resultTableBody"),
+  chartViewButtons: [...document.querySelectorAll(".chart-view-btn")],
+  chartDirectionButtons: [...document.querySelectorAll(".chart-direction-btn")],
   chartModeButtons: [...document.querySelectorAll(".chart-mode-btn")],
   chartContainer: document.getElementById("chartContainer"),
   chartLayoutBadge: document.getElementById("chartLayoutBadge"),
@@ -1268,6 +1272,12 @@ function getChartProfile() {
 }
 
 function syncChartModeButtons() {
+  elements.chartViewButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.chartView === state.chartView);
+  });
+  elements.chartDirectionButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.chartDirection === state.chartDirection);
+  });
   elements.chartModeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.chartMode === state.chartMode);
   });
@@ -1281,7 +1291,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
     id: graphId,
     layoutOptions: {
       "elk.algorithm": "layered",
-      "elk.direction": "DOWN",
+      "elk.direction": state.chartDirection === "right" ? "RIGHT" : "DOWN",
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.spacing.nodeNode": String(profile.nodeSpacing),
       "elk.layered.spacing.nodeNodeBetweenLayers": String(profile.layerSpacing),
@@ -1383,6 +1393,10 @@ function renderBranchEdges(layout, profile) {
     const parent = nodesById[parentId];
     if (!parent || !childEdges.length) return "";
 
+    if (state.chartDirection === "right") {
+      return renderRightBranchGroup(parent, childEdges, profile);
+    }
+
     const parentX = (parent.x || 0) + parent.width / 2;
     const parentBottom = (parent.y || 0) + parent.height;
     const children = childEdges
@@ -1422,6 +1436,46 @@ function renderBranchEdges(layout, profile) {
         ${drops}
       </g>`;
   }).join("");
+}
+
+function renderRightBranchGroup(parent, childEdges, profile) {
+  const parentRight = (parent.x || 0) + parent.width;
+  const parentY = (parent.y || 0) + parent.height / 2;
+  const children = childEdges
+    .map(({ edge, child }) => ({
+      edge,
+      child,
+      left: child.x || 0,
+      y: (child.y || 0) + child.height / 2,
+    }))
+    .sort((a, b) => a.y - b.y);
+
+  if (children.length === 1) {
+    const item = children[0];
+    const midX = parentRight + Math.max(28, Math.min(72, (item.left - parentRight) * 0.5));
+    return `
+      <g class="elk-edge elk-edge-branch">
+        <polyline points="${parentRight.toFixed(1)},${parentY.toFixed(1)} ${midX.toFixed(1)},${parentY.toFixed(1)} ${midX.toFixed(1)},${item.y.toFixed(1)} ${item.left.toFixed(1)},${item.y.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
+        ${item.edge.ratio ? renderEdgeRatioLabel(item.left - 36, item.y - 14, item.edge.ratio, profile) : ""}
+      </g>`;
+  }
+
+  const minChildLeft = Math.min(...children.map((item) => item.left));
+  const minY = Math.min(...children.map((item) => item.y));
+  const maxY = Math.max(...children.map((item) => item.y));
+  const naturalBusX = parentRight + Math.max(34, Math.min(82, (minChildLeft - parentRight) * 0.45));
+  const busX = Math.min(minChildLeft - 42, naturalBusX);
+  const branches = children.map((item) => `
+    <polyline points="${busX.toFixed(1)},${item.y.toFixed(1)} ${item.left.toFixed(1)},${item.y.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
+    ${item.edge.ratio ? renderEdgeRatioLabel(item.left - 36, item.y - 14, item.edge.ratio, profile) : ""}
+  `).join("");
+
+  return `
+    <g class="elk-edge elk-edge-branch">
+      <polyline points="${parentRight.toFixed(1)},${parentY.toFixed(1)} ${busX.toFixed(1)},${parentY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
+      <polyline points="${busX.toFixed(1)},${minY.toFixed(1)} ${busX.toFixed(1)},${maxY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
+      ${branches}
+    </g>`;
 }
 
 function renderEdgeRatioLabel(x, y, ratio, profile) {
@@ -1743,22 +1797,31 @@ function renderChart() {
   if (!state.started || !state.masterRows.length) return;
 
   const total = state.masterRows.length;
-  const useList = false;
   const profile = getChartProfile();
   syncChartModeButtons();
+  const isList = state.chartView === "list";
 
-  elements.chartLayoutBadge.textContent = `${total} 家公司 · ${profile.label}`;
+  elements.chartLayoutBadge.textContent = isList
+    ? `${total} 家公司 · 條列層級`
+    : `${total} 家公司 · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"}`;
 
   // 切換容器樣式
-  elements.chartContainer.classList.toggle("chart-container-list", useList);
+  elements.chartContainer.classList.toggle("chart-container-list", isList);
   elements.chartContainer.classList.toggle("chart-container-echart", false);
-  elements.chartContainer.classList.toggle("chart-container-elk", true);
-  elements.chartContainer.classList.toggle("chart-container-paged", state.chartMode === "paged");
+  elements.chartContainer.classList.toggle("chart-container-elk", !isList);
+  elements.chartContainer.classList.toggle("chart-container-paged", !isList && state.chartMode === "paged");
+  document.getElementById("chart")?.classList.toggle("chart-view-list", isList);
+  document.getElementById("chart")?.classList.toggle("chart-view-graph", !isList);
 
-  elements.exportPngBtn.style.display  = "";
+  elements.exportPngBtn.style.display  = isList ? "none" : "";
   elements.exportHtmlBtn.style.display = "";
 
-  renderElkChart();
+  if (isList) {
+    if (_chart) { _chart.dispose(); _chart = null; }
+    renderListTree();
+  } else {
+    renderElkChart();
+  }
 }
 
 function exportPNG() {
@@ -1821,6 +1884,36 @@ svg { max-width: 100%; height: auto; background: #f8fafc; }
     a.href = url;
     a.download = `${title}.html`;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    return;
+  }
+
+  const listInner = document.getElementById("listTreeInner")?.outerHTML || "";
+  if (listInner) {
+    const html = `<!DOCTYPE html>
+<html lang="zh-Hant"><head>
+<meta charset="UTF-8"><title>${svgEscape(title)}</title>
+<style>
+@page { size: A4 landscape; margin: 15mm; }
+body { font-family: "Noto Sans TC", "PingFang TC", sans-serif; background: #f8fafc; padding: 24px; }
+h2 { font-size: 16px; margin-bottom: 16px; color: #1e293b; }
+.list-tree { font-size: 12px; line-height: 1.9; }
+.lt-row { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.lt-root { font-size: 15px; font-weight: 800; margin-bottom: 4px; }
+.lt-prefix { font-family: monospace; color: #94a3b8; white-space: pre; }
+.lt-name { font-weight: 600; }
+.lt-warn { font-size: 11px; color: #f59e0b; font-weight: 600; }
+.lt-attrs { color: #64748b; font-size: 11px; }
+.lt-uncertain .lt-name { text-decoration: underline dotted #f59e0b; }
+</style></head>
+<body>
+<h2>${svgEscape(title)} — 條列層級</h2>
+${listInner}
+</body></html>`;
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `${title}.html`; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 3000);
     return;
   }
@@ -1923,6 +2016,18 @@ function bindEvents() {
   });
   elements.searchInput?.addEventListener("input", renderResults);
   elements.statusFilter?.addEventListener("change", renderResults);
+  elements.chartViewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.chartView = button.dataset.chartView || "graph";
+      renderChart();
+    });
+  });
+  elements.chartDirectionButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.chartDirection = button.dataset.chartDirection || "down";
+      renderChart();
+    });
+  });
   elements.chartModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartMode = button.dataset.chartMode || "a4";

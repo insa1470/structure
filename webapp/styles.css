@@ -1389,6 +1389,7 @@ tr:hover .row-del-btn {
   flex-wrap: wrap;
 }
 
+.chart-toggle-tabs,
 .chart-mode-tabs {
   display: inline-flex;
   align-items: center;
@@ -1399,6 +1400,8 @@ tr:hover .row-del-btn {
   background: var(--panel);
 }
 
+.chart-view-btn,
+.chart-direction-btn,
 .chart-mode-btn {
   border: 0;
   border-radius: 6px;
@@ -1410,14 +1413,23 @@ tr:hover .row-del-btn {
   padding: 6px 10px;
 }
 
+.chart-view-btn:hover,
+.chart-direction-btn:hover,
 .chart-mode-btn:hover {
   background: var(--slate-soft);
   color: var(--ink);
 }
 
+.chart-view-btn.active,
+.chart-direction-btn.active,
 .chart-mode-btn.active {
   background: var(--primary);
   color: #fff;
+}
+
+.chart-view-list .chart-direction-tabs,
+.chart-view-list .chart-mode-tabs {
+  display: none;
 }
 
 .chart-legend {
