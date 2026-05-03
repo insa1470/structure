@@ -1402,6 +1402,7 @@ tr:hover .row-del-btn {
 
 .chart-view-btn,
 .chart-direction-btn,
+.chart-style-btn,
 .chart-mode-btn {
   border: 0;
   border-radius: 6px;
@@ -1415,6 +1416,7 @@ tr:hover .row-del-btn {
 
 .chart-view-btn:hover,
 .chart-direction-btn:hover,
+.chart-style-btn:hover,
 .chart-mode-btn:hover {
   background: var(--slate-soft);
   color: var(--ink);
@@ -1422,13 +1424,23 @@ tr:hover .row-del-btn {
 
 .chart-view-btn.active,
 .chart-direction-btn.active,
+.chart-style-btn.active,
 .chart-mode-btn.active {
   background: var(--primary);
   color: #fff;
 }
 
 .chart-view-list .chart-direction-tabs,
-.chart-view-list .chart-mode-tabs {
+.chart-view-list .chart-mode-tabs,
+.chart-view-list .chart-style-tabs {
+  display: none;
+}
+
+.print-chart-title {
+  display: none;
+}
+
+.chart-style-mono .chart-legend {
   display: none;
 }
 
@@ -1625,6 +1637,8 @@ tr:hover .row-del-btn {
   @page { size: A4 landscape; margin: 12mm 15mm; }
 
   .sidebar,
+  .topbar,
+  .chart-header,
   .chart-actions,
   .chart-legend,
   .toolbar,
@@ -1638,6 +1652,36 @@ tr:hover .row-del-btn {
   #chart {
     display: block !important;
     padding: 0;
+  }
+
+  .print-chart-title {
+    display: block;
+    margin: 0 0 8mm;
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 800;
+    text-align: center;
+  }
+
+  .chart-container {
+    border: none;
+    box-shadow: none;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    border-radius: 0;
+  }
+
+  .chart-container-elk:not(.chart-container-paged) .elk-svg,
+  .elk-page .elk-svg {
+    width: 100%;
+    max-height: 175mm;
+    height: auto;
+  }
+
+  .elk-svg {
+    min-width: 0;
+    min-height: 0;
   }
 
   .chart-container-list {

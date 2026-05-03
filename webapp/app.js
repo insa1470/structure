@@ -14,6 +14,7 @@ const state = {
   selectedCandidateIndex: 0,
   chartView: "graph",
   chartDirection: "down",
+  chartStyle: "mono",
   chartMode: "a4",
 };
 
@@ -46,7 +47,9 @@ const elements = {
   resultTableBody: document.getElementById("resultTableBody"),
   chartViewButtons: [...document.querySelectorAll(".chart-view-btn")],
   chartDirectionButtons: [...document.querySelectorAll(".chart-direction-btn")],
+  chartStyleButtons: [...document.querySelectorAll(".chart-style-btn")],
   chartModeButtons: [...document.querySelectorAll(".chart-mode-btn")],
+  printChartTitle: document.getElementById("printChartTitle"),
   chartContainer: document.getElementById("chartContainer"),
   chartLayoutBadge: document.getElementById("chartLayoutBadge"),
   chartLegend: document.getElementById("chartLegend"),
@@ -1200,7 +1203,7 @@ const CHART_PROFILES = {
     minHeight: 1200,
   },
   paged: {
-    label: "分頁圖",
+    label: "分支分頁",
     nodeW: 240,
     nodeH: 96,
     maxNodeW: 315,
@@ -1274,9 +1277,18 @@ function syncChartModeButtons() {
   elements.chartDirectionButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.chartDirection === state.chartDirection);
   });
+  elements.chartStyleButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.chartStyle === state.chartStyle);
+  });
   elements.chartModeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.chartMode === state.chartMode);
   });
+}
+
+function getChartTitle() {
+  const root = state.masterRows.find((row) => !row.chart1_parent || Number(row.chart1_level) === 0);
+  const base = (state.taskName || root?.canonical_name || root?.chart1_name || "股權架構圖").trim();
+  return base.includes("股權架構圖") ? base : `${base}股權架構圖`;
 }
 
 function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
@@ -1500,7 +1512,12 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const r = node.row || {};
     const level = Number(r.chart1_level) || 0;
     const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
+    const isMono = state.chartStyle === "mono";
     const uncertain = r.node_status !== "enriched";
+    const fill = isMono ? "#ffffff" : color;
+    const stroke = isMono ? (uncertain ? "#f59e0b" : "#334155") : (uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)");
+    const nameColor = isMono ? "#0f172a" : "#ffffff";
+    const detailColor = isMono ? "#334155" : "rgba(255,255,255,0.92)";
     const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", profile.nameLen, profile.nameLines);
     const repCap = [
       r.legal_representative ? `法代：${r.legal_representative}` : "",
@@ -1516,14 +1533,14 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const detailStart = profile.nodeH - (details.length > 1 ? 35 : 26);
     return `
       <g class="elk-node" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
-        <rect width="${node.width}" height="${node.height}" rx="7" fill="${color}" stroke="${uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)"}" stroke-width="${uncertain ? 3 : 1.2}" ${uncertain ? 'stroke-dasharray="7 4"' : ""} />
-        <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="#ffffff" font-size="${profile.nameFont}" font-weight="800">
+        <rect width="${node.width}" height="${node.height}" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="${uncertain ? 2.2 : 1.4}" ${uncertain ? 'stroke-dasharray="7 4"' : ""} />
+        <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="${nameColor}" font-size="${profile.nameFont}" font-weight="800">
           ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 18}">${svgEscape(line)}</tspan>`).join("")}
         </text>
-        <text x="${node.width / 2}" y="${detailStart}" text-anchor="middle" fill="rgba(255,255,255,0.92)" font-size="${profile.detailFont}" font-weight="600">
+        <text x="${node.width / 2}" y="${detailStart}" text-anchor="middle" fill="${detailColor}" font-size="${profile.detailFont}" font-weight="600">
           ${details.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 15}">${svgEscape(line)}</tspan>`).join("")}
         </text>
-        ${uncertain ? `<text x="${node.width - 14}" y="20" text-anchor="middle" fill="#fef3c7" font-size="15" font-weight="900">!</text>` : ""}
+        ${uncertain ? `<text x="${node.width - 14}" y="20" text-anchor="middle" fill="#f59e0b" font-size="15" font-weight="900">!</text>` : ""}
       </g>`;
   }).join("");
 
@@ -1803,10 +1820,12 @@ function renderChart() {
   const profile = getChartProfile();
   syncChartModeButtons();
   const isList = state.chartView === "list";
+  const title = getChartTitle();
+  if (elements.printChartTitle) elements.printChartTitle.textContent = title;
 
   elements.chartLayoutBadge.textContent = isList
     ? `${total} 家公司 · 條列層級`
-    : `${total} 家公司 · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"}`;
+    : `${total} 家公司 · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}`;
 
   // 切換容器樣式
   elements.chartContainer.classList.toggle("chart-container-list", isList);
@@ -1815,6 +1834,8 @@ function renderChart() {
   elements.chartContainer.classList.toggle("chart-container-paged", !isList && state.chartMode === "paged");
   document.getElementById("chart")?.classList.toggle("chart-view-list", isList);
   document.getElementById("chart")?.classList.toggle("chart-view-graph", !isList);
+  document.getElementById("chart")?.classList.toggle("chart-style-mono", state.chartStyle === "mono");
+  document.getElementById("chart")?.classList.toggle("chart-style-color", state.chartStyle === "color");
 
   elements.exportPngBtn.style.display  = isList ? "none" : "";
   elements.exportHtmlBtn.style.display = "";
@@ -1863,7 +1884,7 @@ function exportPNG() {
 }
 
 function exportHTML() {
-  const title = state.taskName || "股權架構圖";
+  const title = getChartTitle();
   const svgMarkup = document.getElementById("elkPagedChart")?.outerHTML || document.querySelector(".elk-svg")?.outerHTML;
   if (svgMarkup) {
     const profile = getChartProfile();
@@ -1880,7 +1901,7 @@ svg { max-width: 100%; height: auto; background: #f8fafc; }
 .elk-page:last-child { break-after: auto; page-break-after: auto; }
 .elk-page-title { color: #425466; font-size: 12px; font-weight: 700; margin: 0 0 8px; }
 </style></head>
-<body><div class="wrap"><h2>${svgEscape(title)} — ${profile.label}股權架構圖</h2>${svgMarkup}</div></body></html>`;
+<body><div class="wrap"><h2>${svgEscape(title)} — ${profile.label}</h2>${svgMarkup}</div></body></html>`;
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2028,6 +2049,12 @@ function bindEvents() {
   elements.chartDirectionButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartDirection = button.dataset.chartDirection || "down";
+      renderChart();
+    });
+  });
+  elements.chartStyleButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.chartStyle = button.dataset.chartStyle || "mono";
       renderChart();
     });
   });

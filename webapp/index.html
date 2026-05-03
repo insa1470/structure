@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260504h" />
+    <link rel="stylesheet" href="./styles.css?v=20260504i" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
@@ -218,7 +218,11 @@
                 <button class="chart-mode-btn active" data-chart-mode="a4" type="button">A4</button>
                 <button class="chart-mode-btn" data-chart-mode="a3" type="button">A3</button>
                 <button class="chart-mode-btn" data-chart-mode="large" type="button">詳細圖</button>
-                <button class="chart-mode-btn" data-chart-mode="paged" type="button">分頁圖</button>
+                <button class="chart-mode-btn" data-chart-mode="paged" type="button">分支分頁</button>
+              </div>
+              <div class="chart-toggle-tabs chart-style-tabs" aria-label="圖形樣式">
+                <button class="chart-style-btn active" data-chart-style="mono" type="button">黑白正式</button>
+                <button class="chart-style-btn" data-chart-style="color" type="button">層級彩色</button>
               </div>
               <span id="chartLayoutBadge" class="pill info"></span>
               <button id="exportPngBtn" class="ghost-btn">⬇ 下載 PNG</button>
@@ -226,13 +230,14 @@
               <button id="printChartBtn" class="ghost-btn">🖨 列印</button>
             </div>
           </div>
+          <h2 id="printChartTitle" class="print-chart-title">股權架構圖</h2>
           <div id="chartLegend" class="chart-legend"></div>
           <div id="chartContainer" class="chart-container"></div>
         </section>
       </main>
     </div>
 
-    <script src="./config.js?v=20260504h"></script>
-    <script type="module" src="./app.js?v=20260504h"></script>
+    <script src="./config.js?v=20260504i"></script>
+    <script type="module" src="./app.js?v=20260504i"></script>
   </body>
   </html>
