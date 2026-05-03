@@ -1490,6 +1490,7 @@ tr:hover .row-del-btn {
 .chart-view-btn,
 .chart-direction-btn,
 .chart-style-btn,
+.chart-depth-btn,
 .chart-mode-btn {
   border: 0;
   border-radius: 6px;
@@ -1504,6 +1505,7 @@ tr:hover .row-del-btn {
 .chart-view-btn:hover,
 .chart-direction-btn:hover,
 .chart-style-btn:hover,
+.chart-depth-btn:hover,
 .chart-mode-btn:hover {
   background: var(--slate-soft);
   color: var(--ink);
@@ -1512,6 +1514,7 @@ tr:hover .row-del-btn {
 .chart-view-btn.active,
 .chart-direction-btn.active,
 .chart-style-btn.active,
+.chart-depth-btn.active,
 .chart-mode-btn.active {
   background: var(--primary);
   color: #fff;

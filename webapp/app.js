@@ -16,6 +16,7 @@ const state = {
   chartDirection: "down",
   chartStyle: "mono",
   chartMode: "a4",
+  chartDepth: "all",
   showGroupRoot: false,
   selectedBranchId: "__all__",
   chartScale: 1,
@@ -54,6 +55,7 @@ const elements = {
   chartDirectionButtons: [...document.querySelectorAll(".chart-direction-btn")],
   chartStyleButtons: [...document.querySelectorAll(".chart-style-btn")],
   chartModeButtons: [...document.querySelectorAll(".chart-mode-btn")],
+  chartDepthButtons: [...document.querySelectorAll(".chart-depth-btn")],
   chartBranchPicker: document.getElementById("chartBranchPicker"),
   chartBranchSelect: document.getElementById("chartBranchSelect"),
   chartZoomButtons: [...document.querySelectorAll(".chart-zoom-btn")],
@@ -130,10 +132,18 @@ function getGroupName() {
 }
 
 function getChartRows() {
-  if (state.showGroupRoot) return state.masterRows;
+  const maxLevel = state.chartDepth === "all" ? Infinity : Number(state.chartDepth);
+  const levelRows = state.masterRows.filter((row) => (Number(row.chart1_level) || 0) <= maxLevel);
+  if (state.showGroupRoot) return levelRows;
   const root = getRootRow();
-  if (!root?.node_id) return state.masterRows;
-  return state.masterRows.filter((row) => row.node_id !== root.node_id);
+  if (!root?.node_id) return levelRows;
+  return levelRows.filter((row) => row.node_id !== root.node_id);
+}
+
+function getChartDepthLabel() {
+  if (state.chartDepth === "1") return "顯示到一級";
+  if (state.chartDepth === "2") return "顯示到二級";
+  return "顯示全部層級";
 }
 
 function recommendationText(action) {
@@ -1301,6 +1311,9 @@ function syncChartModeButtons() {
   elements.chartModeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.chartMode === state.chartMode);
   });
+  elements.chartDepthButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.chartDepth === state.chartDepth);
+  });
   if (elements.chartShowRootToggle) elements.chartShowRootToggle.checked = state.showGroupRoot;
   if (elements.chartBranchPicker) {
     elements.chartBranchPicker.style.display = isGraph && state.chartMode === "paged" ? "" : "none";
@@ -1870,6 +1883,7 @@ function renderListTree() {
       node.legal_representative ? `法代：${node.legal_representative}` : "",
       node.registered_capital   ? `資本：${formatCapital(node.registered_capital)}` : "",
       node.established_date     ? `成立：${node.established_date}` : "",
+      node.actual_controller_share ? `持股：${node.actual_controller_share}` : "",
       node.role_label           ? `定位：${node.role_label}` : "",
       node.chart_note            ? `備註：${node.chart_note}` : "",
     ].filter(Boolean).join("｜");
@@ -1980,8 +1994,8 @@ function renderChart() {
   if (elements.printChartTitle) elements.printChartTitle.textContent = title;
 
   elements.chartLayoutBadge.textContent = isList
-    ? `${total} 家公司 · 條列層級`
-    : `${total} 家公司 · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
+    ? `${total} 家公司 · 條列層級 · ${getChartDepthLabel()}`
+    : `${total} 家公司 · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${getChartDepthLabel()} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
 
   // 切換容器樣式
   elements.chartContainer.classList.toggle("chart-container-list", isList);
@@ -2229,6 +2243,14 @@ function bindEvents() {
   elements.chartModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartMode = button.dataset.chartMode || "a4";
+      state.selectedBranchId = "__all__";
+      resetChartViewport();
+      renderChart();
+    });
+  });
+  elements.chartDepthButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.chartDepth = button.dataset.chartDepth || "all";
       state.selectedBranchId = "__all__";
       resetChartViewport();
       renderChart();
