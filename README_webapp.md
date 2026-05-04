@@ -29,6 +29,13 @@ http://127.0.0.1:8765
   - 提供靜態頁面與 API
   - 接收圖片上傳
   - 建立任務與保存人工決策
+- `storage.py`
+  - 任務資料儲存層
+  - 目前仍寫入 `app_data/tasks/<task_id>/task.json`
+  - 未來可替換成 SQLite / PostgreSQL，不需大改 API
+- `ocr_engine.py`
+  - PaddleOCR 輔助辨識 PoC
+  - 目前只供測試 API 使用，尚未接進正式分析流程
 - `webapp/index.html`
   - 使用者介面骨架
 - `webapp/styles.css`
@@ -49,6 +56,17 @@ http://127.0.0.1:8765
 
 ### `GET /api/tasks/<task_id>`
 取得任務完整資料。
+
+### `POST /api/ocr/probe`
+PaddleOCR 測試端點。上傳 `image`、`chart1` 或 `chart2` 圖片後，回傳 OCR 文字清單與可能公司名稱。
+
+此功能是輔助辨識 PoC，尚未影響正式上傳分析流程。若本機尚未安裝 PaddleOCR，會回傳 `ocr_unavailable`。
+
+可選安裝：
+
+```bash
+python3 -m pip install -r requirements-paddle.txt
+```
 
 ### `POST /api/review-decision`
 寫入待確認頁的人工決策。

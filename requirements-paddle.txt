@@ -1,0 +1,4 @@
+# Optional local OCR PoC dependencies.
+# Do not install this on Cloudflare Workers. Use it only on a Python backend.
+paddleocr
+paddlepaddle

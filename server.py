@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import csv
-import json
 import os
 import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
+from storage import ensure_storage_ready, read_task, save_task, task_upload_dir
+
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "app_data" / "tasks"
 WEB_DIR = BASE_DIR / "webapp"
 
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="")
@@ -33,23 +34,6 @@ def parse_csv(path: Path) -> list[dict]:
 def sanitize_filename(name: str) -> str:
     name = re.sub(r"[^A-Za-z0-9._\-一-鿿()（）]+", "_", name.strip())
     return name or "upload.bin"
-
-
-def write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def read_task(task_id: str) -> dict | None:
-    path = DATA_DIR / task_id / "task.json"
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def save_task(task: dict) -> None:
-    task["updated_at"] = now_iso()
-    write_json(DATA_DIR / task["id"] / "task.json", task)
 
 
 def summary_from_rows(master_rows, review_rows, candidate_rows) -> dict:
@@ -225,6 +209,30 @@ def health():
     return jsonify({"ok": True, "time": now_iso()})
 
 
+@app.route("/api/ocr/probe", methods=["POST"])
+def ocr_probe():
+    image = request.files.get("image") or request.files.get("chart1") or request.files.get("chart2")
+    if not image:
+        return jsonify({"error": "image_required", "message": "請上傳 image、chart1 或 chart2 圖片。"}), 400
+
+    suffix = Path(image.filename or "upload.png").suffix or ".png"
+    temp_path = None
+    try:
+        with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            image.save(tmp.name)
+            temp_path = Path(tmp.name)
+        from ocr_engine import run_paddle_ocr
+        result = run_paddle_ocr(temp_path)
+        return jsonify({"ok": True, **result})
+    except RuntimeError as exc:
+        return jsonify({"error": "ocr_unavailable", "message": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": "ocr_failed", "message": str(exc)}), 500
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
 @app.route("/api/demo-task")
 def demo_task():
     task = build_task("示範任務", "demo_chart1.png", "demo_chart2.jpg")
@@ -257,8 +265,7 @@ def analyze():
 
     # 儲存上傳圖片，立刻建立 processing 狀態的任務
     task_id = uuid.uuid4().hex[:12]
-    upload_dir = DATA_DIR / task_id / "uploads"
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_dir = task_upload_dir(task_id)
     c1_path = upload_dir / f"chart1_{sanitize_filename(chart1.filename or 'upload.png')}"
     c2_path = upload_dir / f"chart2_{sanitize_filename(chart2.filename or 'upload.jpg')}"
     chart1.save(str(c1_path))
@@ -340,8 +347,7 @@ def analyze_chart2_only(task_id: str):
         return jsonify({"error": "chart2_required"}), 400
 
     # 存新的圖二
-    upload_dir = DATA_DIR / task_id / "uploads"
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_dir = task_upload_dir(task_id)
     c2_path = upload_dir / f"chart2_retry_{sanitize_filename(chart2.filename or 'upload.jpg')}"
     chart2.save(str(c2_path))
 
@@ -685,6 +691,6 @@ def candidate_decision():
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_storage_ready()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
