@@ -535,6 +535,59 @@ def update_row(task_id: str):
     })
 
 
+@app.route("/api/tasks/<task_id>/add-row", methods=["POST"])
+def add_row(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("canonical_name") or payload.get("chart1_name") or "").strip()
+    if not name:
+        return jsonify({"error": "company_name_required"}), 400
+
+    parent_id = str(payload.get("chart1_parent") or "").strip()
+    parent_row = next((row for row in task.get("master_rows", []) if row.get("node_id") == parent_id), None)
+    root_row = next((row for row in task.get("master_rows", []) if parse_level_value(row.get("chart1_level")) == 0), None)
+    if not parent_row and root_row:
+        parent_row = root_row
+
+    parent_level = parse_level_value(parent_row.get("chart1_level")) if parent_row else None
+    level = (parent_level + 1) if parent_level is not None else 0
+    new_row = {
+        "node_id": f"M{uuid.uuid4().hex[:6].upper()}",
+        "chart1_name": name,
+        "canonical_name": name,
+        "chart1_level": level,
+        "chart1_parent": parent_row.get("node_id", "") if parent_row else "",
+        "chart1_parent_name": parent_row.get("canonical_name", "") or parent_row.get("chart1_name", "") if parent_row else "",
+        "matched_chart2_name": "",
+        "legal_representative": str(payload.get("legal_representative") or "").strip(),
+        "established_date": str(payload.get("established_date") or "").strip(),
+        "registered_capital": str(payload.get("registered_capital") or "").strip(),
+        "actual_controller_share": str(payload.get("actual_controller_share") or "").strip(),
+        "subsidiary_level_label": level_label(level),
+        "company_status": "",
+        "role_label": str(payload.get("role_label") or "").strip(),
+        "chart_note": str(payload.get("chart_note") or "").strip(),
+        "match_status": "manual",
+        "node_status": "manual_added",
+        "review_flag": "manual_added",
+        "review_note": "人工新增",
+    }
+    task.setdefault("master_rows", []).append(new_row)
+    rebuild_task_state(task)
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "added_node_id": new_row["node_id"],
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
+
+
 @app.route("/api/tasks/<task_id>/delete-row", methods=["POST"])
 def delete_row(task_id: str):
     task = read_task(task_id)

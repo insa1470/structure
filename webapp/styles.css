@@ -833,6 +833,29 @@ textarea {
   -webkit-overflow-scrolling: touch;
 }
 
+.add-company-panel {
+  display: none;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1fr) minmax(140px, 0.7fr) auto;
+  gap: 12px;
+  align-items: flex-end;
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.add-company-panel.active {
+  display: grid;
+}
+
+.add-company-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
 table {
   width: max-content;
   min-width: 100%;
@@ -876,6 +899,10 @@ tbody tr.status-review {
 
 tbody tr.status-slate {
   background: #fafbfd;
+}
+
+tbody tr.status-manual {
+  background: #f8fafc;
 }
 
 .table-note {
@@ -1864,6 +1891,7 @@ tr:hover .row-del-btn {
   .drop-grid,
   .precheck-grid,
   .detail-grid,
+  .add-company-panel,
   .toolbar {
     grid-template-columns: 1fr;
   }

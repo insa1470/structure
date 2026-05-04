@@ -53,6 +53,13 @@ const elements = {
   statusFilter: document.getElementById("statusFilter"),
   resultTableTitle: document.getElementById("resultTableTitle"),
   resultTableBody: document.getElementById("resultTableBody"),
+  addCompanyBtn: document.getElementById("addCompanyBtn"),
+  addCompanyPanel: document.getElementById("addCompanyPanel"),
+  addCompanyName: document.getElementById("addCompanyName"),
+  addCompanyParent: document.getElementById("addCompanyParent"),
+  addCompanyShare: document.getElementById("addCompanyShare"),
+  cancelAddCompanyBtn: document.getElementById("cancelAddCompanyBtn"),
+  saveAddCompanyBtn: document.getElementById("saveAddCompanyBtn"),
   chartViewButtons: [...document.querySelectorAll(".chart-view-btn")],
   chartDirectionButtons: [...document.querySelectorAll(".chart-direction-btn")],
   chartStyleButtons: [...document.querySelectorAll(".chart-style-btn")],
@@ -917,6 +924,66 @@ function flattenTree(nodes, depth = 0, result = []) {
   return result;
 }
 
+function renderAddCompanyParentOptions() {
+  if (!elements.addCompanyParent) return;
+  const rows = flattenTree(buildTree(state.masterRows));
+  const root = getRootRow();
+  const options = [];
+  if (root) {
+    options.push(`<option value="${root.node_id}">掛在${getGroupName()}底下（一級子公司）</option>`);
+  } else {
+    options.push(`<option value="">設為頂層公司</option>`);
+  }
+  rows
+    .filter((row) => (Number(row.chart1_level) || 0) > 0)
+    .forEach((row) => {
+      const level = Number(row.chart1_level) || 0;
+      const prefix = "　".repeat(Math.max(level - 1, 0));
+      const label = row.canonical_name || row.chart1_name || "未命名公司";
+      options.push(`<option value="${row.node_id}">${prefix}${label}</option>`);
+    });
+  elements.addCompanyParent.innerHTML = options.join("");
+}
+
+function setAddCompanyPanel(open) {
+  if (!elements.addCompanyPanel) return;
+  elements.addCompanyPanel.classList.toggle("active", open);
+  if (open) {
+    renderAddCompanyParentOptions();
+    elements.addCompanyName.value = "";
+    elements.addCompanyShare.value = "";
+    elements.addCompanyName.focus();
+  }
+}
+
+async function addCompanyToResults() {
+  if (!state.taskId) return;
+  const name = elements.addCompanyName?.value.trim() || "";
+  if (!name) {
+    elements.addCompanyName?.focus();
+    return;
+  }
+  const originalText = elements.saveAddCompanyBtn.textContent;
+  elements.saveAddCompanyBtn.disabled = true;
+  elements.saveAddCompanyBtn.textContent = "加入中...";
+  try {
+    const result = await apiPost(`/api/tasks/${state.taskId}/add-row`, {
+      canonical_name: name,
+      chart1_parent: elements.addCompanyParent?.value || "",
+      actual_controller_share: elements.addCompanyShare?.value.trim() || "",
+    });
+    applyTaskRefresh(result);
+    setAddCompanyPanel(false);
+    setView("results");
+    document.querySelector(`tr[data-node-id="${result.added_node_id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (error) {
+    console.error("新增公司失敗", error);
+  } finally {
+    elements.saveAddCompanyBtn.disabled = false;
+    elements.saveAddCompanyBtn.textContent = originalText;
+  }
+}
+
 // ── 資本額格式化 ───────────────────────────────────────────────
 function formatCapital(str) {
   if (!str || str === "—") return str;
@@ -1038,6 +1105,8 @@ function renderResults() {
   const companyCount = Math.max(state.masterRows.length - (getRootRow() ? 1 : 0), 0);
 
   elements.resultTableTitle.textContent = `${getGroupName()}共 ${companyCount} 間公司`;
+  if (elements.addCompanyBtn) elements.addCompanyBtn.disabled = !state.taskId;
+  renderAddCompanyParentOptions();
 
   // ── 動態層級欄數 ────────────────────────────────────────────
   const maxLevel = Math.max(0, ...state.masterRows.map((r) => Number(r.chart1_level) || 0));
@@ -1074,7 +1143,8 @@ function renderResults() {
   elements.resultTableBody.innerHTML = "";
   rows.forEach((row) => {
     const level = Number(row.chart1_level) || 0;
-    const statusClass = row.node_status === "enriched" ? "status-enriched"
+    const statusClass = row.node_status === "manual_added" ? "status-manual"
+      : row.node_status === "enriched" ? "status-enriched"
       : row.node_status === "review_match" ? "status-review" : "status-slate";
 
     const tr = document.createElement("tr");
@@ -2550,6 +2620,21 @@ function bindEvents() {
   });
   elements.searchInput?.addEventListener("input", renderResults);
   elements.statusFilter?.addEventListener("change", renderResults);
+  elements.addCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(true));
+  elements.cancelAddCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(false));
+  elements.saveAddCompanyBtn?.addEventListener("click", addCompanyToResults);
+  elements.addCompanyName?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addCompanyToResults();
+    }
+  });
+  elements.addCompanyShare?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addCompanyToResults();
+    }
+  });
   elements.chartViewButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartView = button.dataset.chartView || "graph";

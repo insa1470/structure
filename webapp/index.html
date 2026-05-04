@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260504r" />
+    <link rel="stylesheet" href="./styles.css?v=20260504s" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
@@ -178,6 +178,25 @@
                 <p class="eyebrow">結果主表</p>
                 <h3 id="resultTableTitle">0 家公司</h3>
               </div>
+              <button id="addCompanyBtn" class="ghost-btn" type="button">＋ 新增公司</button>
+            </div>
+            <div id="addCompanyPanel" class="add-company-panel">
+              <label class="field">
+                <span>公司名稱</span>
+                <input id="addCompanyName" type="text" placeholder="輸入要補進主表的公司名稱" />
+              </label>
+              <label class="field">
+                <span>上層公司</span>
+                <select id="addCompanyParent"></select>
+              </label>
+              <label class="field">
+                <span>持股比例</span>
+                <input id="addCompanyShare" type="text" placeholder="例如：100%" />
+              </label>
+              <div class="add-company-actions">
+                <button id="cancelAddCompanyBtn" class="ghost-btn" type="button">取消</button>
+                <button id="saveAddCompanyBtn" class="primary-btn" type="button">加入主表</button>
+              </div>
             </div>
             <div class="table-wrap">
               <table>
@@ -257,7 +276,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260504r"></script>
-    <script type="module" src="./app.js?v=20260504r"></script>
+    <script src="./config.js?v=20260504s"></script>
+    <script type="module" src="./app.js?v=20260504s"></script>
   </body>
   </html>
