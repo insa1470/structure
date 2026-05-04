@@ -215,14 +215,15 @@ def ocr_probe():
     if not image:
         return jsonify({"error": "image_required", "message": "請上傳 image、chart1 或 chart2 圖片。"}), 400
 
+    provider = (request.form.get("provider") or request.args.get("provider") or "").strip() or None
     suffix = Path(image.filename or "upload.png").suffix or ".png"
     temp_path = None
     try:
         with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             image.save(tmp.name)
             temp_path = Path(tmp.name)
-        from ocr_engine import run_paddle_ocr
-        result = run_paddle_ocr(temp_path)
+        from ocr_engine import run_ocr_probe
+        result = run_ocr_probe(temp_path, provider)
         return jsonify({"ok": True, **result})
     except RuntimeError as exc:
         return jsonify({"error": "ocr_unavailable", "message": str(exc)}), 503
