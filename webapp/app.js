@@ -1467,7 +1467,11 @@ function renderWorkspace(phase, opts = {}) {
       : `<li class="ws-company-item ws-company-empty">（無辨識結果）</li>`;
 
     el.innerHTML = `
-      <p class="workspace-eyebrow">圖二辨識完成，請確認後繼續</p>
+      <p class="workspace-eyebrow">需要確認</p>
+      <div class="ws-confirm-alert">
+        <strong>圖二辨識已完成，請確認名單後開始配對</strong>
+        <span>這不是失敗；系統已先停下來，等你確認圖二公司清單是否可以繼續。</span>
+      </div>
       <div class="ws-confirm-counts">
         <div class="ws-cc-stat">
           <span class="ws-cc-label">圖一結構</span>
@@ -1484,7 +1488,7 @@ function renderWorkspace(phase, opts = {}) {
       <p class="ws-company-list-label">圖二辨識到的公司（${chart2Count} 筆）</p>
       <ul class="ws-company-list">${companyListHtml}</ul>
       <div class="ws-confirm-actions">
-        <button class="ws-confirm-btn" id="wsConfirmChart2Btn">確認，開始配對</button>
+        <button class="ws-confirm-btn" id="wsConfirmChart2Btn">確認圖二，開始配對</button>
         <label class="ws-reupload-label">
           重新上傳圖二
           <input type="file" id="wsChart2ReuploadInput" accept="image/*" style="display:none" />
@@ -1531,6 +1535,7 @@ function renderWorkspace(phase, opts = {}) {
       case "processing":        return key === "upload" ? "done" : key === "chart1" ? "active" : "pending";
       case "chart1_ready":      return key === "enrich" ? "active" : "done";
       case "processing_chart2": return key === "enrich" ? "active" : "done";
+      case "chart2_confirm":    return key === "enrich" ? "active" : "done";
       case "ready":             return "done";
       case "chart2_error":      return key === "enrich" ? "error" : "done";
       case "error":             return key === "upload" ? "error" : "pending";
@@ -1547,7 +1552,7 @@ function renderWorkspace(phase, opts = {}) {
     if (key === "chart1") {
       if (phase === "idle" || phase === "uploading") return "等待上傳完成";
       if (phase === "processing") return opts.msg || "辨識中…";
-      if (phase === "chart1_ready" || phase === "processing_chart2" || phase === "ready") {
+      if (phase === "chart1_ready" || phase === "processing_chart2" || phase === "chart2_confirm" || phase === "ready") {
         const s = opts.summary || {};
         const quality = s.chart1_quality || {};
         const rescueNote = quality.rescue_used ? "，已補強公司名稱" : "";
@@ -1565,6 +1570,7 @@ function renderWorkspace(phase, opts = {}) {
       if (phase === "idle" || phase === "uploading" || phase === "processing") return "等待圖一完成";
       if (phase === "chart1_ready") return "準備辨識圖二…";
       if (phase === "processing_chart2") return opts.msg || "辨識中…";
+      if (phase === "chart2_confirm") return "圖二已完成，等待確認";
       if (phase === "ready") return "補充完成";
       if (phase === "chart2_error") return "辨識失敗，可重新上傳圖二";
       return "—";
@@ -1696,7 +1702,8 @@ async function createTaskFromUpload(onStatus) {
       } else if (t.status === "processing_chart2") {
         renderWorkspace("processing_chart2", { msg: "圖二辨識中…" });
       } else if (t.status === "chart2_ocr_done") {
-        // 等 pollTask return 後再處理，這裡不動
+        hydrateTask(t);
+        renderWorkspace("chart2_confirm", { task: t });
       } else {
         const secs = Math.round((Date.now() - _analysisStart) / 1000);
         renderWorkspace("processing", { msg: `辨識中… 已等候 ${secs} 秒` });
