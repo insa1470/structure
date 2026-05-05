@@ -1553,7 +1553,7 @@ function renderResults() {
 // 輪詢任務狀態，回呼 onStatus(task) 讓呼叫端更新 UI
 // 終止條件：ready / error / chart2_error
 async function pollTask(taskId, onStatus) {
-  const MAX_MS = 12 * 60 * 1000;
+  const MAX_MS = 20 * 60 * 1000;
   const INTERVAL = 4000;
   const start = Date.now();
   while (Date.now() - start < MAX_MS) {
@@ -1566,7 +1566,7 @@ async function pollTask(taskId, onStatus) {
     if (task.status === "error") throw new Error(task.error || "AI 辨識失敗，請重試");
     // processing / chart1_ready / processing_chart2 → 繼續等
   }
-  throw new Error("分析逾時（超過 12 分鐘），請重試或裁切圖片後再上傳");
+  throw new Error("分析逾時（超過 20 分鐘），請重試或裁切圖片後再上傳");
 }
 
 // ── 工作區渲染 ────────────────────────────────────────────────
@@ -1817,6 +1817,10 @@ async function confirmChart2Match(taskId, taskSnapshot = null) {
 }
 
 async function createTaskFromUpload(onStatus) {
+  if (!state.chart1File || !state.chart2File) {
+    throw new Error("請先重新選擇圖一與圖二，再開始分析。");
+  }
+
   const formData = new FormData();
   formData.append("task_name", elements.taskNameInput.value.trim());
   formData.append("chart1", state.chart1File);

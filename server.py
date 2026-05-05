@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import os
 import re
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -326,6 +327,8 @@ def analyze():
     chart1 = request.files.get("chart1")
     chart2 = request.files.get("chart2")
     if not chart1 or not chart2:
+        missing = [name for name, value in (("chart1", chart1), ("chart2", chart2)) if not value]
+        print(f"[API] /api/tasks/analyze rejected: missing files={missing}", file=sys.stderr)
         return jsonify({"error": "chart1_and_chart2_required", "message": "請同時上傳圖一和圖二。"}), 400
 
     if not os.environ.get("DASHSCOPE_API_KEY", "").strip():
@@ -431,7 +434,8 @@ def analyze_chart2_only(task_id: str):
 
     chart2 = request.files.get("chart2")
     if not chart2:
-        return jsonify({"error": "chart2_required"}), 400
+        print(f"[API] /api/tasks/{task_id}/analyze-chart2 rejected: missing chart2 file", file=sys.stderr)
+        return jsonify({"error": "chart2_required", "message": "請重新選擇圖二圖片後再上傳。"}), 400
 
     # 存新的圖二
     upload_dir = task_upload_dir(task_id)

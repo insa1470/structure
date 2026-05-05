@@ -837,51 +837,39 @@ def _parse_chart2_detail_rows(raw_stage2: list[dict]) -> list[dict]:
     ])
 
 
-def _analyze_chart2_single(image_path: Path) -> list[dict]:
-    """對單一圖片（或單塊）執行 STAGE1 + STAGE2，回傳合併結果。"""
-    try:
-        raw_stage1 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE1)
-    except RuntimeError:
-        raw_stage2 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE2)
-        return [
-            {
-                "company": row["company"],
-                "legal_representative": row.get("legal_representative"),
-                "registered_capital": row.get("registered_capital"),
-                "established_date": row.get("established_date"),
-                "company_status": None,
-                "subsidiary_level_label": None,
-                "actual_controller_share": None,
-                "uncertain": True,
-            }
-            for row in _parse_chart2_detail_rows(raw_stage2)
-        ]
+def _chart2_output_rows(rows: list[dict], uncertain: bool) -> list[dict]:
+    return [
+        {
+            "company": row["company"],
+            "legal_representative": row.get("legal_representative"),
+            "registered_capital": row.get("registered_capital"),
+            "established_date": row.get("established_date"),
+            "company_status": None,
+            "subsidiary_level_label": None,
+            "actual_controller_share": None,
+            "uncertain": uncertain,
+        }
+        for row in rows
+        if row.get("company")
+    ]
 
+
+def _analyze_chart2_single(image_path: Path) -> list[dict]:
+    """對單一圖片（或單塊）解析圖二；正常情況只呼叫一次模型。"""
+    try:
+        raw_stage2 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE2)
+        detail_rows = _parse_chart2_detail_rows(raw_stage2)
+        if detail_rows:
+            return _chart2_output_rows(detail_rows, uncertain=False)
+    except RuntimeError:
+        detail_rows = []
+
+    raw_stage1 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE1)
     stage1_rows = _dedupe_companies([
         {"company": _normalize_text(item.get("company") or item.get("c") or "")}
         for item in raw_stage1
     ])
-
-    try:
-        raw_stage2 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE2)
-        detail_rows = _parse_chart2_detail_rows(raw_stage2)
-    except RuntimeError:
-        detail_rows = []
-
-    result = []
-    for base_row in stage1_rows:
-        detail_match, _ = _find_best_match(base_row["company"], detail_rows, threshold=0.7)
-        result.append({
-            "company": base_row["company"],
-            "legal_representative": detail_match.get("legal_representative") if detail_match else None,
-            "registered_capital": detail_match.get("registered_capital") if detail_match else None,
-            "established_date": detail_match.get("established_date") if detail_match else None,
-            "company_status": None,
-            "subsidiary_level_label": None,
-            "actual_controller_share": None,
-            "uncertain": False,
-        })
-    return result
+    return _chart2_output_rows(stage1_rows, uncertain=True)
 
 
 def analyze_chart2(image_path: Path, progress_callback: Callable[[dict], None] | None = None) -> list[dict]:
