@@ -741,7 +741,7 @@ function addActivityEvent(key, title, detail = "", tone = "info") {
     tone,
     time: nowTimeLabel(),
   });
-  state.activityEvents = state.activityEvents.slice(0, 18);
+  state.activityEvents = state.activityEvents.slice(0, 10);
   renderActivityPanel();
 }
 
@@ -753,7 +753,7 @@ function renderActivityPanel() {
     list.innerHTML = `<p class="activity-empty">等待任務開始。</p>`;
     return;
   }
-  list.innerHTML = state.activityEvents.map((event) => `
+  list.innerHTML = state.activityEvents.slice(0, 4).map((event) => `
     <div class="activity-item ${event.tone}">
       <span class="activity-time">${event.time}</span>
       <div>
@@ -767,31 +767,31 @@ function trackWorkspaceActivity(phase, opts = {}) {
   const task = opts.task || {};
   const progress = opts.progress || task.chart2_progress || {};
   if (phase === "uploading") {
-    addActivityEvent("uploading", "圖片上傳中", "正在建立任務與保存圖片。", "active");
+    addActivityEvent("uploading", "圖片上傳中", "建立任務。", "active");
   } else if (phase === "processing") {
-    addActivityEvent("chart1-processing", "圖一辨識中", opts.msg || "正在建立股權結構骨架。", "active");
+    addActivityEvent("chart1-processing", "圖一辨識中", opts.msg || "建立結構骨架。", "active");
   } else if (phase === "chart1_ready") {
     const count = opts.summary?.master_count ?? state.masterRows.length;
-    addActivityEvent("chart1-ready", "圖一辨識完成", `已建立 ${count || "多"} 家公司骨架。`, "done");
+    addActivityEvent("chart1-ready", "圖一完成", `${count || "多"} 家骨架。`, "done");
   } else if (phase === "processing_chart2") {
     const current = Number(progress.current_chunk || 0);
     const total = Number(progress.total_chunks || 0);
     const rows = Number(progress.deduped_count || progress.rows_so_far || 0);
     if (total && current) {
-      addActivityEvent(`chart2-${current}-${rows}`, `圖二分塊 ${current}/${total}`, `目前已抓到 ${rows} 家公司。`, "active");
+      addActivityEvent(`chart2-${current}-${rows}`, `圖二 ${current}/${total}`, `${rows} 家`, "active");
     } else {
-      addActivityEvent("chart2-start", "圖二辨識開始", opts.msg || "正在拆分長截圖與抽取公司資訊。", "active");
+      addActivityEvent("chart2-start", "圖二開始", opts.msg || "拆分長截圖。", "active");
     }
   } else if (phase === "chart2_confirm") {
     const count = (task.chart2_raw || []).length;
-    addActivityEvent("chart2-confirm", "圖二辨識完成", `已整理 ${count} 家公司，等待確認後合併。`, "done");
+    addActivityEvent("chart2-confirm", "圖二完成", `${count} 家，等待確認。`, "done");
   } else if (phase === "ready") {
     const summary = opts.summary || {};
-    addActivityEvent("ready", "主表合併完成", `主表 ${summary.master_count ?? state.masterRows.length} 家，候選 ${summary.candidate_count ?? state.candidateRows.length} 筆。`, "done");
+    addActivityEvent("ready", "合併完成", `主表 ${summary.master_count ?? state.masterRows.length} 家。`, "done");
   } else if (phase === "chart2_error") {
-    addActivityEvent("chart2-error", "圖二需要重新處理", opts.error || "圖一骨架已保存，可重新上傳圖二。", "warn");
+    addActivityEvent("chart2-error", "圖二需重試", opts.error || "圖一已保存。", "warn");
   } else if (phase === "error") {
-    addActivityEvent(`error-${state.activityEvents.length}`, "任務中斷", opts.error || "請確認圖片或稍後重試。", "warn");
+    addActivityEvent(`error-${state.activityEvents.length}`, "任務中斷", opts.error || "請稍後重試。", "warn");
   }
 }
 

@@ -257,11 +257,11 @@ textarea {
 /* ── Live activity panel ───────────────────────────────────────── */
 .activity-panel {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: 76px;
+  bottom: 22px;
   z-index: 80;
-  width: min(360px, calc(100vw - 36px));
-  max-height: min(420px, calc(100vh - 36px));
+  width: min(292px, calc(100vw - 96px));
+  height: 206px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background: rgba(255, 255, 255, 0.96);
@@ -277,20 +277,20 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--line);
   background: #ffffff;
 }
 
 .activity-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--ink);
 }
 
 .activity-eyebrow {
   margin: 0 0 2px;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -308,9 +308,9 @@ textarea {
 
 .activity-list {
   overflow: auto;
-  padding: 10px 12px 12px;
+  padding: 6px 10px 8px;
   display: grid;
-  gap: 8px;
+  gap: 0;
 }
 
 .activity-empty {
@@ -322,9 +322,9 @@ textarea {
 
 .activity-item {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  gap: 8px;
-  padding: 9px 0;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 7px;
+  padding: 7px 0;
   border-bottom: 1px solid #eef2f7;
 }
 
@@ -334,7 +334,7 @@ textarea {
 
 .activity-time {
   color: #64748b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1.5;
 }
@@ -342,15 +342,18 @@ textarea {
 .activity-item strong {
   display: block;
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
 .activity-item p {
-  margin: 2px 0 0;
+  margin: 1px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .activity-item.active strong {
@@ -363,6 +366,15 @@ textarea {
 
 .activity-item.warn strong {
   color: #92400e;
+}
+
+@media (max-width: 700px) {
+  .activity-panel {
+    right: 12px;
+    bottom: 12px;
+    width: min(280px, calc(100vw - 24px));
+    height: 184px;
+  }
 }
 
 /* ── Main area ─────────────────────────────────────────────────── */
