@@ -7,6 +7,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "app_data" / "tasks"
+OCR_TEST_DIR = BASE_DIR / "app_data" / "ocr_tests"
 
 
 def now_iso() -> str:
@@ -50,6 +51,38 @@ class JsonTaskStore:
 task_store = JsonTaskStore()
 
 
+class JsonOcrTestStore:
+    def __init__(self, data_dir: Path = OCR_TEST_DIR):
+        self.data_dir = data_dir
+
+    def ensure_ready(self) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def save_test(self, record: dict) -> None:
+        self.ensure_ready()
+        path = self.data_dir / f"{record['id']}.json"
+        path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def list_tests(self, limit: int = 50) -> list[dict]:
+        self.ensure_ready()
+        records: list[dict] = []
+        for path in sorted(self.data_dir.glob("*.json"), reverse=True):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            raw = data.pop("raw_response", None)
+            if raw is not None:
+                data["raw_response_preview"] = str(raw)[:800]
+            records.append(data)
+            if len(records) >= limit:
+                break
+        return records
+
+
+ocr_test_store = JsonOcrTestStore()
+
+
 def read_task(task_id: str) -> dict | None:
     return task_store.read_task(task_id)
 
@@ -64,3 +97,12 @@ def task_upload_dir(task_id: str) -> Path:
 
 def ensure_storage_ready() -> None:
     task_store.ensure_ready()
+    ocr_test_store.ensure_ready()
+
+
+def save_ocr_test(record: dict) -> None:
+    ocr_test_store.save_test(record)
+
+
+def list_ocr_tests(limit: int = 50) -> list[dict]:
+    return ocr_test_store.list_tests(limit)

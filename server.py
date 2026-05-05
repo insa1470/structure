@@ -11,7 +11,7 @@ from tempfile import NamedTemporaryFile
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-from storage import ensure_storage_ready, read_task, save_task, task_upload_dir
+from storage import ensure_storage_ready, list_ocr_tests, read_task, save_ocr_test, save_task, task_upload_dir
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "webapp"
@@ -34,6 +34,23 @@ def parse_csv(path: Path) -> list[dict]:
 def sanitize_filename(name: str) -> str:
     name = re.sub(r"[^A-Za-z0-9._\-一-鿿()（）]+", "_", name.strip())
     return name or "upload.bin"
+
+
+def is_admin_request() -> bool:
+    password = os.environ.get("ADMIN_TEST_PASSWORD", "").strip()
+    if not password:
+        return True
+    supplied = (
+        request.headers.get("X-Admin-Test-Password")
+        or request.form.get("admin_password")
+        or request.args.get("admin_password")
+        or ""
+    ).strip()
+    return supplied == password
+
+
+def admin_required_response():
+    return jsonify({"error": "admin_required", "message": "請先輸入管理測試密碼。"}), 403
 
 
 def summary_from_rows(master_rows, review_rows, candidate_rows) -> dict:
@@ -211,11 +228,18 @@ def health():
 
 @app.route("/api/ocr/probe", methods=["POST"])
 def ocr_probe():
+    started_at = datetime.now(timezone.utc)
     image = request.files.get("image") or request.files.get("chart1") or request.files.get("chart2")
     if not image:
         return jsonify({"error": "image_required", "message": "請上傳 image、chart1 或 chart2 圖片。"}), 400
 
     provider = (request.form.get("provider") or request.args.get("provider") or "").strip() or None
+    save_record = (request.form.get("save") or request.args.get("save") or "").lower() in {"1", "true", "yes"}
+    if save_record and not is_admin_request():
+        return admin_required_response()
+
+    original_filename = image.filename or "upload.png"
+    note = (request.form.get("note") or "").strip()
     suffix = Path(image.filename or "upload.png").suffix or ".png"
     temp_path = None
     try:
@@ -224,6 +248,26 @@ def ocr_probe():
             temp_path = Path(tmp.name)
         from ocr_engine import run_ocr_probe
         result = run_ocr_probe(temp_path, provider)
+        elapsed_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+        if save_record:
+            record = {
+                "id": f"T{uuid.uuid4().hex[:10].upper()}",
+                "created_at": now_iso(),
+                "provider": result.get("provider") or provider or "",
+                "model": result.get("model") or "",
+                "filename": original_filename,
+                "file_size": temp_path.stat().st_size if temp_path and temp_path.exists() else 0,
+                "elapsed_ms": elapsed_ms,
+                "text_count": result.get("text_count", 0),
+                "company_candidate_count": result.get("company_candidate_count", 0),
+                "items": result.get("items", [])[:120],
+                "company_candidates": result.get("company_candidates", [])[:120],
+                "note": note,
+                "raw_response": result.get("raw_response") or result.get("raw_text") or "",
+            }
+            save_ocr_test(record)
+            result["saved_test_id"] = record["id"]
+        result["elapsed_ms"] = elapsed_ms
         return jsonify({"ok": True, **result})
     except RuntimeError as exc:
         return jsonify({"error": "ocr_unavailable", "message": str(exc)}), 503
@@ -232,6 +276,18 @@ def ocr_probe():
     finally:
         if temp_path and temp_path.exists():
             temp_path.unlink(missing_ok=True)
+
+
+@app.route("/api/ocr/tests")
+def ocr_tests():
+    if not is_admin_request():
+        return admin_required_response()
+    limit = request.args.get("limit", "50")
+    try:
+        limit_value = max(1, min(int(limit), 200))
+    except ValueError:
+        limit_value = 50
+    return jsonify({"ok": True, "tests": list_ocr_tests(limit_value)})
 
 
 @app.route("/api/demo-task")

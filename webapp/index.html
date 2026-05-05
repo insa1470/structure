@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260505a" />
+    <link rel="stylesheet" href="./styles.css?v=20260505b" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
@@ -36,6 +36,9 @@
           <button class="nav-btn" data-view="results">結果主表</button>
           <button class="nav-btn nav-btn-chart" data-view="chart">股權架構圖</button>
         </nav>
+        <div class="admin-nav">
+          <button class="nav-btn admin-test-btn" data-view="ocrTest">管理測試</button>
+        </div>
       </aside>
 
       <main class="main">
@@ -127,6 +130,73 @@
               </div>
               <ul id="overviewWarnings" class="warning-list"></ul>
             </div>
+          </div>
+        </section>
+
+        <section id="ocrTest" class="view">
+          <div class="admin-login-panel card" id="adminLoginPanel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Admin</p>
+                <h3>管理測試</h3>
+              </div>
+            </div>
+            <p class="ocr-test-note">這裡用來比較不同 OCR/視覺模型。測試結果會保存下來，不會影響正式任務。</p>
+            <label class="field">
+              <span>管理密碼</span>
+              <input id="adminPasswordInput" type="password" placeholder="輸入管理測試密碼" />
+            </label>
+            <div class="cta-row">
+              <button id="adminUnlockBtn" class="primary-btn">進入管理測試</button>
+            </div>
+          </div>
+          <div class="ocr-test-layout">
+            <div class="card ocr-test-card">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Provider Test</p>
+                  <h3>OCR 測試區</h3>
+                </div>
+              </div>
+              <p class="ocr-test-note">這裡只測圖片文字辨識，不會建立任務，也不會影響結果主表。</p>
+              <div class="ocr-test-controls">
+                <label class="field">
+                  <span>OCR Provider</span>
+                  <select id="ocrProviderSelect">
+                    <option value="zhipu_ocr">智譜 GLM-OCR</option>
+                    <option value="aliyun_ocr">阿里 Qwen-OCR</option>
+                    <option value="paddle_local">本機 PaddleOCR</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>測試備註</span>
+                  <input id="ocrTestNote" type="text" placeholder="例如：圖二長截圖、局部公司卡片" />
+                </label>
+                <label class="dropzone ocr-test-dropzone" id="ocrTestDropzone">
+                  <input id="ocrTestInput" type="file" accept="image/*" />
+                  <img id="ocrTestPreview" class="dz-thumb" alt="" />
+                  <span class="drop-title">上傳測試圖片</span>
+                  <span class="drop-sub">建議先用圖一或圖二局部截圖測試</span>
+                  <span id="ocrTestMeta" class="drop-meta">尚未選擇檔案</span>
+                </label>
+              </div>
+              <div class="cta-row">
+                <button id="ocrTestBtn" class="primary-btn" disabled>開始 OCR 測試</button>
+              </div>
+            </div>
+            <div class="card ocr-test-result-card">
+              <div id="ocrTestResult" class="ocr-test-empty">選擇圖片後開始測試，結果會顯示在這裡。</div>
+            </div>
+          </div>
+          <div class="card ocr-test-history-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">History</p>
+                <h3>測試紀錄</h3>
+              </div>
+              <button id="ocrRefreshHistoryBtn" class="ghost-btn">重新整理</button>
+            </div>
+            <div id="ocrTestHistory" class="ocr-test-history-empty">尚未載入測試紀錄。</div>
           </div>
         </section>
 
@@ -276,7 +346,7 @@
       </main>
     </div>
 
-    <script src="./config.js?v=20260505a"></script>
-    <script type="module" src="./app.js?v=20260505a"></script>
+    <script src="./config.js?v=20260505b"></script>
+    <script type="module" src="./app.js?v=20260505b"></script>
   </body>
 </html>

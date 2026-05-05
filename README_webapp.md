@@ -69,6 +69,7 @@ Provider 選擇：
 - 預設：`disabled`
 - 本機 PaddleOCR：`paddle_local`
 - 阿里百鍊 Qwen-OCR：`aliyun_ocr`
+- 智譜 GLM-OCR：`zhipu_ocr`
 - 預留但尚未接入：`baidu_ocr`、`tencent_ocr`
 
 可用表單欄位或 query string 指定 provider：
@@ -76,6 +77,7 @@ Provider 選擇：
 ```text
 POST /api/ocr/probe?provider=paddle_local
 POST /api/ocr/probe?provider=aliyun_ocr
+POST /api/ocr/probe?provider=zhipu_ocr
 ```
 
 若本機尚未安裝 PaddleOCR，會回傳 `ocr_unavailable`。
@@ -87,6 +89,14 @@ DASHSCOPE_API_KEY=<阿里百鍊 API Key>
 ```
 
 預設模型為 `qwen-vl-ocr`，可用 `ALIYUN_OCR_MODEL` 覆蓋。
+
+`zhipu_ocr` 需要設定：
+
+```text
+ZHIPUAI_API_KEY=<智譜 API Key>
+```
+
+預設模型為 `glm-ocr`，可用 `ZHIPU_OCR_MODEL` 覆蓋。
 
 可選安裝：
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -10,7 +12,9 @@ from typing import Any, Protocol
 DEFAULT_OCR_PROVIDER = "disabled"
 ALIYUN_QWEN_OCR_MODEL = "qwen-vl-ocr"
 ALIYUN_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-SUPPORTED_PROVIDERS = {"disabled", "paddle_local", "aliyun_ocr", "baidu_ocr", "tencent_ocr"}
+ZHIPU_OCR_MODEL = "glm-ocr"
+ZHIPU_LAYOUT_PARSING_URL = "https://open.bigmodel.cn/api/paas/v4/layout_parsing"
+SUPPORTED_PROVIDERS = {"disabled", "paddle_local", "aliyun_ocr", "zhipu_ocr", "baidu_ocr", "tencent_ocr"}
 
 OCR_TEXT_PROMPT = """請對這張圖片做 OCR 文字辨識。
 
@@ -33,9 +37,10 @@ class OcrProvider(Protocol):
 
 
 def _company_candidates(items: list[dict]) -> list[dict]:
+    suffixes = ("公司", "集团", "集團", "有限公司", "limited", "ltd", "inc", "corp", "corporation", "pte", "bhd")
     return [
         item for item in items
-        if "公司" in item["text"] or "集团" in item["text"] or "集團" in item["text"]
+        if any(suffix in item["text"].lower() for suffix in suffixes)
     ]
 
 
@@ -131,11 +136,81 @@ class AliyunQwenOcrProvider:
         return result
 
 
+class ZhipuOcrProvider:
+    name = "zhipu_ocr"
+
+    def recognize(self, image_path: Path) -> dict:
+        api_key = (os.environ.get("ZHIPUAI_API_KEY") or os.environ.get("ZHIPU_API_KEY") or "").strip()
+        if not api_key:
+            raise RuntimeError("尚未設定 ZHIPUAI_API_KEY，無法呼叫智譜 GLM-OCR。")
+
+        b64, mime = _encode_image_for_zhipu(image_path)
+        payload = {
+            "model": os.environ.get("ZHIPU_OCR_MODEL", ZHIPU_OCR_MODEL),
+            "file": f"data:{mime};base64,{b64}",
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            os.environ.get("ZHIPU_OCR_URL", ZHIPU_LAYOUT_PARSING_URL),
+            data=body,
+            headers={
+                "Authorization": api_key if api_key.lower().startswith("bearer ") else f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                raw_text = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"智譜 GLM-OCR 呼叫失敗（HTTP {exc.code}）：{error_body[:500]}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"智譜 GLM-OCR 連線失敗：{exc}") from exc
+
+        try:
+            raw_payload = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"智譜 GLM-OCR 回傳不是 JSON：{raw_text[:500]}") from exc
+
+        items = _flatten_zhipu_items(raw_payload)
+        if not items:
+            items = _parse_ocr_text_items(json.dumps(raw_payload, ensure_ascii=False))
+        result = _build_result(self.name, items)
+        result["model"] = payload["model"]
+        result["raw_response"] = raw_payload
+        return result
+
+
 def _encode_image(image_path: Path) -> tuple[str, str]:
     suffix = image_path.suffix.lstrip(".").lower()
     mime = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix or 'png'}"
     with image_path.open("rb") as f:
         return base64.b64encode(f.read()).decode("utf-8"), mime
+
+
+def _encode_image_for_zhipu(image_path: Path) -> tuple[str, str]:
+    """Compress image before sending to GLM-OCR to avoid slow base64 uploads."""
+    try:
+        import io
+        from PIL import Image
+    except ImportError:
+        return _encode_image(image_path)
+
+    img = Image.open(image_path)
+    if img.mode in ("RGBA", "LA", "P"):
+        img = img.convert("RGB")
+
+    max_side = int(os.environ.get("ZHIPU_OCR_MAX_SIDE", "1800"))
+    width, height = img.size
+    if max(width, height) > max_side:
+        ratio = max_side / max(width, height)
+        img = img.resize((max(1, int(width * ratio)), max(1, int(height * ratio))), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=int(os.environ.get("ZHIPU_OCR_JPEG_QUALITY", "82")), optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("utf-8"), "image/jpeg"
 
 
 def _parse_ocr_text_items(raw: str) -> list[dict]:
@@ -211,6 +286,44 @@ def _flatten_paddle_items(raw: Any) -> list[dict]:
     return [item for item in items if item["text"]]
 
 
+def _flatten_zhipu_items(raw: Any) -> list[dict]:
+    texts: list[str] = []
+
+    def push(value: Any) -> None:
+        value = str(value or "").strip()
+        if value:
+            texts.append(value)
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key in ("content", "text", "markdown", "md", "md_results", "html", "result"):
+                value = node.get(key)
+                if isinstance(value, str):
+                    push(value)
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    walk(value)
+            return
+        if isinstance(node, list):
+            for child in node:
+                walk(child)
+            return
+        if isinstance(node, str):
+            push(node)
+
+    walk(raw)
+    split_items: list[dict] = []
+    seen: set[str] = set()
+    for text in texts:
+        for line in text.replace("\r", "\n").split("\n"):
+            value = line.strip().strip("-•·,，| ")
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            split_items.append({"text": value, "confidence": None, "box": None})
+    return split_items
+
+
 def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
     name = (provider_name or os.environ.get("OCR_PROVIDER") or DEFAULT_OCR_PROVIDER).strip().lower()
     if name not in SUPPORTED_PROVIDERS:
@@ -221,6 +334,8 @@ def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
         return PaddleLocalOcrProvider()
     if name == "aliyun_ocr":
         return AliyunQwenOcrProvider()
+    if name == "zhipu_ocr":
+        return ZhipuOcrProvider()
     return PlaceholderCloudOcrProvider(name)
 
 

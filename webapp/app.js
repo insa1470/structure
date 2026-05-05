@@ -3,6 +3,10 @@ const state = {
   taskName: "",
   chart1File: null,
   chart2File: null,
+  ocrTestFile: null,
+  ocrTesting: false,
+  adminUnlocked: false,
+  adminPassword: "",
   imageChecks: { chart1: null, chart2: null },
   started: false,
   loading: false,
@@ -60,6 +64,18 @@ const elements = {
   addCompanyShare: document.getElementById("addCompanyShare"),
   cancelAddCompanyBtn: document.getElementById("cancelAddCompanyBtn"),
   saveAddCompanyBtn: document.getElementById("saveAddCompanyBtn"),
+  ocrProviderSelect: document.getElementById("ocrProviderSelect"),
+  ocrTestInput: document.getElementById("ocrTestInput"),
+  ocrTestMeta: document.getElementById("ocrTestMeta"),
+  ocrTestPreview: document.getElementById("ocrTestPreview"),
+  ocrTestBtn: document.getElementById("ocrTestBtn"),
+  ocrTestNote: document.getElementById("ocrTestNote"),
+  ocrTestResult: document.getElementById("ocrTestResult"),
+  adminLoginPanel: document.getElementById("adminLoginPanel"),
+  adminPasswordInput: document.getElementById("adminPasswordInput"),
+  adminUnlockBtn: document.getElementById("adminUnlockBtn"),
+  ocrRefreshHistoryBtn: document.getElementById("ocrRefreshHistoryBtn"),
+  ocrTestHistory: document.getElementById("ocrTestHistory"),
   chartViewButtons: [...document.querySelectorAll(".chart-view-btn")],
   chartDirectionButtons: [...document.querySelectorAll(".chart-direction-btn")],
   chartStyleButtons: [...document.querySelectorAll(".chart-style-btn")],
@@ -85,6 +101,7 @@ const pageTitles = {
   review: "待確認",
   candidates: "圖二新增候選",
   results: "結果主表",
+  ocrTest: "OCR 測試",
   chart: "股權架構圖",
 };
 
@@ -111,6 +128,17 @@ async function apiPost(url, body, isForm = false) {
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.message || `POST ${url} 失敗（${response.status}）`);
+  }
+  return response.json();
+}
+
+async function apiGetAdmin(url) {
+  const response = await fetch(API_BASE + url, {
+    headers: state.adminPassword ? { "X-Admin-Test-Password": state.adminPassword } : {},
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || `GET ${url} 失敗（${response.status}）`);
   }
   return response.json();
 }
@@ -184,6 +212,11 @@ function setView(viewName) {
 
 function enableStartIfReady() {
   elements.startAnalysisBtn.disabled = !(state.chart1File && state.chart2File) || state.loading;
+}
+
+function enableOcrTestIfReady() {
+  if (!elements.ocrTestBtn) return;
+  elements.ocrTestBtn.disabled = !state.adminUnlocked || !state.ocrTestFile || state.ocrTesting;
 }
 
 function setPreview(file, metaEl, imgEl, dzEl) {
@@ -357,6 +390,151 @@ async function updateImageCheck(kind, file) {
   if (state[`${kind}File`] !== file) return;
   state.imageChecks[kind] = result;
   renderImagePrecheck();
+}
+
+function ocrDisplayText(item) {
+  if (typeof item === "string") return item;
+  return item?.text || item?.company || item?.c || "";
+}
+
+function renderOcrTestResult(payload, elapsedMs = 0) {
+  if (!elements.ocrTestResult) return;
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const candidates = Array.isArray(payload.company_candidates) ? payload.company_candidates : [];
+  const providerLabel = [payload.engine || payload.provider || "OCR", payload.model].filter(Boolean).join(" · ");
+  const shownCandidates = candidates.map(ocrDisplayText).filter(Boolean).slice(0, 80);
+  const shownItems = items.map(ocrDisplayText).filter(Boolean).slice(0, 80);
+  const candidateHtml = shownCandidates.length
+    ? `<div class="ocr-test-chip-list">${shownCandidates.map((text) => `<span>${svgEscape(text)}</span>`).join("")}</div>`
+    : `<p class="ocr-test-muted">沒有抓到疑似公司名稱。</p>`;
+  const itemHtml = shownItems.length
+    ? `<ol class="ocr-test-list">${shownItems.map((text) => `<li>${svgEscape(text)}</li>`).join("")}</ol>`
+    : `<p class="ocr-test-muted">沒有文字結果。</p>`;
+
+  elements.ocrTestResult.className = "ocr-test-result";
+  elements.ocrTestResult.innerHTML = `
+    <div class="ocr-test-result-head">
+      <div>
+        <p class="eyebrow">OCR Result</p>
+        <h3>${svgEscape(providerLabel)}</h3>
+      </div>
+      <span>${(elapsedMs / 1000).toFixed(1)} 秒</span>
+    </div>
+    <div class="ocr-test-metrics">
+      <span>${Number(payload.text_count || items.length)} 筆文字</span>
+      <span>${Number(payload.company_candidate_count || candidates.length)} 個公司名稱候選</span>
+    </div>
+    <h4>公司名稱候選</h4>
+    ${candidateHtml}
+    <h4>文字清單</h4>
+    ${itemHtml}`;
+}
+
+function renderOcrTestError(message) {
+  if (!elements.ocrTestResult) return;
+  elements.ocrTestResult.className = "ocr-test-result error";
+  elements.ocrTestResult.innerHTML = `
+    <div class="ocr-test-result-head">
+      <div>
+        <p class="eyebrow">OCR Result</p>
+        <h3>測試失敗</h3>
+      </div>
+    </div>
+    <p class="ocr-test-muted">${svgEscape(message)}</p>`;
+}
+
+function setAdminUnlocked(unlocked) {
+  state.adminUnlocked = unlocked;
+  elements.adminLoginPanel?.classList.toggle("unlocked", unlocked);
+  document.querySelector("#ocrTest .ocr-test-layout")?.classList.toggle("locked", !unlocked);
+  document.querySelector("#ocrTest .ocr-test-history-card")?.classList.toggle("locked", !unlocked);
+  enableOcrTestIfReady();
+}
+
+async function unlockAdminTest() {
+  state.adminPassword = elements.adminPasswordInput?.value.trim() || "";
+  try {
+    await loadOcrTestHistory();
+    setAdminUnlocked(true);
+  } catch (error) {
+    setAdminUnlocked(false);
+    renderOcrTestError(error.message || "管理測試解鎖失敗。");
+  }
+}
+
+function formatElapsed(ms) {
+  const value = Number(ms || 0);
+  if (!value) return "—";
+  return `${(value / 1000).toFixed(1)} 秒`;
+}
+
+function renderOcrTestHistory(records) {
+  if (!elements.ocrTestHistory) return;
+  if (!records.length) {
+    elements.ocrTestHistory.className = "ocr-test-history-empty";
+    elements.ocrTestHistory.textContent = "目前尚無測試紀錄。";
+    return;
+  }
+  elements.ocrTestHistory.className = "ocr-test-history-list";
+  elements.ocrTestHistory.innerHTML = records.map((record) => {
+    const candidates = Array.isArray(record.company_candidates)
+      ? record.company_candidates.map(ocrDisplayText).filter(Boolean).slice(0, 8)
+      : [];
+    return `
+      <article class="ocr-history-item">
+        <div class="ocr-history-main">
+          <strong>${svgEscape(record.provider || "OCR")} ${record.model ? `· ${svgEscape(record.model)}` : ""}</strong>
+          <span>${svgEscape(record.filename || "未命名圖片")}</span>
+          ${record.note ? `<small>${svgEscape(record.note)}</small>` : ""}
+        </div>
+        <div class="ocr-history-stats">
+          <span>${formatElapsed(record.elapsed_ms)}</span>
+          <span>${Number(record.text_count || 0)} 筆文字</span>
+          <span>${Number(record.company_candidate_count || 0)} 公司候選</span>
+        </div>
+        ${candidates.length ? `<div class="ocr-history-candidates">${candidates.map((name) => `<span>${svgEscape(name)}</span>`).join("")}</div>` : ""}
+      </article>`;
+  }).join("");
+}
+
+async function loadOcrTestHistory() {
+  const payload = await apiGetAdmin("/api/ocr/tests?limit=50");
+  renderOcrTestHistory(payload.tests || []);
+}
+
+async function runOcrTest() {
+  if (!state.ocrTestFile) {
+    renderOcrTestError("請先選擇測試圖片。");
+    return;
+  }
+  const provider = elements.ocrProviderSelect?.value || "zhipu_ocr";
+  const originalText = elements.ocrTestBtn?.textContent || "開始 OCR 測試";
+  const startedAt = performance.now();
+  try {
+    state.ocrTesting = true;
+    if (elements.ocrTestBtn) elements.ocrTestBtn.textContent = "測試中...";
+    enableOcrTestIfReady();
+    if (elements.ocrTestResult) {
+      elements.ocrTestResult.className = "ocr-test-result loading";
+      elements.ocrTestResult.textContent = "正在辨識圖片文字...";
+    }
+    const form = new FormData();
+    form.append("image", state.ocrTestFile);
+    form.append("provider", provider);
+    form.append("save", "1");
+    form.append("admin_password", state.adminPassword);
+    if (elements.ocrTestNote?.value.trim()) form.append("note", elements.ocrTestNote.value.trim());
+    const payload = await apiPost(`/api/ocr/probe?provider=${encodeURIComponent(provider)}`, form, true);
+    renderOcrTestResult(payload, Math.round(performance.now() - startedAt));
+    await loadOcrTestHistory().catch(() => {});
+  } catch (error) {
+    console.error(error);
+    renderOcrTestError(error.message || "OCR 測試失敗。");
+  } finally {
+    state.ocrTesting = false;
+    if (elements.ocrTestBtn) elements.ocrTestBtn.textContent = originalText;
+    enableOcrTestIfReady();
+  }
 }
 
 function normalizeCompanyName(name) {
@@ -2586,6 +2764,39 @@ function bindEvents() {
     setPreview(state.chart2File, elements.chart2Meta, elements.chart2Preview, document.getElementById("dz2"));
     updateImageCheck("chart2", state.chart2File);
     enableStartIfReady();
+  });
+  elements.ocrTestInput?.addEventListener("change", (event) => {
+    state.ocrTestFile = event.target.files?.[0] || null;
+    if (state.ocrTestFile) {
+      setPreview(
+        state.ocrTestFile,
+        elements.ocrTestMeta,
+        elements.ocrTestPreview,
+        document.getElementById("ocrTestDropzone"),
+      );
+    }
+    if (elements.ocrTestResult) {
+      elements.ocrTestResult.className = "ocr-test-empty";
+      elements.ocrTestResult.textContent = "已選擇圖片，可以開始 OCR 測試。";
+    }
+    enableOcrTestIfReady();
+  });
+  elements.ocrProviderSelect?.addEventListener("change", () => {
+    if (elements.ocrTestResult && !state.ocrTesting) {
+      elements.ocrTestResult.className = "ocr-test-empty";
+      elements.ocrTestResult.textContent = "已切換 Provider，可以重新開始 OCR 測試。";
+    }
+  });
+  elements.ocrTestBtn?.addEventListener("click", runOcrTest);
+  elements.adminUnlockBtn?.addEventListener("click", unlockAdminTest);
+  elements.adminPasswordInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      unlockAdminTest();
+    }
+  });
+  elements.ocrRefreshHistoryBtn?.addEventListener("click", () => {
+    loadOcrTestHistory().catch((error) => renderOcrTestError(error.message));
   });
   elements.taskNameInput.addEventListener("input", (event) => {
     state.taskName = event.target.value.trim();
