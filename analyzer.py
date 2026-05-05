@@ -50,6 +50,21 @@ PROMPT_CHART1 = """這是一張企業股權結構圖。方框代表公司，連�
 
 輸出前請自我檢查：每個字串值是否都有開始和結束的雙引號？每個數字值（l欄位）後面是否沒有多餘的引號？"""
 
+PROMPT_CHART1_COMPANY_LIST = """這是一張企業股權結構圖。方框代表公司，連線代表股權關係。
+
+這一次只做一件事：辨識圖中所有公司方框內的公司名稱。
+
+規則：
+- 只輸出圖片中實際看得到的公司名稱，禁止推測、禁止補全。
+- 暫時不要判斷層級、父子關係或持股比例。
+- 不要輸出「存續」「法代」「資本」「成立」「100%」等非公司名稱文字。
+- 公司名稱必須完整抄寫；看不清楚就保留你能看清楚的原文並標記 uncertain=true。
+- 不要重複輸出同一家公司。
+
+只輸出 JSON array，不要說明文字或 markdown：
+[{"c":"公司全名","uncertain":false}]
+"""
+
 PROMPT_CHART2_STAGE1 = """這是一張企業查詢 App 的子公司列表長截圖。畫面由多張公司卡片自上而下排列，每張卡片代表一家公司。
 
 你的任務是第一階段：只抽公司清單，不抽細節。
@@ -385,6 +400,19 @@ _CORP_SUFFIXES = (
     "有限公司", "股份公司", "集團", "控股",
 )
 
+_NON_COMPANY_TEXTS = (
+    "存续", "存續", "在业", "在業", "开业", "開業", "注销", "註銷", "吊销", "吊銷",
+    "法代", "法人", "法人代表", "法定代表人", "资本", "資本", "注册资本", "註冊資本",
+    "成立", "成立日期", "成立时间", "成立時間", "实控人", "實控人", "总持股", "總持股",
+    "二级子公司", "二級子公司", "三级子公司", "三級子公司", "四级子公司", "四級子公司",
+    "查看", "详情", "詳情", "企业", "企業", "公司列表",
+)
+
+_COMPANY_HINTS = (
+    "公司", "集团", "集團", "企业", "企業", "厂", "廠", "中心", "合伙", "合夥",
+    "事务所", "事務所", "合作社", "银行", "銀行", "院", "所",
+)
+
 
 def _normalize_for_match(name: str) -> str:
     """比對前正規化：繁→簡 + 去空白。不去後綴（避免誤配）。"""
@@ -477,6 +505,162 @@ def _sanitize_chart1_nodes(chart1_nodes: list[dict]) -> list[dict]:
     return cleaned
 
 
+def _looks_like_company_name(name: str) -> bool:
+    value = _normalize_text(name)
+    if not value or len(value) < 4:
+        return False
+    if value in _CORP_SUFFIXES:
+        return False
+    if value.replace(".", "", 1).replace("%", "").isdigit():
+        return False
+    if any(token == value for token in _NON_COMPANY_TEXTS):
+        return False
+    if any(token in value for token in _NON_COMPANY_TEXTS) and not any(hint in value for hint in _COMPANY_HINTS):
+        return False
+    return any(hint in value for hint in _COMPANY_HINTS) or len(value) >= 8
+
+
+def _evaluate_chart1_quality(nodes: list[dict]) -> dict:
+    count = len(nodes)
+    roots = [node for node in nodes if not node.get("parent")]
+    max_level = max((_parse_level(node.get("level"), 0) for node in nodes), default=0)
+    uncertain_count = sum(1 for node in nodes if node.get("uncertain"))
+    suspicious_names = [node.get("company", "") for node in nodes if not _looks_like_company_name(node.get("company", ""))]
+    parent_count = sum(1 for node in nodes if node.get("parent"))
+    score = 100
+    notes: list[str] = []
+
+    if count == 0:
+        return {
+            "score": 0,
+            "level": "low",
+            "needs_rescue": True,
+            "notes": ["圖一沒有辨識到公司"],
+            "company_count": 0,
+            "root_count": 0,
+            "max_level": 0,
+            "rescue_used": False,
+        }
+
+    if count < 2:
+        score -= 45
+        notes.append("公司數過少")
+    elif count < 4:
+        score -= 15
+        notes.append("公司數偏少")
+
+    if count >= 5 and max_level == 0:
+        score -= 35
+        notes.append("所有公司都在同一層")
+    elif count >= 8 and max_level <= 1:
+        score -= 18
+        notes.append("層級偏扁")
+
+    if len(roots) > 1:
+        root_ratio = len(roots) / max(count, 1)
+        if root_ratio > 0.45:
+            score -= 30
+            notes.append("多數公司沒有上層")
+        elif len(roots) > 2:
+            score -= 15
+            notes.append("頂層公司偏多")
+
+    if count >= 4 and parent_count == 0:
+        score -= 28
+        notes.append("缺少父子關係")
+
+    suspicious_ratio = len(suspicious_names) / max(count, 1)
+    if suspicious_ratio > 0.35:
+        score -= 25
+        notes.append("疑似非公司名稱偏多")
+    elif suspicious_names:
+        score -= 8
+        notes.append("部分名稱需確認")
+
+    uncertain_ratio = uncertain_count / max(count, 1)
+    if uncertain_ratio > 0.4:
+        score -= 12
+        notes.append("不確定節點偏多")
+
+    score = max(0, min(100, score))
+    level = "high" if score >= 75 else "mid" if score >= 55 else "low"
+    return {
+        "score": score,
+        "level": level,
+        "needs_rescue": score < 60,
+        "notes": notes or ["圖一結構初步合理"],
+        "company_count": count,
+        "root_count": len(roots),
+        "max_level": max_level,
+        "suspicious_name_count": len(suspicious_names),
+        "rescue_used": False,
+    }
+
+
+def _parse_chart1_nodes(raw: list[dict]) -> list[dict]:
+    result = []
+    for item in raw:
+        result.append({
+            "company": item.get("company") or item.get("c") or "",
+            "parent": item.get("parent") or item.get("p") or None,
+            "shareholding_ratio": item.get("shareholding_ratio") or item.get("r") or None,
+            "level": item.get("level") if item.get("level") is not None else (item.get("l") or 0),
+            "uncertain": item.get("uncertain", False),
+        })
+    return _sanitize_chart1_nodes(result)
+
+
+def _analyze_chart1_company_names(image_path: Path) -> list[str]:
+    raw = _call_qwen_vl(image_path, PROMPT_CHART1_COMPANY_LIST)
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        name = _normalize_text(item.get("company") or item.get("c") or item.get("text") or "")
+        if not name or name in seen or not _looks_like_company_name(name):
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _build_chart1_relation_prompt(company_names: list[str]) -> str:
+    company_json = json.dumps(company_names, ensure_ascii=False)
+    return f"""這是一張企業股權結構圖。你已先辨識出以下公司名稱清單，請以圖片中的連線為準，重建直接上下層關係與持股比例。
+
+公司名稱清單：
+{company_json}
+
+規則：
+- 優先使用清單中的公司名稱，不要任意新增不存在的公司。
+- 每家公司只填直接上層，不要跳層。
+- 如果看不清楚父層，p 填 null，並把 uncertain 設為 true。
+- 如果持股比例看不清楚，r 填 null。
+- 層級 l 從 0 開始，頂層為 0。
+- 只輸出 JSON array，不要說明文字或 markdown。
+
+格式：
+[{{"c":"公司全名","p":"直接上層公司全名或null","r":"51.2%或null","l":0,"uncertain":false}}]
+"""
+
+
+def _append_missing_chart1_names(nodes: list[dict], names: list[str]) -> list[dict]:
+    existing = {node["company"] for node in nodes}
+    root = next((node["company"] for node in nodes if not node.get("parent")), "")
+    merged = [dict(node) for node in nodes]
+    for name in names:
+        if name in existing:
+            continue
+        merged.append({
+            "company": name,
+            "parent": root or None,
+            "shareholding_ratio": None,
+            "level": 1 if root else 0,
+            "uncertain": True,
+        })
+        existing.add(name)
+    return _sanitize_chart1_nodes(merged)
+
+
 def _find_best_match(name: str, candidates: list[dict], threshold: float = 0.85) -> tuple[dict | None, float]:
     best, best_score = None, 0.0
     for c in candidates:
@@ -501,17 +685,70 @@ def _dedupe_companies(rows: list[dict]) -> list[dict]:
 
 def analyze_chart1(image_path: Path) -> list[dict]:
     """解析圖一（股權結構圖），回傳節點清單。"""
+    nodes, _quality = analyze_chart1_with_quality(image_path)
+    return nodes
+
+
+def analyze_chart1_with_quality(image_path: Path) -> tuple[list[dict], dict]:
+    """先跑原本完整辨識；若結果品質偏低，再啟動公司名清單 + 層級重建補救。"""
+    import sys
+
     raw = _call_qwen_vl(image_path, PROMPT_CHART1)
-    result = []
-    for item in raw:
-        result.append({
-            "company": item.get("company") or item.get("c") or "",
-            "parent": item.get("parent") or item.get("p") or None,
-            "shareholding_ratio": item.get("shareholding_ratio") or item.get("r") or None,
-            "level": item.get("level") if item.get("level") is not None else (item.get("l") or 0),
-            "uncertain": item.get("uncertain", False),
-        })
-    return _sanitize_chart1_nodes(result)
+    primary_nodes = _parse_chart1_nodes(raw)
+    primary_quality = _evaluate_chart1_quality(primary_nodes)
+    print(
+        f"[Chart1] primary quality={primary_quality['score']} "
+        f"count={primary_quality['company_count']} max_level={primary_quality['max_level']}",
+        file=sys.stderr,
+    )
+
+    if not primary_quality["needs_rescue"]:
+        return primary_nodes, primary_quality
+
+    try:
+        company_names = _analyze_chart1_company_names(image_path)
+        print(f"[Chart1] rescue company list count={len(company_names)}", file=sys.stderr)
+    except Exception as exc:
+        primary_quality["notes"] = list(primary_quality.get("notes", [])) + [f"補救公司清單失敗：{exc}"]
+        return primary_nodes, primary_quality
+
+    rescued_nodes: list[dict] = []
+    rescued_quality: dict | None = None
+    if company_names:
+        try:
+            rescue_raw = _call_qwen_vl(image_path, _build_chart1_relation_prompt(company_names))
+            rescued_nodes = _parse_chart1_nodes(rescue_raw)
+            rescued_quality = _evaluate_chart1_quality(rescued_nodes)
+            print(
+                f"[Chart1] rescue quality={rescued_quality['score']} "
+                f"count={rescued_quality['company_count']} max_level={rescued_quality['max_level']}",
+                file=sys.stderr,
+            )
+        except Exception as exc:
+            primary_quality["notes"] = list(primary_quality.get("notes", [])) + [f"補救層級重建失敗：{exc}"]
+
+    merged_nodes = _append_missing_chart1_names(primary_nodes, company_names) if company_names else primary_nodes
+    merged_quality = _evaluate_chart1_quality(merged_nodes)
+
+    selected_nodes, selected_quality, selected_mode = primary_nodes, primary_quality, "primary"
+    if rescued_nodes and rescued_quality:
+        if (
+            rescued_quality.get("score", 0) >= primary_quality.get("score", 0)
+            or rescued_quality.get("company_count", 0) > primary_quality.get("company_count", 0)
+        ):
+            selected_nodes, selected_quality, selected_mode = rescued_nodes, rescued_quality, "rescue"
+
+    # 公司名稱是後續人工修正的底稿；若補救清單抓到更多公司，即使層級仍不完美，也保留為待確認節點。
+    if selected_mode == "primary" and len(merged_nodes) > len(primary_nodes):
+        selected_nodes, selected_quality, selected_mode = merged_nodes, merged_quality, "primary_plus_missing_names"
+
+    selected_quality = dict(selected_quality)
+    selected_quality["rescue_used"] = selected_mode != "primary"
+    selected_quality["rescue_mode"] = selected_mode
+    selected_quality["rescued_company_count"] = len(company_names)
+    if selected_mode != "primary":
+        selected_quality["notes"] = list(selected_quality.get("notes", [])) + ["已啟用圖一補救辨識"]
+    return selected_nodes, selected_quality
 
 
 def _split_image_into_chunks(image_path: Path) -> list[Path]:
@@ -811,7 +1048,7 @@ def _make_summary(master_rows: list[dict], review_rows: list[dict], candidate_ro
 
 def run_chart1_stage(chart1_path: Path) -> dict:
     """第一階段：只分析圖一，回傳骨架主表（全部為 chart1_only 狀態）。"""
-    chart1_nodes = analyze_chart1(chart1_path)
+    chart1_nodes, chart1_quality = analyze_chart1_with_quality(chart1_path)
 
     master_rows: list[dict] = []
     node_ids: dict[str, str] = {}
@@ -852,7 +1089,7 @@ def run_chart1_stage(chart1_path: Path) -> dict:
         "master_rows": master_rows,
         "review_rows": [],
         "candidate_rows": [],
-        "summary": _make_summary(master_rows, [], []),
+        "summary": {**_make_summary(master_rows, [], []), "chart1_quality": chart1_quality},
         "graph": _make_graph(master_rows),
     }
 

@@ -1,12 +1,28 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
 from pathlib import Path
 from typing import Any, Protocol
 
 
 DEFAULT_OCR_PROVIDER = "disabled"
+ALIYUN_QWEN_OCR_MODEL = "qwen-vl-ocr"
+ALIYUN_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 SUPPORTED_PROVIDERS = {"disabled", "paddle_local", "aliyun_ocr", "baidu_ocr", "tencent_ocr"}
+
+OCR_TEXT_PROMPT = """請對這張圖片做 OCR 文字辨識。
+
+規則：
+- 只輸出圖片中實際看得到的文字，不要推測、不要補全。
+- 盡量依照畫面從上到下、從左到右排序。
+- 公司名稱請完整保留。
+- 如果文字不確定，也保留原文，不要改寫。
+
+只輸出 JSON array，不要說明文字或 markdown：
+[{"text":"辨識到的文字"}]
+"""
 
 
 class OcrProvider(Protocol):
@@ -78,6 +94,81 @@ class PaddleLocalOcrProvider:
         return _build_result(self.name, items)
 
 
+class AliyunQwenOcrProvider:
+    name = "aliyun_ocr"
+
+    def recognize(self, image_path: Path) -> dict:
+        api_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("尚未設定 DASHSCOPE_API_KEY，無法呼叫阿里百鍊 Qwen-OCR。")
+
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise RuntimeError("請先安裝 openai 套件：python3 -m pip install openai") from exc
+
+        b64, mime = _encode_image(image_path)
+        client = OpenAI(
+            api_key=api_key,
+            base_url=os.environ.get("DASHSCOPE_BASE_URL", ALIYUN_COMPATIBLE_BASE_URL),
+        )
+        response = client.chat.completions.create(
+            model=os.environ.get("ALIYUN_OCR_MODEL", ALIYUN_QWEN_OCR_MODEL),
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                    {"type": "text", "text": OCR_TEXT_PROMPT},
+                ],
+            }],
+            max_tokens=4096,
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        items = _parse_ocr_text_items(raw)
+        result = _build_result(self.name, items)
+        result["model"] = os.environ.get("ALIYUN_OCR_MODEL", ALIYUN_QWEN_OCR_MODEL)
+        result["raw_text"] = raw
+        return result
+
+
+def _encode_image(image_path: Path) -> tuple[str, str]:
+    suffix = image_path.suffix.lstrip(".").lower()
+    mime = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix or 'png'}"
+    with image_path.open("rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8"), mime
+
+
+def _parse_ocr_text_items(raw: str) -> list[dict]:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.removeprefix("```json").removeprefix("```").strip()
+    if text.endswith("```"):
+        text = text[:-3].strip()
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+
+    items: list[dict] = []
+    if isinstance(parsed, list):
+        for item in parsed:
+            if isinstance(item, dict):
+                value = item.get("text") or item.get("c") or item.get("company")
+            else:
+                value = item
+            value = str(value or "").strip()
+            if value:
+                items.append({"text": value, "confidence": None, "box": None})
+        return items
+
+    for line in raw.replace("\r", "\n").split("\n"):
+        value = line.strip().strip("-•·,，")
+        if value:
+            items.append({"text": value, "confidence": None, "box": None})
+    return items
+
+
 def _flatten_paddle_items(raw: Any) -> list[dict]:
     items: list[dict] = []
 
@@ -128,6 +219,8 @@ def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
         return DisabledOcrProvider()
     if name == "paddle_local":
         return PaddleLocalOcrProvider()
+    if name == "aliyun_ocr":
+        return AliyunQwenOcrProvider()
     return PlaceholderCloudOcrProvider(name)
 
 

@@ -35,8 +35,8 @@ http://127.0.0.1:8765
   - 未來可替換成 SQLite / PostgreSQL，不需大改 API
 - `ocr_engine.py`
   - OCR Provider 抽象層
-  - 目前支援 `disabled`、`paddle_local`
-  - 預留 `aliyun_ocr`、`baidu_ocr`、`tencent_ocr` 介面
+  - 目前支援 `disabled`、`paddle_local`、`aliyun_ocr`
+  - 預留 `baidu_ocr`、`tencent_ocr` 介面
   - 目前只供測試 API 使用，尚未接進正式分析流程
 - `webapp/index.html`
   - 使用者介面骨架
@@ -68,15 +68,25 @@ Provider 選擇：
 
 - 預設：`disabled`
 - 本機 PaddleOCR：`paddle_local`
-- 預留但尚未接入：`aliyun_ocr`、`baidu_ocr`、`tencent_ocr`
+- 阿里百鍊 Qwen-OCR：`aliyun_ocr`
+- 預留但尚未接入：`baidu_ocr`、`tencent_ocr`
 
 可用表單欄位或 query string 指定 provider：
 
 ```text
 POST /api/ocr/probe?provider=paddle_local
+POST /api/ocr/probe?provider=aliyun_ocr
 ```
 
 若本機尚未安裝 PaddleOCR，會回傳 `ocr_unavailable`。
+
+`aliyun_ocr` 需要設定：
+
+```text
+DASHSCOPE_API_KEY=<阿里百鍊 API Key>
+```
+
+預設模型為 `qwen-vl-ocr`，可用 `ALIYUN_OCR_MODEL` 覆蓋。
 
 可選安裝：
 

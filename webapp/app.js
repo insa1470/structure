@@ -1371,11 +1371,15 @@ function renderWorkspace(phase, opts = {}) {
       if (phase === "processing") return opts.msg || "辨識中…";
       if (phase === "chart1_ready" || phase === "processing_chart2" || phase === "ready") {
         const s = opts.summary || {};
-        return `完成 — ${s.master_count ?? "?"} 間公司`;
+        const quality = s.chart1_quality || {};
+        const rescueNote = quality.rescue_used ? "，已補強公司名稱" : "";
+        return `完成 — ${s.master_count ?? "?"} 間公司${rescueNote}`;
       }
       if (phase === "chart2_error") {
         const s = opts.summary || {};
-        return `完成 — ${s.master_count ?? "?"} 間公司`;
+        const quality = s.chart1_quality || {};
+        const rescueNote = quality.rescue_used ? "，已補強公司名稱" : "";
+        return `完成 — ${s.master_count ?? "?"} 間公司${rescueNote}`;
       }
       return "—";
     }
