@@ -478,9 +478,28 @@ def analyze_chart2_only(task_id: str):
 @app.route("/api/tasks/<task_id>/confirm-chart2", methods=["POST"])
 def confirm_chart2(task_id: str):
     """用戶確認圖二辨識結果後，觸發 merge（純 Python，瞬間完成）。"""
+    payload = request.get_json(silent=True) or {}
     task = read_task(task_id)
     if not task:
-        return jsonify({"error": "task_not_found"}), 404
+        snapshot = payload.get("task_snapshot") if isinstance(payload, dict) else None
+        if (
+            isinstance(snapshot, dict)
+            and snapshot.get("id") == task_id
+            and isinstance(snapshot.get("master_rows"), list)
+            and isinstance(snapshot.get("chart2_raw"), list)
+        ):
+            task = snapshot
+            task["status"] = "chart2_ocr_done"
+            task.setdefault("review_decisions", {})
+            task.setdefault("candidate_decisions", {})
+            task.setdefault("review_rows", [])
+            task.setdefault("candidate_rows", [])
+            task.setdefault("graph", {})
+            task.setdefault("summary", {})
+            task.setdefault("error", "")
+            save_task(task)
+        else:
+            return jsonify({"error": "task_not_found"}), 404
     if task.get("status") != "chart2_ocr_done":
         return jsonify({"error": "invalid_status", "message": "任務狀態不是 chart2_ocr_done，無法確認。"}), 400
 

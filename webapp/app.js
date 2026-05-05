@@ -110,6 +110,7 @@ const pageTitles = {
 const API_BASE = (window.API_BASE || "").replace(/\/$/, "");
 const CHART_ZOOM_MIN = 0.35;
 const CHART_ZOOM_MAX = 2.5;
+const TASK_SNAPSHOT_KEY = "equity-review-last-task";
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -132,6 +133,24 @@ async function apiPost(url, body, isForm = false) {
     throw new Error(payload.message || `POST ${url} 失敗（${response.status}）`);
   }
   return response.json();
+}
+
+function saveTaskSnapshot(task) {
+  if (!task?.id) return;
+  try {
+    localStorage.setItem(TASK_SNAPSHOT_KEY, JSON.stringify(task));
+  } catch (_) {
+    // Browser storage is a best-effort recovery path.
+  }
+}
+
+function loadTaskSnapshot(taskId) {
+  try {
+    const task = JSON.parse(localStorage.getItem(TASK_SNAPSHOT_KEY) || "null");
+    return task?.id === taskId ? task : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 async function apiGetAdmin(url) {
@@ -827,6 +846,7 @@ function showAnalysisBanner(task) {
 }
 
 function hydrateTask(task) {
+  saveTaskSnapshot(task);
   state.taskId = task.id;
   state.taskName = task.name;
   state.masterRows = task.master_rows || [];
@@ -1603,7 +1623,7 @@ function renderWorkspace(phase, opts = {}) {
       </div>`;
 
     document.getElementById("wsConfirmChart2Btn")?.addEventListener("click", () => {
-      confirmChart2Match(task.id);
+      confirmChart2Match(task.id, task);
     });
 
     document.getElementById("wsChart2ReuploadInput")?.addEventListener("change", async (e) => {
@@ -1779,10 +1799,12 @@ function renderWorkspace(phase, opts = {}) {
   }
 }
 
-async function confirmChart2Match(taskId) {
+async function confirmChart2Match(taskId, taskSnapshot = null) {
   renderWorkspace("processing_chart2", { msg: "配對中…" });
   try {
-    const result = await apiPost(`/api/tasks/${taskId}/confirm-chart2`, {});
+    const result = await apiPost(`/api/tasks/${taskId}/confirm-chart2`, {
+      task_snapshot: taskSnapshot || loadTaskSnapshot(taskId),
+    });
     applyTaskRefresh(result);
     renderWorkspace("ready", { summary: result.summary });
     setView("overview");
