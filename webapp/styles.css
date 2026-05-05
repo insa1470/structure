@@ -46,6 +46,8 @@ textarea {
 }
 
 .sidebar {
+  display: flex;
+  flex-direction: column;
   padding: 24px 16px;
   border-right: 1px solid var(--line);
   background: var(--panel);
@@ -136,6 +138,15 @@ textarea {
 
 .admin-test-btn {
   width: 100%;
+  text-align: center;
+  border: 1px solid var(--line);
+  background: var(--slate-soft);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.admin-test-btn.active {
+  border-color: #c7d2fe;
 }
 
 .nav-btn,

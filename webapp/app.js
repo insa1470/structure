@@ -103,7 +103,7 @@ const pageTitles = {
   review: "待確認",
   candidates: "圖二新增候選",
   results: "結果主表",
-  ocrTest: "OCR 測試",
+  ocrTest: "管理員登入",
   chart: "股權架構圖",
 };
 
@@ -460,7 +460,7 @@ async function unlockAdminTest() {
     setAdminUnlocked(true);
   } catch (error) {
     setAdminUnlocked(false);
-    renderOcrTestError(error.message || "管理測試解鎖失敗。");
+    renderOcrTestError(error.message || "管理員登入失敗。");
   }
 }
 
@@ -3032,6 +3032,7 @@ function bindEvents() {
 
 bindEvents();
 updateTaskBadge();
+setAdminUnlocked(false);
 renderActivityPanel();
 
 // 頁面載入時靜默 ping 後端，提前喚醒 Railway（冷啟動可能需 10–30 秒）
