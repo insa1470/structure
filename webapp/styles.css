@@ -243,6 +243,117 @@ textarea {
   line-height: 1.6;
 }
 
+/* ── Live activity panel ───────────────────────────────────────── */
+.activity-panel {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 80;
+  width: min(360px, calc(100vw - 36px));
+  max-height: min(420px, calc(100vh - 36px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+}
+
+.activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.activity-head h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.activity-eyebrow {
+  margin: 0 0 2px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--success);
+}
+
+.activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--success);
+  box-shadow: 0 0 0 5px var(--success-soft);
+  flex-shrink: 0;
+}
+
+.activity-list {
+  overflow: auto;
+  padding: 10px 12px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.activity-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+  padding: 9px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.activity-item:last-child {
+  border-bottom: 0;
+}
+
+.activity-time {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.activity-item strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.activity-item p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.activity-item.active strong {
+  color: #075985;
+}
+
+.activity-item.done strong {
+  color: #047857;
+}
+
+.activity-item.warn strong {
+  color: #92400e;
+}
+
 /* ── Main area ─────────────────────────────────────────────────── */
 .main {
   padding: 24px 28px 40px;

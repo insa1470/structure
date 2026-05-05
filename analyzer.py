@@ -13,6 +13,7 @@ import os
 import uuid
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Callable
 
 
 QWEN_MODEL = "qwen2.5-vl-72b-instruct"
@@ -824,17 +825,8 @@ def _dedup_merge_chart2(rows: list[dict], threshold: float = 0.85) -> list[dict]
     return merged
 
 
-def _analyze_chart2_single(image_path: Path) -> list[dict]:
-    """對單一圖片（或單塊）執行 STAGE1 + STAGE2，回傳合併結果。"""
-    raw_stage1 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE1)
-    raw_stage2 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE2)
-
-    stage1_rows = _dedupe_companies([
-        {"company": _normalize_text(item.get("company") or item.get("c") or "")}
-        for item in raw_stage1
-    ])
-
-    detail_rows = _dedupe_companies([
+def _parse_chart2_detail_rows(raw_stage2: list[dict]) -> list[dict]:
+    return _dedupe_companies([
         {
             "company": _normalize_text(item.get("company") or item.get("c") or ""),
             "legal_representative": _normalize_text(item.get("legal_representative") or item.get("lr") or None) or None,
@@ -843,6 +835,38 @@ def _analyze_chart2_single(image_path: Path) -> list[dict]:
         }
         for item in raw_stage2
     ])
+
+
+def _analyze_chart2_single(image_path: Path) -> list[dict]:
+    """對單一圖片（或單塊）執行 STAGE1 + STAGE2，回傳合併結果。"""
+    try:
+        raw_stage1 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE1)
+    except RuntimeError:
+        raw_stage2 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE2)
+        return [
+            {
+                "company": row["company"],
+                "legal_representative": row.get("legal_representative"),
+                "registered_capital": row.get("registered_capital"),
+                "established_date": row.get("established_date"),
+                "company_status": None,
+                "subsidiary_level_label": None,
+                "actual_controller_share": None,
+                "uncertain": True,
+            }
+            for row in _parse_chart2_detail_rows(raw_stage2)
+        ]
+
+    stage1_rows = _dedupe_companies([
+        {"company": _normalize_text(item.get("company") or item.get("c") or "")}
+        for item in raw_stage1
+    ])
+
+    try:
+        raw_stage2 = _call_qwen_vl(image_path, PROMPT_CHART2_STAGE2)
+        detail_rows = _parse_chart2_detail_rows(raw_stage2)
+    except RuntimeError:
+        detail_rows = []
 
     result = []
     for base_row in stage1_rows:
@@ -860,7 +884,7 @@ def _analyze_chart2_single(image_path: Path) -> list[dict]:
     return result
 
 
-def analyze_chart2(image_path: Path) -> list[dict]:
+def analyze_chart2(image_path: Path, progress_callback: Callable[[dict], None] | None = None) -> list[dict]:
     """解析圖二（集團概覽），回傳公司屬性清單。超長截圖自動切塊處理。"""
     import shutil
     import sys
@@ -871,13 +895,41 @@ def analyze_chart2(image_path: Path) -> list[dict]:
 
     try:
         all_rows: list[dict] = []
+        failed_chunks: list[dict] = []
+        if progress_callback:
+            progress_callback({
+                "status": "running",
+                "current_chunk": 0,
+                "total_chunks": len(chunk_paths),
+                "rows_so_far": 0,
+                "failed_chunks": [],
+            })
         for i, chunk_path in enumerate(chunk_paths):
             try:
                 rows = _analyze_chart2_single(chunk_path)
                 print(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 辨識到 {len(rows)} 家", file=sys.stderr)
                 all_rows.extend(rows)
+                if progress_callback:
+                    progress_callback({
+                        "status": "running",
+                        "current_chunk": i + 1,
+                        "total_chunks": len(chunk_paths),
+                        "last_chunk_rows": len(rows),
+                        "rows_so_far": len(all_rows),
+                        "failed_chunks": failed_chunks,
+                    })
             except RuntimeError as exc:
                 print(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 失敗，跳過：{exc}", file=sys.stderr)
+                failed_chunks.append({"chunk": i + 1, "message": str(exc)[:300]})
+                if progress_callback:
+                    progress_callback({
+                        "status": "running",
+                        "current_chunk": i + 1,
+                        "total_chunks": len(chunk_paths),
+                        "last_chunk_rows": 0,
+                        "rows_so_far": len(all_rows),
+                        "failed_chunks": failed_chunks,
+                    })
 
         if not all_rows:
             raise RuntimeError("圖二所有分塊均辨識失敗，請確認圖片品質後重試")
@@ -885,8 +937,26 @@ def analyze_chart2(image_path: Path) -> list[dict]:
         if is_chunked:
             deduped = _dedup_merge_chart2(all_rows)
             print(f"[Chart2] 合併後共 {len(deduped)} 家（原始 {len(all_rows)} 筆）", file=sys.stderr)
+            if progress_callback:
+                progress_callback({
+                    "status": "partial_done" if failed_chunks else "done",
+                    "current_chunk": len(chunk_paths),
+                    "total_chunks": len(chunk_paths),
+                    "rows_so_far": len(all_rows),
+                    "deduped_count": len(deduped),
+                    "failed_chunks": failed_chunks,
+                })
             return deduped
 
+        if progress_callback:
+            progress_callback({
+                "status": "partial_done" if failed_chunks else "done",
+                "current_chunk": len(chunk_paths),
+                "total_chunks": len(chunk_paths),
+                "rows_so_far": len(all_rows),
+                "deduped_count": len(all_rows),
+                "failed_chunks": failed_chunks,
+            })
         return all_rows
     finally:
         if tmp_dir and tmp_dir.exists():

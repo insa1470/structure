@@ -27,6 +27,8 @@ const state = {
   chartScale: 1,
   chartPanX: 0,
   chartPanY: 0,
+  activityEvents: [],
+  activityKeys: new Set(),
 };
 
 const elements = {
@@ -690,6 +692,107 @@ function recognitionSuccessHtml(result) {
       <strong>辨識成功率預估：${result.label}</strong>
       <span>${result.notes.join("；")}</span>
     </div>`;
+}
+
+function chart2ProgressText(progress = {}) {
+  const current = Number(progress.current_chunk || 0);
+  const total = Number(progress.total_chunks || 0);
+  const rows = Number(progress.deduped_count || progress.rows_so_far || 0);
+  const failed = Array.isArray(progress.failed_chunks) ? progress.failed_chunks.length : 0;
+  if (!total) return "圖二辨識準備中…";
+  const base = `圖二辨識中：${current}/${total} 塊，已抓到 ${rows} 家`;
+  return failed ? `${base}，${failed} 塊需人工確認` : base;
+}
+
+function nowTimeLabel() {
+  return new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function ensureActivityPanel() {
+  let panel = document.getElementById("activityPanel");
+  if (panel) return panel;
+  panel = document.createElement("aside");
+  panel.id = "activityPanel";
+  panel.className = "activity-panel";
+  panel.innerHTML = `
+    <div class="activity-head">
+      <div>
+        <p class="activity-eyebrow">Live</p>
+        <h3>專案進度</h3>
+      </div>
+      <span class="activity-dot"></span>
+    </div>
+    <div id="activityList" class="activity-list">
+      <p class="activity-empty">等待任務開始。</p>
+    </div>`;
+  document.body.appendChild(panel);
+  return panel;
+}
+
+function addActivityEvent(key, title, detail = "", tone = "info") {
+  if (state.activityKeys.has(key)) {
+    return;
+  }
+  state.activityKeys.add(key);
+  state.activityEvents.unshift({
+    key,
+    title,
+    detail,
+    tone,
+    time: nowTimeLabel(),
+  });
+  state.activityEvents = state.activityEvents.slice(0, 18);
+  renderActivityPanel();
+}
+
+function renderActivityPanel() {
+  ensureActivityPanel();
+  const list = document.getElementById("activityList");
+  if (!list) return;
+  if (!state.activityEvents.length) {
+    list.innerHTML = `<p class="activity-empty">等待任務開始。</p>`;
+    return;
+  }
+  list.innerHTML = state.activityEvents.map((event) => `
+    <div class="activity-item ${event.tone}">
+      <span class="activity-time">${event.time}</span>
+      <div>
+        <strong>${event.title}</strong>
+        ${event.detail ? `<p>${event.detail}</p>` : ""}
+      </div>
+    </div>`).join("");
+}
+
+function trackWorkspaceActivity(phase, opts = {}) {
+  const task = opts.task || {};
+  const progress = opts.progress || task.chart2_progress || {};
+  if (phase === "uploading") {
+    addActivityEvent("uploading", "圖片上傳中", "正在建立任務與保存圖片。", "active");
+  } else if (phase === "processing") {
+    addActivityEvent("chart1-processing", "圖一辨識中", opts.msg || "正在建立股權結構骨架。", "active");
+  } else if (phase === "chart1_ready") {
+    const count = opts.summary?.master_count ?? state.masterRows.length;
+    addActivityEvent("chart1-ready", "圖一辨識完成", `已建立 ${count || "多"} 家公司骨架。`, "done");
+  } else if (phase === "processing_chart2") {
+    const current = Number(progress.current_chunk || 0);
+    const total = Number(progress.total_chunks || 0);
+    const rows = Number(progress.deduped_count || progress.rows_so_far || 0);
+    if (total && current) {
+      addActivityEvent(`chart2-${current}-${rows}`, `圖二分塊 ${current}/${total}`, `目前已抓到 ${rows} 家公司。`, "active");
+    } else {
+      addActivityEvent("chart2-start", "圖二辨識開始", opts.msg || "正在拆分長截圖與抽取公司資訊。", "active");
+    }
+  } else if (phase === "chart2_confirm") {
+    const count = (task.chart2_raw || []).length;
+    addActivityEvent("chart2-confirm", "圖二辨識完成", `已整理 ${count} 家公司，等待確認後合併。`, "done");
+  } else if (phase === "ready") {
+    const summary = opts.summary || {};
+    addActivityEvent("ready", "主表合併完成", `主表 ${summary.master_count ?? state.masterRows.length} 家，候選 ${summary.candidate_count ?? state.candidateRows.length} 筆。`, "done");
+  } else if (phase === "chart2_error") {
+    addActivityEvent("chart2-error", "圖二需要重新處理", opts.error || "圖一骨架已保存，可重新上傳圖二。", "warn");
+  } else if (phase === "error") {
+    addActivityEvent(`error-${state.activityEvents.length}`, "任務中斷", opts.error || "請確認圖片或稍後重試。", "warn");
+  }
 }
 
 function makeMetric(label, value, theme) {
@@ -1452,13 +1555,16 @@ async function pollTask(taskId, onStatus) {
 function renderWorkspace(phase, opts = {}) {
   const el = document.getElementById("workspaceContent");
   if (!el) return;
+  trackWorkspaceActivity(phase, opts);
 
   // ── 特殊：圖二確認畫面 ───────────────────────────────────
   if (phase === "chart2_confirm") {
     const task = opts.task || {};
     const chart2Raw = task.chart2_raw || [];
+    const chart2Progress = task.chart2_progress || {};
     const chart1Count = (task.master_rows || []).length;
     const chart2Count = chart2Raw.length;
+    const failedChunks = Array.isArray(chart2Progress.failed_chunks) ? chart2Progress.failed_chunks.length : 0;
     const discrepancy = chart1Count > 0 && chart2Count < chart1Count * 0.5;
     const success = evaluateRecognitionSuccess({ masterRows: task.master_rows || [], chart2Rows: chart2Raw });
 
@@ -1470,7 +1576,7 @@ function renderWorkspace(phase, opts = {}) {
       <p class="workspace-eyebrow">需要確認</p>
       <div class="ws-confirm-alert">
         <strong>圖二辨識已完成，請確認名單後開始配對</strong>
-        <span>這不是失敗；系統已先停下來，等你確認圖二公司清單是否可以繼續。</span>
+        <span>${failedChunks ? `已保留可用結果；有 ${failedChunks} 個分塊需要人工確認。` : "這不是失敗；系統已先停下來，等你確認圖二公司清單是否可以繼續。"}</span>
       </div>
       <div class="ws-confirm-counts">
         <div class="ws-cc-stat">
@@ -1484,7 +1590,8 @@ function renderWorkspace(phase, opts = {}) {
         </div>
       </div>
       ${recognitionSuccessHtml(success)}
-      ${discrepancy ? `<div class="ws-warn-box">⚠ 圖二辨識到的公司數量明顯少於圖一，建議確認圖片清晰度後再繼續。</div>` : ""}
+      ${discrepancy ? `<div class="ws-warn-box">圖二辨識到的公司數量明顯少於圖一，建議確認圖片清晰度後再繼續。</div>` : ""}
+      ${failedChunks ? `<div class="ws-warn-box">圖二已完成可用辨識結果；少數分塊未完整抽出細節，仍可先進入配對並在主表補正。</div>` : ""}
       <p class="ws-company-list-label">圖二辨識到的公司（${chart2Count} 筆）</p>
       <ul class="ws-company-list">${companyListHtml}</ul>
       <div class="ws-confirm-actions">
@@ -1508,7 +1615,9 @@ function renderWorkspace(phase, opts = {}) {
         fd.append("chart2", file);
         await apiPost(`/api/tasks/${task.id}/analyze-chart2`, fd, true);
         renderWorkspace("processing_chart2", { msg: "圖二辨識中…" });
-        const updated = await pollTask(task.id, () => {});
+        const updated = await pollTask(task.id, (t) => {
+          renderWorkspace("processing_chart2", { progress: t.chart2_progress, summary: t.summary });
+        });
         if (updated.status === "chart2_ocr_done") {
           renderWorkspace("chart2_confirm", { task: updated });
         } else if (updated.status === "chart2_error") {
@@ -1569,7 +1678,7 @@ function renderWorkspace(phase, opts = {}) {
     if (key === "enrich") {
       if (phase === "idle" || phase === "uploading" || phase === "processing") return "等待圖一完成";
       if (phase === "chart1_ready") return "準備辨識圖二…";
-      if (phase === "processing_chart2") return opts.msg || "辨識中…";
+      if (phase === "processing_chart2") return opts.progress ? chart2ProgressText(opts.progress) : (opts.msg || "辨識中…");
       if (phase === "chart2_confirm") return "圖二已完成，等待確認";
       if (phase === "ready") return "補充完成";
       if (phase === "chart2_error") return "辨識失敗，可重新上傳圖二";
@@ -1655,6 +1764,7 @@ function renderWorkspace(phase, opts = {}) {
         renderWorkspace("processing_chart2", { msg: "圖二辨識中…" });
         const task = await pollTask(state.taskId, (t) => {
           if (t.status === "ready") hydrateTask(t);
+          if (t.status === "processing_chart2") renderWorkspace("processing_chart2", { progress: t.chart2_progress, summary: t.summary });
         });
         hydrateTask(task);
         if (task.status === "chart2_error") {
@@ -1700,7 +1810,8 @@ async function createTaskFromUpload(onStatus) {
         hydrateTask(t);
         renderWorkspace("chart1_ready", { summary: t.summary });
       } else if (t.status === "processing_chart2") {
-        renderWorkspace("processing_chart2", { msg: "圖二辨識中…" });
+        hydrateTask(t);
+        renderWorkspace("processing_chart2", { progress: t.chart2_progress, summary: t.summary });
       } else if (t.status === "chart2_ocr_done") {
         hydrateTask(t);
         renderWorkspace("chart2_confirm", { task: t });
@@ -2921,6 +3032,7 @@ function bindEvents() {
 
 bindEvents();
 updateTaskBadge();
+renderActivityPanel();
 
 // 頁面載入時靜默 ping 後端，提前喚醒 Railway（冷啟動可能需 10–30 秒）
 fetch(API_BASE + "/api/health").catch(() => {});

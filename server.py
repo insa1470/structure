@@ -123,6 +123,19 @@ def rebuild_task_state(task: dict) -> None:
     task["graph"] = _make_graph(task.get("master_rows", []))
 
 
+def make_chart2_progress_saver(task: dict):
+    def save_progress(progress: dict) -> None:
+        task["status"] = "processing_chart2"
+        task["chart2_progress"] = {
+            **task.get("chart2_progress", {}),
+            **progress,
+            "updated_at": now_iso(),
+        }
+        save_task(task)
+
+    return save_progress
+
+
 def update_review_status(task: dict, key: str, decision: str, note: str = "") -> None:
     for row in task.get("review_rows", []):
         row_key = row.get("candidate_node_id") or row.get("chart2_name")
@@ -346,6 +359,7 @@ def analyze():
         "review_decisions": {},
         "candidate_decisions": {},
         "graph": {},
+        "chart2_progress": {},
         "error": "",
     }
     save_task(task)
@@ -374,9 +388,25 @@ def analyze():
         # ── 第二階段：圖二 OCR（辨識完成後暫停，等用戶確認再 merge）
         try:
             from analyzer import analyze_chart2
-            chart2_attrs = analyze_chart2(c2_path)
+            task["status"] = "processing_chart2"
+            task["chart2_progress"] = {
+                "status": "queued",
+                "current_chunk": 0,
+                "total_chunks": 0,
+                "rows_so_far": 0,
+                "failed_chunks": [],
+                "updated_at": now_iso(),
+            }
+            save_task(task)
+            chart2_attrs = analyze_chart2(c2_path, progress_callback=make_chart2_progress_saver(task))
             task["status"] = "chart2_ocr_done"
             task["chart2_raw"] = chart2_attrs
+            task["chart2_progress"] = {
+                **task.get("chart2_progress", {}),
+                "status": task.get("chart2_progress", {}).get("status") or "done",
+                "deduped_count": len(chart2_attrs),
+                "updated_at": now_iso(),
+            }
             task["error"] = ""
         except Exception as exc:
             task["status"] = "chart2_error"
@@ -412,16 +442,28 @@ def analyze_chart2_only(task_id: str):
     task["status"] = "processing_chart2"
     task["error"] = ""
     task["source_files"]["chart2"] = chart2.filename or ""
+    task["chart2_progress"] = {
+        "status": "queued",
+        "current_chunk": 0,
+        "total_chunks": 0,
+        "rows_so_far": 0,
+        "failed_chunks": [],
+        "updated_at": now_iso(),
+    }
     save_task(task)
-
-    existing_master = list(task.get("master_rows", []))
 
     def run_async():
         try:
             from analyzer import analyze_chart2
-            chart2_attrs = analyze_chart2(c2_path)
+            chart2_attrs = analyze_chart2(c2_path, progress_callback=make_chart2_progress_saver(task))
             task["status"] = "chart2_ocr_done"
             task["chart2_raw"] = chart2_attrs
+            task["chart2_progress"] = {
+                **task.get("chart2_progress", {}),
+                "status": task.get("chart2_progress", {}).get("status") or "done",
+                "deduped_count": len(chart2_attrs),
+                "updated_at": now_iso(),
+            }
             task["error"] = ""
         except Exception as exc:
             task["status"] = "chart2_error"
