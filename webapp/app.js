@@ -753,7 +753,7 @@ function renderActivityPanel() {
     list.innerHTML = `<p class="activity-empty">等待任務開始。</p>`;
     return;
   }
-  list.innerHTML = state.activityEvents.slice(0, 4).map((event) => `
+  list.innerHTML = state.activityEvents.slice(0, 3).map((event) => `
     <div class="activity-item ${event.tone}">
       <span class="activity-time">${event.time}</span>
       <div>
@@ -791,7 +791,7 @@ function trackWorkspaceActivity(phase, opts = {}) {
   } else if (phase === "chart2_error") {
     addActivityEvent("chart2-error", "圖二需重試", opts.error || "圖一已保存。", "warn");
   } else if (phase === "error") {
-    addActivityEvent(`error-${state.activityEvents.length}`, "任務中斷", opts.error || "請稍後重試。", "warn");
+    addActivityEvent(`error-${state.activityEvents.length}`, "任務中斷", "請重新整理或重試。", "warn");
   }
 }
 
@@ -1787,7 +1787,10 @@ async function confirmChart2Match(taskId) {
     renderWorkspace("ready", { summary: result.summary });
     setView("overview");
   } catch (err) {
-    renderWorkspace("error", { error: `配對失敗：${err.message}` });
+    const expired = String(err.message || "").includes("404");
+    renderWorkspace("error", {
+      error: expired ? "任務已過期或伺服器已重啟，請重新開始分析。" : `配對失敗：${err.message}`,
+    });
   }
 }
 
