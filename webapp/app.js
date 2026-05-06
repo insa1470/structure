@@ -228,6 +228,7 @@ function setView(viewName) {
   });
   elements.main?.classList.toggle("chart-mode", viewName === "chart");
   elements.pageTitle.textContent = pageTitles[viewName];
+  syncActivityPanelVisibility(viewName);
   if (viewName === "chart") setTimeout(renderChart, 50); // 等 DOM 顯示後再渲染
 }
 
@@ -780,6 +781,12 @@ function renderActivityPanel() {
         ${event.detail ? `<p>${event.detail}</p>` : ""}
       </div>
     </div>`).join("");
+}
+
+function syncActivityPanelVisibility(viewName = null) {
+  const panel = ensureActivityPanel();
+  const activeView = viewName || document.querySelector(".view.active")?.id || "upload";
+  panel.style.display = activeView === "upload" ? "grid" : "none";
 }
 
 function trackWorkspaceActivity(phase, opts = {}) {
@@ -3063,6 +3070,7 @@ bindEvents();
 updateTaskBadge();
 setAdminUnlocked(false);
 renderActivityPanel();
+syncActivityPanelVisibility("upload");
 
 // 頁面載入時靜默 ping 後端，提前喚醒 Railway（冷啟動可能需 10–30 秒）
 fetch(API_BASE + "/api/health").catch(() => {});
