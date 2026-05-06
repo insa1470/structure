@@ -27,6 +27,7 @@ const state = {
   chartScale: 1,
   chartPanX: 0,
   chartPanY: 0,
+  printOrientation: "landscape",
   activityEvents: [],
   activityKeys: new Set(),
   selectedResultNodeIds: new Set(),
@@ -64,9 +65,6 @@ const elements = {
   batchFieldSelect: document.getElementById("batchFieldSelect"),
   batchValueInput: document.getElementById("batchValueInput"),
   batchApplyBtn: document.getElementById("batchApplyBtn"),
-  governancePreviewBtn: document.getElementById("governancePreviewBtn"),
-  governanceApplyBtn: document.getElementById("governanceApplyBtn"),
-  governancePreviewBox: document.getElementById("governancePreviewBox"),
   taskSearchInput: document.getElementById("taskSearchInput"),
   taskStatusSelect: document.getElementById("taskStatusSelect"),
   taskSearchBtn: document.getElementById("taskSearchBtn"),
@@ -830,6 +828,8 @@ function trackWorkspaceActivity(phase, opts = {}) {
     addActivityEvent("ready", "合併完成", `主表 ${summary.master_count ?? state.masterRows.length} 家。`, "done");
   } else if (phase === "chart2_error") {
     addActivityEvent("chart2-error", "圖二需重試", opts.error || "圖一已保存。", "warn");
+  } else if (phase === "cancelled") {
+    addActivityEvent("task-cancelled", "任務已取消", "已停止後續分塊辨識。", "warn");
   } else if (phase === "error") {
     addActivityEvent(`error-${state.activityEvents.length}`, "任務中斷", "請重新整理或重試。", "warn");
   }
@@ -855,6 +855,11 @@ function showAnalysisBanner(task) {
   if (warning) {
     msg = `AI 辨識未成功，目前顯示示範資料｜${warning}`;
     type = "status-warn";
+  } else if (task.status === "cancelled" || task.status === "cancel_requested") {
+    msg = `任務已取消｜任務 ID：${task.id}`;
+    type = "status-warn";
+  } else if (task.status === "processing" || task.status === "processing_chart2" || task.status === "chart1_ready") {
+    msg = `任務進行中｜任務 ID：${task.id}`;
   } else if (mode === "qwen_vl") {
     const count = (task.master_rows || []).length;
     msg = `AI 辨識完成（Qwen-VL）｜任務 ID：${task.id}${count ? `｜${count} 家公司` : ""}`;
@@ -956,6 +961,8 @@ async function openTaskFromCenter(taskId) {
     renderWorkspace("processing_chart2", { progress: task.chart2_progress, summary: task.summary });
   } else if (task.status === "chart2_error") {
     renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+  } else if (task.status === "cancelled" || task.status === "cancel_requested") {
+    renderWorkspace("cancelled", { summary: task.summary });
   } else {
     renderWorkspace("ready", { summary: task.summary || {} });
   }
@@ -978,18 +985,6 @@ function updateResultSelectAllState(rows) {
   elements.resultSelectAll.checked = selected > 0 && selected === rows.length;
 }
 
-function renderGovernancePreview(data, applied = false) {
-  const box = elements.governancePreviewBox;
-  if (!box) return;
-  const changes = data?.changes || [];
-  const dupCount = (data?.duplicate_groups || []).length;
-  const title = applied ? "資料治理已套用" : "資料治理預覽";
-  const detail = `${changes.length} 筆名稱可標準化，${dupCount} 組可能重名。`;
-  const sample = changes.slice(0, 5).map((item) => `• ${item.before} → ${item.after}`).join("<br>");
-  box.style.display = "block";
-  box.innerHTML = `<strong>${title}</strong><br><small>${detail}</small>${sample ? `<br><small>${sample}</small>` : ""}`;
-}
-
 async function runBatchUpdate() {
   const nodeIds = [...state.selectedResultNodeIds];
   if (!state.taskId || !nodeIds.length) {
@@ -1000,15 +995,6 @@ async function runBatchUpdate() {
   const value = elements.batchValueInput?.value || "";
   const payload = await apiPost(`/api/tasks/${state.taskId}/batch-update`, { node_ids: nodeIds, field, value });
   applyTaskRefresh(payload);
-}
-
-async function governancePreview(applyChanges = false) {
-  if (!state.taskId) return;
-  const payload = await apiPost(`/api/tasks/${state.taskId}/governance-preview`, { apply: applyChanges });
-  renderGovernancePreview(payload, applyChanges);
-  if (applyChanges) {
-    applyTaskRefresh(payload);
-  }
 }
 
 function renderOverview(summary) {
@@ -1153,13 +1139,14 @@ function renderCandidateList() {
   elements.candidateList.innerHTML = state.candidateRows
     .map((row, index) => {
       const decision = state.candidateDecisions[row.chart2_name];
+      const isAdded = decision?.decision === "加入主表";
       return `
         <article class="review-item ${index === state.selectedCandidateIndex ? "active" : ""}" data-candidate-index="${index}">
           <h4 class="candidate-title">${row.chart2_name}</h4>
           <div class="pill-row">
             <span class="pill slate">${row.subsidiary_level_label || "未標級別"}</span>
             <span class="pill info">${row.company_status || "未標狀態"}</span>
-            ${decision?.decision ? `<span class="pill warning">已填：${decision.decision}</span>` : ""}
+            ${decision?.decision ? `<span class="pill ${isAdded ? "success" : "warning"}">${isAdded ? "已新增" : `已填：${decision.decision}`}</span>` : ""}
           </div>
         </article>
       `;
@@ -1716,15 +1703,21 @@ async function pollTask(taskId, onStatus) {
     if (task.status === "ready") return task;
     if (task.status === "chart2_error") return task;
     if (task.status === "chart2_ocr_done") return task;  // 圖二 OCR 完成，等用戶確認
+    if (task.status === "cancelled" || task.status === "cancel_requested") return task;
     if (task.status === "error") throw new Error(task.error || "AI 辨識失敗，請重試");
     // processing / chart1_ready / processing_chart2 → 繼續等
   }
   throw new Error("分析逾時（超過 20 分鐘），請重試或裁切圖片後再上傳");
 }
 
+async function cancelCurrentTask() {
+  if (!state.taskId) return;
+  await apiPost(`/api/tasks/${state.taskId}/cancel`, {});
+}
+
 // ── 工作區渲染 ────────────────────────────────────────────────
 // phase: "idle"|"uploading"|"processing"|"chart1_ready"|"processing_chart2"
-//        |"chart2_confirm"|"ready"|"chart2_error"|"error"
+//        |"chart2_confirm"|"ready"|"chart2_error"|"cancelled"|"error"
 function renderWorkspace(phase, opts = {}) {
   const el = document.getElementById("workspaceContent");
   if (!el) return;
@@ -1795,6 +1788,8 @@ function renderWorkspace(phase, opts = {}) {
           renderWorkspace("chart2_confirm", { task: updated });
         } else if (updated.status === "chart2_error") {
           renderWorkspace("chart2_error", { taskId: updated.id, error: updated.error, summary: updated.summary });
+        } else if (updated.status === "cancelled" || updated.status === "cancel_requested") {
+          renderWorkspace("cancelled", { summary: updated.summary });
         } else {
           hydrateTask(updated);
           renderWorkspace("ready", { summary: updated.summary });
@@ -1820,6 +1815,7 @@ function renderWorkspace(phase, opts = {}) {
       case "chart2_confirm":    return key === "enrich" ? "active" : "done";
       case "ready":             return "done";
       case "chart2_error":      return key === "enrich" ? "error" : "done";
+      case "cancelled":         return key === "enrich" ? "error" : "done";
       case "error":             return key === "upload" ? "error" : "pending";
       default:                  return "pending";
     }
@@ -1855,6 +1851,7 @@ function renderWorkspace(phase, opts = {}) {
       if (phase === "chart2_confirm") return "圖二已完成，等待確認";
       if (phase === "ready") return "補充完成";
       if (phase === "chart2_error") return "辨識失敗，可重新上傳圖二";
+      if (phase === "cancelled") return "任務已取消";
       return "—";
     }
     return "";
@@ -1912,6 +1909,10 @@ function renderWorkspace(phase, opts = {}) {
       <button class="ws-goto-btn ws-goto-outline" id="wsGotoBtn">查看圖一結果 →</button>`;
   }
 
+  if (phase === "cancelled") {
+    extraHtml = `<div class="ws-error-msg">任務已取消。系統會在當前分塊完成後停止後續辨識，已避免額外 API 消耗。</div>`;
+  }
+
   if (phase === "error" && opts.error) {
     extraHtml = `<div class="ws-error-msg">${opts.error}</div>`;
   }
@@ -1919,10 +1920,23 @@ function renderWorkspace(phase, opts = {}) {
   el.innerHTML = `
     <p class="workspace-eyebrow">工作進度</p>
     <ul class="ws-steps">${stepsHtml}</ul>
-    ${extraHtml}`;
+    ${extraHtml}
+    ${
+      ["processing", "chart1_ready", "processing_chart2"].includes(phase) && state.taskId
+        ? `<button class="ws-goto-btn ws-goto-outline" id="wsCancelTaskBtn">取消任務</button>`
+        : ""
+    }`;
 
   // ── 事件綁定 ──────────────────────────────────────────────
   document.getElementById("wsGotoBtn")?.addEventListener("click", () => setView("overview"));
+  document.getElementById("wsCancelTaskBtn")?.addEventListener("click", async () => {
+    try {
+      await cancelCurrentTask();
+      renderWorkspace("cancelled");
+    } catch (err) {
+      renderWorkspace("error", { error: `取消失敗：${err.message}` });
+    }
+  });
 
   const retryInput = document.getElementById("wsChart2Retry");
   if (retryInput) {
@@ -1942,6 +1956,8 @@ function renderWorkspace(phase, opts = {}) {
         hydrateTask(task);
         if (task.status === "chart2_error") {
           renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+        } else if (task.status === "cancelled" || task.status === "cancel_requested") {
+          renderWorkspace("cancelled", { summary: task.summary });
         } else {
           renderWorkspace("ready", { summary: task.summary });
         }
@@ -2013,6 +2029,8 @@ async function createTaskFromUpload(onStatus) {
     hydrateTask(task);
     if (task.status === "chart2_error") {
       renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+    } else if (task.status === "cancelled" || task.status === "cancel_requested") {
+      renderWorkspace("cancelled", { summary: task.summary });
     } else {
       renderWorkspace("ready", { summary: task.summary });
     }
@@ -3068,6 +3086,18 @@ c.setOption(${option});window.addEventListener('resize',()=>c.resize());<\/scrip
 }
 
 function printChart() {
+  const choice = window.prompt("列印方向：輸入 L（橫式）或 P（直式）", state.printOrientation === "portrait" ? "P" : "L");
+  if (choice !== null) {
+    const token = String(choice).trim().toUpperCase();
+    state.printOrientation = token === "P" || token === "PORTRAIT" ? "portrait" : "landscape";
+  }
+  document.body.classList.toggle("print-portrait", state.printOrientation === "portrait");
+  document.body.classList.toggle("print-landscape", state.printOrientation !== "portrait");
+  document.getElementById("dynamicPrintPageStyle")?.remove();
+  const style = document.createElement("style");
+  style.id = "dynamicPrintPageStyle";
+  style.textContent = `@media print { @page { size: A4 ${state.printOrientation}; margin: 12mm 15mm; } }`;
+  document.head.appendChild(style);
   window.print();
 }
 
@@ -3168,12 +3198,6 @@ function bindEvents() {
   elements.batchApplyBtn?.addEventListener("click", () => {
     runBatchUpdate().catch((error) => alert(`批次更新失敗：${error.message}`));
   });
-  elements.governancePreviewBtn?.addEventListener("click", () => {
-    governancePreview(false).catch((error) => alert(`治理預覽失敗：${error.message}`));
-  });
-  elements.governanceApplyBtn?.addEventListener("click", () => {
-    governancePreview(true).catch((error) => alert(`治理套用失敗：${error.message}`));
-  });
   elements.addCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(true));
   elements.cancelAddCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(false));
   elements.saveAddCompanyBtn?.addEventListener("click", addCompanyToResults);
@@ -3256,6 +3280,7 @@ updateTaskBadge();
 setAdminUnlocked(false);
 renderActivityPanel();
 syncActivityPanelVisibility("upload");
+document.body.classList.add("print-landscape");
 
 // 頁面載入時靜默 ping 後端，提前喚醒 Railway（冷啟動可能需 10–30 秒）
 fetch(API_BASE + "/api/health").catch(() => {});

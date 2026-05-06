@@ -163,6 +163,11 @@ def make_chart2_progress_saver(task: dict):
     return save_progress
 
 
+def is_task_cancel_requested(task_id: str) -> bool:
+    latest = read_task(task_id)
+    return bool(latest and latest.get("cancel_requested"))
+
+
 def update_review_status(task: dict, key: str, decision: str, note: str = "") -> None:
     for row in task.get("review_rows", []):
         row_key = row.get("candidate_node_id") or row.get("chart2_name")
@@ -440,6 +445,7 @@ def analyze():
         "graph": {},
         "chart2_progress": {},
         "error": "",
+        "cancel_requested": False,
     }
     save_task(task)
 
@@ -449,6 +455,11 @@ def analyze():
         try:
             from analyzer import run_chart1_stage
             stage1 = run_chart1_stage(c1_path)
+            if is_task_cancel_requested(task_id):
+                task["status"] = "cancelled"
+                task["error"] = "任務已取消"
+                save_task(task)
+                return
             task["status"] = "chart1_ready"
             task["analysis_mode"] = "qwen_vl"
             task["summary"] = stage1["summary"]
@@ -477,7 +488,11 @@ def analyze():
                 "updated_at": now_iso(),
             }
             save_task(task)
-            chart2_attrs = analyze_chart2(c2_path, progress_callback=make_chart2_progress_saver(task))
+            chart2_attrs = analyze_chart2(
+                c2_path,
+                progress_callback=make_chart2_progress_saver(task),
+                should_continue=lambda: not is_task_cancel_requested(task_id),
+            )
             task["status"] = "chart2_ocr_done"
             task["chart2_raw"] = chart2_attrs
             task["chart2_progress"] = {
@@ -487,6 +502,9 @@ def analyze():
                 "updated_at": now_iso(),
             }
             task["error"] = ""
+        except InterruptedError:
+            task["status"] = "cancelled"
+            task["error"] = "任務已取消"
         except Exception as exc:
             task["status"] = "chart2_error"
             task["error"] = f"圖二辨識失敗：{exc}"
@@ -521,6 +539,7 @@ def analyze_chart2_only(task_id: str):
     # 標記為處理中，保留現有骨架
     task["status"] = "processing_chart2"
     task["error"] = ""
+    task["cancel_requested"] = False
     task["source_files"]["chart2"] = chart2.filename or ""
     task["chart2_progress"] = {
         "status": "queued",
@@ -535,7 +554,11 @@ def analyze_chart2_only(task_id: str):
     def run_async():
         try:
             from analyzer import analyze_chart2
-            chart2_attrs = analyze_chart2(c2_path, progress_callback=make_chart2_progress_saver(task))
+            chart2_attrs = analyze_chart2(
+                c2_path,
+                progress_callback=make_chart2_progress_saver(task),
+                should_continue=lambda: not is_task_cancel_requested(task_id),
+            )
             task["status"] = "chart2_ocr_done"
             task["chart2_raw"] = chart2_attrs
             task["chart2_progress"] = {
@@ -545,6 +568,9 @@ def analyze_chart2_only(task_id: str):
                 "updated_at": now_iso(),
             }
             task["error"] = ""
+        except InterruptedError:
+            task["status"] = "cancelled"
+            task["error"] = "任務已取消"
         except Exception as exc:
             task["status"] = "chart2_error"
             task["error"] = f"圖二辨識失敗：{exc}"
@@ -553,6 +579,20 @@ def analyze_chart2_only(task_id: str):
 
     threading.Thread(target=run_async, daemon=True).start()
     return jsonify({"id": task_id, "status": "processing_chart2"}), 202
+
+
+@app.route("/api/tasks/<task_id>/cancel", methods=["POST"])
+def cancel_task(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    if task.get("status") in {"ready", "chart2_ocr_done", "chart2_error", "error", "cancelled"}:
+        return jsonify({"ok": True, "status": task.get("status"), "message": "任務目前無需取消。"})
+    task["cancel_requested"] = True
+    task["status"] = "cancel_requested"
+    task["error"] = "取消中：將於當前分塊完成後停止。"
+    save_task(task)
+    return jsonify({"ok": True, "status": "cancel_requested"})
 
 
 @app.route("/api/tasks/<task_id>/confirm-chart2", methods=["POST"])
@@ -940,6 +980,26 @@ def candidate_decision():
     if decision == "加入主表":
         candidate = next((row for row in task.get("candidate_rows", []) if row.get("chart2_name") == key), None)
         if candidate:
+            exists = next(
+                (
+                    row for row in task.get("master_rows", [])
+                    if row.get("matched_chart2_name") == key
+                    or row.get("canonical_name") == (corrected_name or candidate.get("chart2_name") or candidate.get("company") or "")
+                ),
+                None,
+            )
+            if exists:
+                rebuild_task_state(task)
+                save_task(task)
+                return jsonify({
+                    "ok": True,
+                    "candidate_decisions": task["candidate_decisions"],
+                    "master_rows": task["master_rows"],
+                    "review_rows": task["review_rows"],
+                    "candidate_rows": task["candidate_rows"],
+                    "summary": task["summary"],
+                    "graph": task["graph"],
+                })
             parent_row = find_row_by_name(task.get("master_rows", []), parent_name) if parent_name else None
             parent_level = parse_level_value(parent_row.get("chart1_level")) if parent_row else None
             level = (parent_level + 1) if parent_level is not None else parse_level_value(candidate.get("subsidiary_level_label")) or 0
@@ -966,7 +1026,6 @@ def candidate_decision():
                 "review_note": note,
             }
             task["master_rows"].append(new_row)
-            task["candidate_rows"] = [row for row in task.get("candidate_rows", []) if row.get("chart2_name") != key]
 
     rebuild_task_state(task)
     save_task(task)

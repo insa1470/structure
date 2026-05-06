@@ -872,7 +872,11 @@ def _analyze_chart2_single(image_path: Path) -> list[dict]:
     return _chart2_output_rows(stage1_rows, uncertain=True)
 
 
-def analyze_chart2(image_path: Path, progress_callback: Callable[[dict], None] | None = None) -> list[dict]:
+def analyze_chart2(
+    image_path: Path,
+    progress_callback: Callable[[dict], None] | None = None,
+    should_continue: Callable[[], bool] | None = None,
+) -> list[dict]:
     """解析圖二（集團概覽），回傳公司屬性清單。超長截圖自動切塊處理。"""
     import shutil
     import sys
@@ -893,6 +897,16 @@ def analyze_chart2(image_path: Path, progress_callback: Callable[[dict], None] |
                 "failed_chunks": [],
             })
         for i, chunk_path in enumerate(chunk_paths):
+            if should_continue and not should_continue():
+                if progress_callback:
+                    progress_callback({
+                        "status": "cancelled",
+                        "current_chunk": i,
+                        "total_chunks": len(chunk_paths),
+                        "rows_so_far": len(all_rows),
+                        "failed_chunks": failed_chunks,
+                    })
+                raise InterruptedError("task_cancelled")
             try:
                 rows = _analyze_chart2_single(chunk_path)
                 print(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 辨識到 {len(rows)} 家", file=sys.stderr)
