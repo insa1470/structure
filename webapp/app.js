@@ -2953,10 +2953,11 @@ function renderBranchEdges(layout, profile) {
     if (children.length === 1) {
       const item = children[0];
       const midY = parentBottom + Math.max(28, Math.min(64, (item.top - parentBottom) * 0.5));
+      const labelX = (parentX + item.x) / 2;
       return `
         <g class="elk-edge elk-edge-branch">
           <polyline points="${parentX.toFixed(1)},${parentBottom.toFixed(1)} ${parentX.toFixed(1)},${midY.toFixed(1)} ${item.x.toFixed(1)},${midY.toFixed(1)} ${item.x.toFixed(1)},${item.top.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
-          ${item.edge.ratio ? renderEdgeRatioLabel(item.x, item.top - 15, item.edge.ratio, profile) : ""}
+          ${item.edge.ratio ? renderEdgeRatioLabel(labelX, midY - 12, item.edge.ratio, profile) : ""}
         </g>`;
     }
 
@@ -2995,10 +2996,11 @@ function renderRightBranchGroup(parent, childEdges, profile) {
   if (children.length === 1) {
     const item = children[0];
     const midX = parentRight + Math.max(28, Math.min(72, (item.left - parentRight) * 0.5));
+    const labelY = (parentY + item.y) / 2;
     return `
       <g class="elk-edge elk-edge-branch">
         <polyline points="${parentRight.toFixed(1)},${parentY.toFixed(1)} ${midX.toFixed(1)},${parentY.toFixed(1)} ${midX.toFixed(1)},${item.y.toFixed(1)} ${item.left.toFixed(1)},${item.y.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
-        ${item.edge.ratio ? renderEdgeRatioLabel(item.left - 36, item.y - 14, item.edge.ratio, profile) : ""}
+        ${item.edge.ratio ? renderEdgeRatioLabel(midX + 18, labelY, item.edge.ratio, profile) : ""}
       </g>`;
   }
 
@@ -3672,10 +3674,18 @@ function openPrintSettings() {
   document.getElementById("printSettingsModal")?.remove();
   const modal = document.createElement("div");
   modal.id = "printSettingsModal";
-  modal.className = "modal-backdrop";
+  modal.className = "print-drawer-backdrop";
   const currentTitle = svgEscape(getPrintTitle());
   modal.innerHTML = `
-    <div class="print-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="printSettingsTitle">
+    <div class="print-settings-preview" aria-hidden="true">
+      <div class="print-preview-paper ${state.printOrientation}">
+        <h4>${currentTitle}</h4>
+        <div class="print-preview-placeholder">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+    </div>
+    <aside class="print-settings-panel" role="dialog" aria-modal="true" aria-labelledby="printSettingsTitle">
       <div class="section-head">
         <div>
           <p class="eyebrow">列印設定</p>
@@ -3705,21 +3715,37 @@ function openPrintSettings() {
       </label>
       <div class="detail-actions">
         <button class="ghost-btn" id="printSettingsCancel" type="button">取消</button>
+        <button class="primary-btn" id="printSettingsSubmit" type="button">開啟列印</button>
       </div>
-    </div>
+    </aside>
   `;
   document.body.appendChild(modal);
+  let selectedOrientation = state.printOrientation;
+  const previewPaper = modal.querySelector(".print-preview-paper");
   modal.querySelectorAll("[data-print-orientation]").forEach((button) => {
     button.classList.toggle("active", button.dataset.printOrientation === state.printOrientation);
-    button.addEventListener("click", async () => {
-      const titleInput = modal.querySelector("#printTitleInput");
-      const fitInput = modal.querySelector("#printFitToPageInput");
-      state.printTitle = titleInput?.value.trim() || getChartTitle();
-      state.printFitToPage = Boolean(fitInput?.checked);
-      await savePrintSettings(button.dataset.printOrientation).catch((error) => console.error("print settings save failed", error));
-      modal.remove();
-      printChart(button.dataset.printOrientation);
+    button.addEventListener("click", () => {
+      selectedOrientation = button.dataset.printOrientation;
+      modal.querySelectorAll("[data-print-orientation]").forEach((item) => {
+        item.classList.toggle("active", item === button);
+      });
+      previewPaper?.classList.toggle("portrait", selectedOrientation === "portrait");
+      previewPaper?.classList.toggle("landscape", selectedOrientation !== "portrait");
     });
+  });
+  modal.querySelector("#printTitleInput")?.addEventListener("input", (event) => {
+    const title = event.target.value.trim() || getChartTitle();
+    const h4 = modal.querySelector(".print-preview-paper h4");
+    if (h4) h4.textContent = title;
+  });
+  modal.querySelector("#printSettingsSubmit")?.addEventListener("click", async () => {
+    const titleInput = modal.querySelector("#printTitleInput");
+    const fitInput = modal.querySelector("#printFitToPageInput");
+    state.printTitle = titleInput?.value.trim() || getChartTitle();
+    state.printFitToPage = Boolean(fitInput?.checked);
+    await savePrintSettings(selectedOrientation).catch((error) => console.error("print settings save failed", error));
+    modal.remove();
+    printChart(selectedOrientation);
   });
   modal.querySelector("#printSettingsCancel")?.addEventListener("click", () => modal.remove());
   modal.addEventListener("click", (event) => {
