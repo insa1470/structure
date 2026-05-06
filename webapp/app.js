@@ -122,6 +122,9 @@ const API_BASE = (window.API_BASE || "").replace(/\/$/, "");
 const CHART_ZOOM_MIN = 0.35;
 const CHART_ZOOM_MAX = 2.5;
 const TASK_SNAPSHOT_KEY = "equity-review-last-task";
+const MAX_CHART1_MB = 3;
+const MAX_CHART1_LONG_EDGE = 9000;
+const MAX_CHART2_CHUNKS = 9;
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -245,7 +248,8 @@ function setView(viewName) {
 }
 
 function enableStartIfReady() {
-  elements.startAnalysisBtn.disabled = !(state.chart1File && state.chart2File) || state.loading;
+  const blockers = getUploadBlockers();
+  elements.startAnalysisBtn.disabled = !(state.chart1File && state.chart2File) || state.loading || blockers.length > 0;
 }
 
 function enableOcrTestIfReady() {
@@ -384,6 +388,7 @@ function inspectImageFile(file, kind) {
 
 function renderImagePrecheck() {
   if (!elements.imagePrecheck) return;
+  getUploadBlockers();
   const checks = [state.imageChecks.chart1, state.imageChecks.chart2].filter(Boolean);
   if (!checks.length) {
     elements.imagePrecheck.innerHTML = "";
@@ -400,6 +405,7 @@ function renderImagePrecheck() {
     }
     const extra = key === "chart2" && item.chunks > 1 ? ` · 約 ${item.chunks} 段辨識` : "";
     const advice = item.notes.length ? item.notes.join("、") : "圖片條件適合辨識";
+    const blockedTags = (item.block_reasons || []).map((reason) => `<small style="color:#b91c1c;display:block;">${reason}</small>`).join("");
     return `
       <article class="precheck-card ${item.tone}">
         <div class="precheck-head">
@@ -408,6 +414,7 @@ function renderImagePrecheck() {
         </div>
         <p>${item.width} × ${item.height}px${extra}</p>
         <small>${advice}</small>
+        ${blockedTags}
       </article>`;
   }).join("");
   elements.imagePrecheck.innerHTML = `
@@ -424,6 +431,28 @@ async function updateImageCheck(kind, file) {
   if (state[`${kind}File`] !== file) return;
   state.imageChecks[kind] = result;
   renderImagePrecheck();
+  enableStartIfReady();
+}
+
+function getUploadBlockers() {
+  const blockers = [];
+  const c1 = state.imageChecks.chart1;
+  const c2 = state.imageChecks.chart2;
+  if (c1) {
+    const c1LongEdge = Math.max(c1.width || 0, c1.height || 0);
+    if ((c1.sizeMb || 0) > MAX_CHART1_MB) blockers.push(`圖一超過 ${MAX_CHART1_MB}MB`);
+    if (c1LongEdge > MAX_CHART1_LONG_EDGE) blockers.push(`圖一最長邊超過 ${MAX_CHART1_LONG_EDGE}px`);
+  }
+  if (c2) {
+    if ((c2.chunks || 0) > MAX_CHART2_CHUNKS) blockers.push(`圖二預估分塊 ${c2.chunks} 段，超過上限 ${MAX_CHART2_CHUNKS} 段`);
+  }
+  if (c1) c1.block_reasons = [];
+  if (c2) c2.block_reasons = [];
+  blockers.forEach((message) => {
+    if (message.startsWith("圖一") && c1) c1.block_reasons.push(message);
+    if (message.startsWith("圖二") && c2) c2.block_reasons.push(message);
+  });
+  return blockers;
 }
 
 function ocrDisplayText(item) {
@@ -1988,6 +2017,10 @@ async function confirmChart2Match(taskId, taskSnapshot = null) {
 async function createTaskFromUpload(onStatus) {
   if (!state.chart1File || !state.chart2File) {
     throw new Error("請先重新選擇圖一與圖二，再開始分析。");
+  }
+  const blockers = getUploadBlockers();
+  if (blockers.length) {
+    throw new Error(`上傳條件未通過：${blockers.join("；")}`);
   }
 
   const formData = new FormData();

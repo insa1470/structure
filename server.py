@@ -17,6 +17,9 @@ from storage import ensure_storage_ready, list_ocr_tests, list_tasks, read_task,
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "webapp"
+MAX_CHART1_MB = 3
+MAX_CHART1_LONG_EDGE = 9000
+MAX_CHART2_CHUNKS = 9
 
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="")
 CORS(app)
@@ -36,6 +39,38 @@ def parse_csv(path: Path) -> list[dict]:
 def sanitize_filename(name: str) -> str:
     name = re.sub(r"[^A-Za-z0-9._\-一-鿿()（）]+", "_", name.strip())
     return name or "upload.bin"
+
+
+def _estimate_chart2_chunks(width: int, height: int) -> int:
+    scaled_height = round(height * (900 / width)) if width > 900 else height
+    if scaled_height <= 3600:
+        return 1
+    return ((scaled_height - 1500) + (1500 - 180) - 1) // (1500 - 180) + 1
+
+
+def _inspect_image(file_storage):
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    stream = file_storage.stream
+    pos = stream.tell()
+    stream.seek(0)
+    try:
+        img = Image.open(stream)
+        width, height = img.size
+        return {"width": width, "height": height}
+    finally:
+        stream.seek(pos)
+
+
+def _file_size_mb(file_storage) -> float:
+    stream = file_storage.stream
+    pos = stream.tell()
+    stream.seek(0, 2)
+    size = stream.tell()
+    stream.seek(pos)
+    return size / 1024 / 1024
 
 
 def _compact_task(task: dict) -> dict:
@@ -412,6 +447,19 @@ def analyze():
         print(f"[API] /api/tasks/analyze rejected: missing files={missing}", file=sys.stderr)
         return jsonify({"error": "chart1_and_chart2_required", "message": "請同時上傳圖一和圖二。"}), 400
 
+    chart1_size_mb = _file_size_mb(chart1)
+    if chart1_size_mb > MAX_CHART1_MB:
+        return jsonify({"error": "chart1_too_large", "message": f"圖一檔案不可超過 {MAX_CHART1_MB}MB。"}), 400
+    c1_shape = _inspect_image(chart1)
+    if c1_shape and max(c1_shape["width"], c1_shape["height"]) > MAX_CHART1_LONG_EDGE:
+        return jsonify({"error": "chart1_edge_too_large", "message": f"圖一最長邊不可超過 {MAX_CHART1_LONG_EDGE}px。"}), 400
+
+    c2_shape = _inspect_image(chart2)
+    if c2_shape:
+        c2_chunks = _estimate_chart2_chunks(c2_shape["width"], c2_shape["height"])
+        if c2_chunks > MAX_CHART2_CHUNKS:
+            return jsonify({"error": "chart2_too_many_chunks", "message": f"圖二預估分塊為 {c2_chunks} 段，超過上限 {MAX_CHART2_CHUNKS} 段，請先裁切後再上傳。"}), 400
+
     if not os.environ.get("DASHSCOPE_API_KEY", "").strip():
         return jsonify({"error": "no_api_key", "message": "伺服器尚未設定 AI 辨識 API Key，無法分析。請聯絡管理員。"}), 422
 
@@ -530,6 +578,12 @@ def analyze_chart2_only(task_id: str):
     if not chart2:
         print(f"[API] /api/tasks/{task_id}/analyze-chart2 rejected: missing chart2 file", file=sys.stderr)
         return jsonify({"error": "chart2_required", "message": "請重新選擇圖二圖片後再上傳。"}), 400
+
+    c2_shape = _inspect_image(chart2)
+    if c2_shape:
+        c2_chunks = _estimate_chart2_chunks(c2_shape["width"], c2_shape["height"])
+        if c2_chunks > MAX_CHART2_CHUNKS:
+            return jsonify({"error": "chart2_too_many_chunks", "message": f"圖二預估分塊為 {c2_chunks} 段，超過上限 {MAX_CHART2_CHUNKS} 段，請先裁切後再上傳。"}), 400
 
     # 存新的圖二
     upload_dir = task_upload_dir(task_id)
