@@ -29,6 +29,7 @@ const state = {
   chartPanY: 0,
   activityEvents: [],
   activityKeys: new Set(),
+  selectedResultNodeIds: new Set(),
 };
 
 const elements = {
@@ -59,6 +60,17 @@ const elements = {
   statusFilter: document.getElementById("statusFilter"),
   resultTableTitle: document.getElementById("resultTableTitle"),
   resultTableBody: document.getElementById("resultTableBody"),
+  resultSelectAll: document.getElementById("resultSelectAll"),
+  batchFieldSelect: document.getElementById("batchFieldSelect"),
+  batchValueInput: document.getElementById("batchValueInput"),
+  batchApplyBtn: document.getElementById("batchApplyBtn"),
+  governancePreviewBtn: document.getElementById("governancePreviewBtn"),
+  governanceApplyBtn: document.getElementById("governanceApplyBtn"),
+  governancePreviewBox: document.getElementById("governancePreviewBox"),
+  taskSearchInput: document.getElementById("taskSearchInput"),
+  taskStatusSelect: document.getElementById("taskStatusSelect"),
+  taskSearchBtn: document.getElementById("taskSearchBtn"),
+  taskCenterBody: document.getElementById("taskCenterBody"),
   addCompanyBtn: document.getElementById("addCompanyBtn"),
   addCompanyPanel: document.getElementById("addCompanyPanel"),
   addCompanyName: document.getElementById("addCompanyName"),
@@ -99,6 +111,7 @@ const elements = {
 
 const pageTitles = {
   upload: "上傳任務",
+  taskCenter: "任務中心",
   overview: "總覽",
   review: "待確認",
   candidates: "圖二新增候選",
@@ -229,6 +242,7 @@ function setView(viewName) {
   elements.main?.classList.toggle("chart-mode", viewName === "chart");
   elements.pageTitle.textContent = pageTitles[viewName];
   syncActivityPanelVisibility(viewName);
+  if (viewName === "taskCenter") loadTaskCenter();
   if (viewName === "chart") setTimeout(renderChart, 50); // 等 DOM 顯示後再渲染
 }
 
@@ -863,6 +877,7 @@ function hydrateTask(task) {
   state.candidateDecisions = task.candidate_decisions || {};
   state.selectedReviewIndex = 0;
   state.selectedCandidateIndex = 0;
+  state.selectedResultNodeIds = new Set();
   state.started = true;
   updateTaskBadge();
   showAnalysisBanner(task);
@@ -879,6 +894,9 @@ function applyTaskRefresh(payload) {
   if (payload.master_rows) state.masterRows = payload.master_rows;
   if (payload.review_rows) state.reviewRows = payload.review_rows.filter((row) => row.issue_type !== "chart2_only");
   if (payload.candidate_rows) state.candidateRows = payload.candidate_rows;
+  state.selectedResultNodeIds = new Set(
+    [...state.selectedResultNodeIds].filter((nodeId) => state.masterRows.some((row) => row.node_id === nodeId))
+  );
   if (payload.review_decisions) state.reviewDecisions = payload.review_decisions;
   if (payload.candidate_decisions) state.candidateDecisions = payload.candidate_decisions;
   renderOverview(payload.summary || {});
@@ -887,6 +905,110 @@ function applyTaskRefresh(payload) {
   renderCandidateList();
   renderCandidateDetail();
   renderResults();
+}
+
+async function loadTaskCenter() {
+  if (!elements.taskCenterBody) return;
+  const q = encodeURIComponent((elements.taskSearchInput?.value || "").trim());
+  const status = encodeURIComponent((elements.taskStatusSelect?.value || "").trim());
+  elements.taskCenterBody.innerHTML = `<tr><td colspan="6">讀取中…</td></tr>`;
+  try {
+    const payload = await apiGet(`/api/tasks?q=${q}&status=${status}&limit=200`);
+    const rows = payload.tasks || [];
+    if (!rows.length) {
+      elements.taskCenterBody.innerHTML = `<tr><td colspan="6">找不到任務</td></tr>`;
+      return;
+    }
+    elements.taskCenterBody.innerHTML = rows.map((task) => `
+      <tr>
+        <td><code>${task.id || ""}</code></td>
+        <td>${task.name || "未命名"}</td>
+        <td>${task.status || "-"}</td>
+        <td>${Math.max((task.master_count || 0) - 1, 0)}</td>
+        <td>${(task.updated_at || "").replace("T", " ").slice(0, 19)}</td>
+        <td>
+          <button class="ghost-btn task-open-btn" data-task-id="${task.id}">開啟</button>
+          <button class="ghost-btn task-clone-btn" data-task-id="${task.id}">複製</button>
+        </td>
+      </tr>
+    `).join("");
+    elements.taskCenterBody.querySelectorAll(".task-open-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openTaskFromCenter(btn.dataset.taskId));
+    });
+    elements.taskCenterBody.querySelectorAll(".task-clone-btn").forEach((btn) => {
+      btn.addEventListener("click", () => cloneTaskFromCenter(btn.dataset.taskId));
+    });
+  } catch (err) {
+    elements.taskCenterBody.innerHTML = `<tr><td colspan="6">讀取失敗：${err.message}</td></tr>`;
+  }
+}
+
+async function openTaskFromCenter(taskId) {
+  if (!taskId) return;
+  const task = await apiGet(`/api/tasks/${taskId}`);
+  hydrateTask(task);
+  if (task.status === "chart2_ocr_done") {
+    renderWorkspace("chart2_confirm", { task });
+    setView("upload");
+    return;
+  }
+  if (task.status === "processing_chart2") {
+    renderWorkspace("processing_chart2", { progress: task.chart2_progress, summary: task.summary });
+  } else if (task.status === "chart2_error") {
+    renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+  } else {
+    renderWorkspace("ready", { summary: task.summary || {} });
+  }
+  setView("overview");
+}
+
+async function cloneTaskFromCenter(taskId) {
+  if (!taskId) return;
+  await apiPost(`/api/tasks/${taskId}/clone`, {});
+  await loadTaskCenter();
+}
+
+function updateResultSelectAllState(rows) {
+  if (!elements.resultSelectAll) return;
+  if (!rows.length) {
+    elements.resultSelectAll.checked = false;
+    return;
+  }
+  const selected = rows.filter((row) => state.selectedResultNodeIds.has(row.node_id)).length;
+  elements.resultSelectAll.checked = selected > 0 && selected === rows.length;
+}
+
+function renderGovernancePreview(data, applied = false) {
+  const box = elements.governancePreviewBox;
+  if (!box) return;
+  const changes = data?.changes || [];
+  const dupCount = (data?.duplicate_groups || []).length;
+  const title = applied ? "資料治理已套用" : "資料治理預覽";
+  const detail = `${changes.length} 筆名稱可標準化，${dupCount} 組可能重名。`;
+  const sample = changes.slice(0, 5).map((item) => `• ${item.before} → ${item.after}`).join("<br>");
+  box.style.display = "block";
+  box.innerHTML = `<strong>${title}</strong><br><small>${detail}</small>${sample ? `<br><small>${sample}</small>` : ""}`;
+}
+
+async function runBatchUpdate() {
+  const nodeIds = [...state.selectedResultNodeIds];
+  if (!state.taskId || !nodeIds.length) {
+    alert("請先勾選至少一筆公司。");
+    return;
+  }
+  const field = elements.batchFieldSelect?.value || "";
+  const value = elements.batchValueInput?.value || "";
+  const payload = await apiPost(`/api/tasks/${state.taskId}/batch-update`, { node_ids: nodeIds, field, value });
+  applyTaskRefresh(payload);
+}
+
+async function governancePreview(applyChanges = false) {
+  if (!state.taskId) return;
+  const payload = await apiPost(`/api/tasks/${state.taskId}/governance-preview`, { apply: applyChanges });
+  renderGovernancePreview(payload, applyChanges);
+  if (applyChanges) {
+    applyTaskRefresh(payload);
+  }
 }
 
 function renderOverview(summary) {
@@ -1422,7 +1544,7 @@ function renderResults() {
 
   // 更新表頭
   const theadTr = document.querySelector("#results table thead tr");
-  let headHtml = `<th class="del-col"></th>`;
+  let headHtml = `<th class="del-col"><input id="resultSelectAll" type="checkbox" /></th><th class="del-col"></th>`;
   for (let lv = 1; lv <= maxLevel; lv++) {
     headHtml += `<th class="level-col" title="公司名稱可點擊修改；層級關係用拖曳調整">${LEVEL_HEADERS[lv] || `${lv}級子公司`} ✏️</th>`;
   }
@@ -1433,6 +1555,15 @@ function renderResults() {
     <th class="editable-col">定位 ✏️</th>
     <th class="status-col">備註 ✏️</th>`;
   theadTr.innerHTML = headHtml;
+  elements.resultSelectAll = document.getElementById("resultSelectAll");
+  elements.resultSelectAll?.addEventListener("change", (event) => {
+    if (event.target.checked) {
+      rows.forEach((row) => state.selectedResultNodeIds.add(row.node_id));
+    } else {
+      rows.forEach((row) => state.selectedResultNodeIds.delete(row.node_id));
+    }
+    renderResults();
+  });
 
   // ── 分組底色（依一級祖先交替）──────────────────────────────
   const byId = {};
@@ -1460,6 +1591,20 @@ function renderResults() {
     tr.dataset.nodeId = row.node_id;
     const bg = groupBgMap[row.node_id];
     if (bg) tr.style.backgroundColor = bg;
+
+    // 刪除按鈕
+    const selectTd = document.createElement("td");
+    selectTd.className = "del-td";
+    const selectInput = document.createElement("input");
+    selectInput.type = "checkbox";
+    selectInput.checked = state.selectedResultNodeIds.has(row.node_id);
+    selectInput.addEventListener("change", () => {
+      if (selectInput.checked) state.selectedResultNodeIds.add(row.node_id);
+      else state.selectedResultNodeIds.delete(row.node_id);
+      updateResultSelectAllState(rows);
+    });
+    selectTd.appendChild(selectInput);
+    tr.appendChild(selectTd);
 
     // 刪除按鈕
     const delTd = document.createElement("td");
@@ -1555,6 +1700,7 @@ function renderResults() {
 
     elements.resultTableBody.appendChild(tr);
   });
+  updateResultSelectAllState(rows);
 }
 
 // 輪詢任務狀態，回呼 onStatus(task) 讓呼叫端更新 UI
@@ -2989,6 +3135,23 @@ function bindEvents() {
   });
   elements.searchInput?.addEventListener("input", renderResults);
   elements.statusFilter?.addEventListener("change", renderResults);
+  elements.taskSearchBtn?.addEventListener("click", () => { loadTaskCenter().catch((e) => console.error(e)); });
+  elements.taskSearchInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      loadTaskCenter().catch((e) => console.error(e));
+    }
+  });
+  elements.taskStatusSelect?.addEventListener("change", () => { loadTaskCenter().catch((e) => console.error(e)); });
+  elements.batchApplyBtn?.addEventListener("click", () => {
+    runBatchUpdate().catch((error) => alert(`批次更新失敗：${error.message}`));
+  });
+  elements.governancePreviewBtn?.addEventListener("click", () => {
+    governancePreview(false).catch((error) => alert(`治理預覽失敗：${error.message}`));
+  });
+  elements.governanceApplyBtn?.addEventListener("click", () => {
+    governancePreview(true).catch((error) => alert(`治理套用失敗：${error.message}`));
+  });
   elements.addCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(true));
   elements.cancelAddCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(false));
   elements.saveAddCompanyBtn?.addEventListener("click", addCompanyToResults);

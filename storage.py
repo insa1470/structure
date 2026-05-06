@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -46,6 +47,19 @@ class JsonTaskStore:
 
     def ensure_ready(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def iter_tasks(self) -> Iterable[dict]:
+        self.ensure_ready()
+        for task_dir in sorted(self.data_dir.iterdir(), reverse=True):
+            if not task_dir.is_dir():
+                continue
+            path = task_dir / "task.json"
+            if not path.exists():
+                continue
+            try:
+                yield json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
 
 
 task_store = JsonTaskStore()
@@ -106,3 +120,12 @@ def save_ocr_test(record: dict) -> None:
 
 def list_ocr_tests(limit: int = 50) -> list[dict]:
     return ocr_test_store.list_tests(limit)
+
+
+def list_tasks(limit: int = 200) -> list[dict]:
+    tasks: list[dict] = []
+    for task in task_store.iter_tasks():
+        tasks.append(task)
+        if len(tasks) >= limit:
+            break
+    return tasks

@@ -386,6 +386,14 @@ textarea {
   min-width: 0;
 }
 
+.task-center-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;

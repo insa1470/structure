@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import copy
 import os
 import re
 import sys
@@ -12,7 +13,7 @@ from tempfile import NamedTemporaryFile
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-from storage import ensure_storage_ready, list_ocr_tests, read_task, save_ocr_test, save_task, task_upload_dir
+from storage import ensure_storage_ready, list_ocr_tests, list_tasks, read_task, save_ocr_test, save_task, task_upload_dir
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "webapp"
@@ -35,6 +36,31 @@ def parse_csv(path: Path) -> list[dict]:
 def sanitize_filename(name: str) -> str:
     name = re.sub(r"[^A-Za-z0-9._\-一-鿿()（）]+", "_", name.strip())
     return name or "upload.bin"
+
+
+def _compact_task(task: dict) -> dict:
+    summary = task.get("summary") or {}
+    return {
+        "id": task.get("id"),
+        "name": task.get("name"),
+        "status": task.get("status"),
+        "created_at": task.get("created_at"),
+        "updated_at": task.get("updated_at"),
+        "source_files": task.get("source_files") or {},
+        "master_count": summary.get("master_count", len(task.get("master_rows", []) or [])),
+        "review_count": summary.get("review_count", len(task.get("review_rows", []) or [])),
+        "candidate_count": summary.get("candidate_count", len(task.get("candidate_rows", []) or [])),
+    }
+
+
+def _normalize_company_text(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"\s+", " ", text)
+    text = text.replace("（", "(").replace("）", ")")
+    text = text.replace("，", ",").replace("：", ":")
+    return text
 
 
 def is_admin_request() -> bool:
@@ -317,6 +343,56 @@ def get_task(task_id: str):
     if not task:
         return jsonify({"error": "task_not_found"}), 404
     return jsonify(task)
+
+
+@app.route("/api/tasks")
+def query_tasks():
+    keyword = (request.args.get("q") or "").strip().lower()
+    status = (request.args.get("status") or "").strip().lower()
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200) or 200), 500))
+    except ValueError:
+        limit = 200
+    items = [_compact_task(task) for task in list_tasks(limit=500)]
+
+    def matches(item: dict) -> bool:
+        if status and item.get("status", "").lower() != status:
+            return False
+        if keyword:
+            hay = " ".join([
+                str(item.get("id", "")),
+                str(item.get("name", "")),
+                str((item.get("source_files") or {}).get("chart1", "")),
+                str((item.get("source_files") or {}).get("chart2", "")),
+            ]).lower()
+            if keyword not in hay:
+                return False
+        return True
+
+    filtered = [item for item in items if matches(item)]
+    filtered = sorted(filtered, key=lambda x: x.get("updated_at") or "", reverse=True)[:limit]
+    return jsonify({"ok": True, "tasks": filtered, "count": len(filtered)})
+
+
+@app.route("/api/tasks/<task_id>/clone", methods=["POST"])
+def clone_task(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+
+    new_task = copy.deepcopy(task)
+    new_id = uuid.uuid4().hex[:12]
+    new_name = (request.get_json(silent=True) or {}).get("name")
+    new_task["id"] = new_id
+    new_task["name"] = (str(new_name).strip() if new_name else f"{task.get('name') or '任務'}（複製）")
+    new_task["status"] = "ready" if task.get("master_rows") else "processing"
+    new_task["created_at"] = now_iso()
+    new_task["updated_at"] = now_iso()
+    new_task["review_decisions"] = {}
+    new_task["candidate_decisions"] = {}
+    new_task["error"] = ""
+    save_task(new_task)
+    return jsonify({"ok": True, "task": new_task}), 201
 
 
 @app.route("/api/tasks/analyze", methods=["POST"])
@@ -660,6 +736,101 @@ def update_row(task_id: str):
         "candidate_rows": task["candidate_rows"],
         "summary": task["summary"],
         "graph": task["graph"],
+    })
+
+
+@app.route("/api/tasks/<task_id>/batch-update", methods=["POST"])
+def batch_update_rows(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    node_ids = payload.get("node_ids")
+    field = str(payload.get("field") or "").strip()
+    value = payload.get("value")
+    if not isinstance(node_ids, list) or not node_ids:
+        return jsonify({"error": "node_ids_required", "message": "請先勾選要批次更新的公司。"}), 400
+
+    editable = {
+        "canonical_name", "legal_representative", "registered_capital",
+        "established_date", "actual_controller_share", "role_label", "chart_note",
+    }
+    if field not in editable:
+        return jsonify({"error": "invalid_field", "message": "這個欄位目前不支援批次編輯。"}), 400
+
+    id_set = {str(node_id) for node_id in node_ids if str(node_id).strip()}
+    updated = 0
+    for row in task.get("master_rows", []):
+        if str(row.get("node_id")) not in id_set:
+            continue
+        row[field] = str(value or "").strip()
+        if field == "canonical_name":
+            refresh_children_parent_names(task["master_rows"], row["node_id"], row[field])
+        updated += 1
+
+    rebuild_task_state(task)
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "updated_count": updated,
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
+
+
+@app.route("/api/tasks/<task_id>/governance-preview", methods=["POST"])
+def governance_preview(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    apply_changes = bool(payload.get("apply"))
+
+    updates: list[dict] = []
+    dup_map: dict[str, list[str]] = {}
+    for row in task.get("master_rows", []):
+        before = str(row.get("canonical_name") or row.get("chart1_name") or "")
+        after = _normalize_company_text(before)
+        if after:
+            dup_map.setdefault(after.lower(), []).append(str(row.get("node_id") or ""))
+        if after != before:
+            updates.append({
+                "node_id": row.get("node_id"),
+                "field": "canonical_name",
+                "before": before,
+                "after": after,
+            })
+            if apply_changes:
+                row["canonical_name"] = after
+                refresh_children_parent_names(task["master_rows"], row.get("node_id"), after)
+
+    duplicate_groups = []
+    for norm_name, ids in dup_map.items():
+        if len(ids) < 2:
+            continue
+        duplicate_groups.append({
+            "name": norm_name,
+            "node_ids": ids,
+        })
+
+    if apply_changes and updates:
+        rebuild_task_state(task)
+        save_task(task)
+
+    return jsonify({
+        "ok": True,
+        "applied": apply_changes,
+        "changes": updates,
+        "change_count": len(updates),
+        "duplicate_groups": duplicate_groups,
+        "master_rows": task.get("master_rows", []) if apply_changes else None,
+        "review_rows": task.get("review_rows", []) if apply_changes else None,
+        "candidate_rows": task.get("candidate_rows", []) if apply_changes else None,
+        "summary": task.get("summary", {}) if apply_changes else None,
+        "graph": task.get("graph", {}) if apply_changes else None,
     })
 
 

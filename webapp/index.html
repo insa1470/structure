@@ -30,6 +30,7 @@
         </p>
         <nav class="nav">
           <button class="nav-btn active" data-view="upload">上傳任務</button>
+          <button class="nav-btn" data-view="taskCenter">任務中心</button>
           <button class="nav-btn" data-view="overview">總覽</button>
           <button class="nav-btn" data-view="review">待確認</button>
           <button class="nav-btn" data-view="candidates">新增候選</button>
@@ -101,6 +102,51 @@
                 <p class="workspace-eyebrow">工作進度</p>
                 <p class="workspace-hint">上傳兩張圖並按下「開始分析」後，這裡會顯示每個步驟的狀態。</p>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="taskCenter" class="view">
+          <div class="card form-card">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Task Center</p>
+                <h3>任務查詢與回查</h3>
+              </div>
+            </div>
+            <div class="task-center-toolbar">
+              <label class="field">
+                <span>關鍵字</span>
+                <input id="taskSearchInput" type="text" placeholder="任務 ID / 集團名稱 / 檔名" />
+              </label>
+              <label class="field">
+                <span>狀態</span>
+                <select id="taskStatusSelect">
+                  <option value="">全部</option>
+                  <option value="processing">processing</option>
+                  <option value="processing_chart2">processing_chart2</option>
+                  <option value="chart2_ocr_done">chart2_ocr_done</option>
+                  <option value="ready">ready</option>
+                  <option value="chart2_error">chart2_error</option>
+                  <option value="error">error</option>
+                </select>
+              </label>
+              <button id="taskSearchBtn" class="ghost-btn" type="button">查詢</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任務ID</th>
+                    <th>集團名稱</th>
+                    <th>狀態</th>
+                    <th>公司數</th>
+                    <th>更新時間</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="taskCenterBody"></tbody>
+              </table>
             </div>
           </div>
         </section>
@@ -250,6 +296,27 @@
               </div>
               <button id="addCompanyBtn" class="ghost-btn" type="button">＋ 新增公司</button>
             </div>
+            <div class="task-center-toolbar">
+              <label class="field">
+                <span>批次欄位</span>
+                <select id="batchFieldSelect">
+                  <option value="legal_representative">法定代表人</option>
+                  <option value="registered_capital">資本額</option>
+                  <option value="established_date">成立日期</option>
+                  <option value="actual_controller_share">持股比例</option>
+                  <option value="role_label">定位</option>
+                  <option value="chart_note">備註</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>批次值</span>
+                <input id="batchValueInput" type="text" placeholder="輸入要套用的值" />
+              </label>
+              <button id="batchApplyBtn" class="ghost-btn" type="button">套用到勾選列</button>
+              <button id="governancePreviewBtn" class="ghost-btn" type="button">資料治理預覽</button>
+              <button id="governanceApplyBtn" class="ghost-btn" type="button">套用資料治理</button>
+            </div>
+            <div id="governancePreviewBox" class="upload-error-msg" style="display:none;"></div>
             <div id="addCompanyPanel" class="add-company-panel">
               <label class="field">
                 <span>公司名稱</span>
@@ -272,6 +339,7 @@
               <table>
                 <thead>
                   <tr>
+                    <th class="del-col"><input id="resultSelectAll" type="checkbox" /></th>
                     <th class="del-col"></th>
                     <th>公司名稱（層級縮排）✏️</th>
                     <th class="editable-col">法定代表人 ✏️</th>
