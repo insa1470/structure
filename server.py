@@ -4,7 +4,6 @@ import csv
 import copy
 import os
 import re
-import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -408,7 +407,13 @@ def save_task_draft(task_id: str):
         "saved_at": now_iso(),
         "state": draft_state,
     }
-    save_task(task)
+    try:
+        save_task(task)
+    except Exception as exc:
+        return jsonify({
+            "error": "draft_save_failed",
+            "message": f"暫存寫入失敗：{exc}",
+        }), 500
     return jsonify({"ok": True, "saved_at": task["draft"]["saved_at"]})
 
 
@@ -504,7 +509,7 @@ def analyze():
     chart2 = request.files.get("chart2")
     if not chart1 or not chart2:
         missing = [name for name, value in (("chart1", chart1), ("chart2", chart2)) if not value]
-        print(f"[API] /api/tasks/analyze rejected: missing files={missing}", file=sys.stderr)
+        print(f"[API] /api/tasks/analyze rejected: missing files={missing}", flush=True)
         return jsonify({"error": "chart1_and_chart2_required", "message": "請同時上傳圖一和圖二。"}), 400
 
     chart1_size_mb = _file_size_mb(chart1)
@@ -636,7 +641,7 @@ def analyze_chart2_only(task_id: str):
 
     chart2 = request.files.get("chart2")
     if not chart2:
-        print(f"[API] /api/tasks/{task_id}/analyze-chart2 rejected: missing chart2 file", file=sys.stderr)
+        print(f"[API] /api/tasks/{task_id}/analyze-chart2 rejected: missing chart2 file", flush=True)
         return jsonify({"error": "chart2_required", "message": "請重新選擇圖二圖片後再上傳。"}), 400
 
     c2_shape = _inspect_image(chart2)
@@ -836,6 +841,61 @@ def review_decision():
     save_task(task)
     return jsonify({
         "ok": True,
+        "review_decisions": task["review_decisions"],
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
+
+
+@app.route("/api/tasks/<task_id>/review-confirm-all", methods=["POST"])
+def review_confirm_all(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+
+    confirmed = 0
+    for review in list(task.get("review_rows", [])):
+        key = review.get("candidate_node_id") or review.get("chart2_name")
+        if not key:
+            continue
+        task.setdefault("review_decisions", {})[key] = {
+            "decision": "確認一致",
+            "corrected_name": "",
+            "corrected_level": "",
+            "corrected_parent": "",
+            "note": "批次確認：圖一已辨識，視為可用。",
+        }
+        target_row = next((row for row in task.get("master_rows", []) if row.get("node_id") == key), None)
+        if not target_row:
+            continue
+        matched_candidate = next(
+            (
+                row for row in task.get("candidate_rows", [])
+                if row.get("chart2_name") and row.get("chart2_name") == target_row.get("matched_chart2_name")
+            ),
+            None,
+        )
+        if matched_candidate:
+            apply_chart2_attrs_to_row(target_row, matched_candidate)
+            task["candidate_rows"] = [
+                row for row in task.get("candidate_rows", [])
+                if row.get("chart2_name") != matched_candidate.get("chart2_name")
+            ]
+        target_row["node_status"] = "enriched"
+        target_row["match_status"] = target_row.get("match_status") or "confirmed_chart1"
+        target_row["review_flag"] = ""
+        target_row["review_note"] = "批次確認：圖一已辨識，視為可用。"
+        confirmed += 1
+
+    task["review_rows"] = []
+    rebuild_task_state(task)
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "confirmed_count": confirmed,
         "review_decisions": task["review_decisions"],
         "master_rows": task["master_rows"],
         "review_rows": task["review_rows"],

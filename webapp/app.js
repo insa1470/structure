@@ -56,6 +56,7 @@ const elements = {
   metricsGrid: document.getElementById("metricsGrid"),
   overviewWarnings: document.getElementById("overviewWarnings"),
   reviewListTitle: document.getElementById("reviewListTitle"),
+  reviewConfirmAllBtn: document.getElementById("reviewConfirmAllBtn"),
   reviewList: document.getElementById("reviewList"),
   reviewDetail: document.getElementById("reviewDetail"),
   candidateListTitle: document.getElementById("candidateListTitle"),
@@ -1024,10 +1025,17 @@ function markTaskDirty() {
 async function saveDraftSnapshot(silent = false) {
   if (!state.taskId) return;
   const payload = { state: snapshotTaskState() };
-  const result = await apiPost(`/api/tasks/${state.taskId}/save-draft`, payload);
-  state.hasUnsavedEdits = false;
-  setDraftStatus(`已暫存：${(result.saved_at || "").replace("T", " ").slice(0, 19)}`, "status-ok");
-  if (!silent) alert("草稿已暫存。");
+  try {
+    const result = await apiPost(`/api/tasks/${state.taskId}/save-draft`, payload);
+    state.hasUnsavedEdits = false;
+    setDraftStatus(`已暫存：${(result.saved_at || "").replace("T", " ").slice(0, 19)}`, "status-ok");
+    if (!silent) alert("草稿已暫存。");
+  } catch (error) {
+    state.hasUnsavedEdits = true;
+    setDraftStatus(`暫存失敗：${error.message}`, "status-warn");
+    if (!silent) alert(`暫存失敗：${error.message}`);
+    throw error;
+  }
 }
 
 async function restoreDraftSnapshot() {
@@ -1150,6 +1158,10 @@ function renderOverview(summary) {
 
 function renderReviewList() {
   elements.reviewListTitle.textContent = `${state.reviewRows.length} 筆待確認`;
+  if (elements.reviewConfirmAllBtn) {
+    elements.reviewConfirmAllBtn.disabled = !state.taskId || state.reviewRows.length === 0;
+    elements.reviewConfirmAllBtn.textContent = state.reviewRows.length ? `全部確認 ${state.reviewRows.length} 筆` : "全部確認";
+  }
   elements.reviewList.innerHTML = state.reviewRows
     .map((row, index) => {
       const key = row.candidate_node_id || row.chart2_name;
@@ -1176,9 +1188,27 @@ function renderReviewList() {
   });
 }
 
+async function confirmAllReviewRows() {
+  if (!state.taskId || !state.reviewRows.length) return;
+  if (!confirm(`確定要將 ${state.reviewRows.length} 筆待確認全部視為可用嗎？`)) return;
+  const before = snapshotTaskState();
+  const response = await apiPost(`/api/tasks/${state.taskId}/review-confirm-all`, {});
+  applyTaskRefresh(response);
+  pushUndoSnapshot(before);
+  setView("results");
+}
+
 function renderReviewDetail() {
   const row = state.reviewRows[state.selectedReviewIndex];
-  if (!row) return;
+  if (!row) {
+    elements.reviewDetail.innerHTML = `
+      <div class="detail-empty">
+        <h3>目前沒有待確認項目</h3>
+        <p>圖一辨識到的公司已可先進入結果主表檢查與調整。</p>
+      </div>
+    `;
+    return;
+  }
   const key = row.candidate_node_id || row.chart2_name;
   const saved = state.reviewDecisions[key] || {};
 
@@ -1383,6 +1413,7 @@ const SUBSIDIARY_LABELS = {
 
 // ── 拖曳重新掛父層 ────────────────────────────────────────────
 let _dragNodeId = null;
+let _dragNodeIds = [];
 
 function isAncestor(candidateAncestorId, nodeId) {
   // 判斷 candidateAncestorId 是否為 nodeId 的祖先（防止循環）
@@ -1394,6 +1425,63 @@ function isAncestor(candidateAncestorId, nodeId) {
     cur = byId[cur.chart1_parent];
   }
   return false;
+}
+
+function getVisibleResultRows() {
+  return flattenTree(buildTree(state.masterRows)).filter((row) => (Number(row.chart1_level) || 0) > 0);
+}
+
+function topLevelDragIds(nodeIds) {
+  const selected = new Set(nodeIds);
+  return nodeIds.filter((nodeId) => {
+    const row = state.masterRows.find((r) => r.node_id === nodeId);
+    let parentId = row?.chart1_parent || "";
+    while (parentId) {
+      if (selected.has(parentId)) return false;
+      const parent = state.masterRows.find((r) => r.node_id === parentId);
+      parentId = parent?.chart1_parent || "";
+    }
+    return true;
+  });
+}
+
+function collectDescendantIds(nodeId) {
+  const ids = [];
+  function walk(id) {
+    state.masterRows
+      .filter((row) => row.chart1_parent === id)
+      .forEach((child) => {
+        ids.push(child.node_id);
+        walk(child.node_id);
+      });
+  }
+  walk(nodeId);
+  return ids;
+}
+
+function invalidBulkDrop(targetId, dragIds) {
+  return dragIds.some((dragId) => dragId === targetId || isAncestor(dragId, targetId));
+}
+
+function currentDragIds(rowId) {
+  const visibleIds = getVisibleResultRows().map((row) => row.node_id);
+  if (state.selectedResultNodeIds.has(rowId)) {
+    const selectedVisibleIds = visibleIds.filter((nodeId) => state.selectedResultNodeIds.has(nodeId));
+    return topLevelDragIds(selectedVisibleIds.length ? selectedVisibleIds : [rowId]);
+  }
+  return [rowId];
+}
+
+async function saveWholeTaskState() {
+  const payload = {
+    master_rows: JSON.parse(JSON.stringify(state.masterRows)),
+    review_rows: JSON.parse(JSON.stringify(state.reviewRows)),
+    candidate_rows: JSON.parse(JSON.stringify(state.candidateRows)),
+    review_decisions: JSON.parse(JSON.stringify(state.reviewDecisions)),
+    candidate_decisions: JSON.parse(JSON.stringify(state.candidateDecisions)),
+  };
+  const result = await apiPost(`/api/tasks/${state.taskId}/replace-state`, payload);
+  applyTaskRefresh(result);
 }
 
 async function reparentNode(nodeId, newParentId) {
@@ -1448,6 +1536,45 @@ async function reparentNode(nodeId, newParentId) {
   pushUndoSnapshot(before);
 }
 
+async function reparentNodes(nodeIds, newParentId) {
+  const dragIds = topLevelDragIds(nodeIds);
+  if (dragIds.length <= 1) return reparentNode(dragIds[0], newParentId);
+  if (invalidBulkDrop(newParentId, dragIds)) return;
+
+  const before = snapshotTaskState();
+  const byId = {};
+  state.masterRows.forEach((r) => { byId[r.node_id] = r; });
+  const newParent = byId[newParentId];
+  if (!newParent) return;
+
+  dragIds.forEach((nodeId) => {
+    const node = byId[nodeId];
+    if (!node) return;
+    const oldLevel = Number(node.chart1_level) || 0;
+    const newLevel = (Number(newParent.chart1_level) || 0) + 1;
+    const diff = newLevel - oldLevel;
+
+    node.chart1_parent = newParentId;
+    node.chart1_parent_name = newParent.canonical_name || newParent.chart1_name || "";
+
+    function cascadeLevel(id) {
+      const r = byId[id];
+      if (!r) return;
+      const lv = (Number(r.chart1_level) || 0) + diff;
+      r.chart1_level = lv;
+      r.subsidiary_level_label = SUBSIDIARY_LABELS[lv] || `${lv}級子公司`;
+      state.masterRows
+        .filter((c) => c.chart1_parent === id)
+        .forEach((c) => cascadeLevel(c.node_id));
+    }
+    cascadeLevel(nodeId);
+  });
+
+  normalizeSiblingOrder();
+  await saveWholeTaskState();
+  pushUndoSnapshot(before);
+}
+
 function normalizeSiblingOrder() {
   const groups = new Map();
   state.masterRows.forEach((row) => {
@@ -1486,15 +1613,56 @@ async function reorderSiblingNode(nodeId, targetId, zone) {
   normalizeSiblingOrder();
   renderResults();
 
-  const payload = {
-    master_rows: JSON.parse(JSON.stringify(state.masterRows)),
-    review_rows: JSON.parse(JSON.stringify(state.reviewRows)),
-    candidate_rows: JSON.parse(JSON.stringify(state.candidateRows)),
-    review_decisions: JSON.parse(JSON.stringify(state.reviewDecisions)),
-    candidate_decisions: JSON.parse(JSON.stringify(state.candidateDecisions)),
-  };
-  const result = await apiPost(`/api/tasks/${state.taskId}/replace-state`, payload);
-  applyTaskRefresh(result);
+  await saveWholeTaskState();
+  pushUndoSnapshot(before);
+}
+
+async function reorderSiblingNodes(nodeIds, targetId, zone) {
+  const dragIds = topLevelDragIds(nodeIds);
+  if (dragIds.length <= 1) return reorderSiblingNode(dragIds[0], targetId, zone);
+  if (invalidBulkDrop(targetId, dragIds)) return;
+
+  const before = snapshotTaskState();
+  const byId = {};
+  state.masterRows.forEach((r) => { byId[r.node_id] = r; });
+  const target = byId[targetId];
+  if (!target) return;
+  const parentId = target.chart1_parent || "";
+  const parentName = target.chart1_parent_name || "";
+  const targetLevel = target.chart1_level;
+  const targetLabel = target.subsidiary_level_label;
+  const moving = getVisibleResultRows()
+    .filter((row) => dragIds.includes(row.node_id))
+    .map((row) => byId[row.node_id])
+    .filter(Boolean);
+
+  moving.forEach((node) => {
+    const oldLevel = Number(node.chart1_level) || 0;
+    const newLevel = Number(targetLevel) || 0;
+    const diff = newLevel - oldLevel;
+    node.chart1_parent = parentId;
+    node.chart1_parent_name = parentName;
+    node.chart1_level = targetLevel;
+    node.subsidiary_level_label = targetLabel;
+    collectDescendantIds(node.node_id).forEach((descId) => {
+      const desc = byId[descId];
+      if (!desc) return;
+      const lv = (Number(desc.chart1_level) || 0) + diff;
+      desc.chart1_level = lv;
+      desc.subsidiary_level_label = SUBSIDIARY_LABELS[lv] || `${lv}級子公司`;
+    });
+  });
+
+  const movingSet = new Set(moving.map((row) => row.node_id));
+  const siblings = state.masterRows
+    .filter((row) => (row.chart1_parent || "") === parentId && !movingSet.has(row.node_id))
+    .sort((a, b) => Number(a.sort_index || 0) - Number(b.sort_index || 0));
+  const targetIndex = siblings.findIndex((row) => row.node_id === targetId);
+  const insertIndex = zone === "top" ? targetIndex : targetIndex + 1;
+  siblings.splice(Math.max(insertIndex, 0), 0, ...moving);
+  siblings.forEach((row, idx) => { row.sort_index = idx + 1; });
+  normalizeSiblingOrder();
+  await saveWholeTaskState();
   pushUndoSnapshot(before);
 }
 
@@ -1709,7 +1877,7 @@ function makeEditable(cell, row, field, displayValue) {
 }
 
 function renderResults() {
-  const rows = flattenTree(buildTree(state.masterRows)).filter((row) => (Number(row.chart1_level) || 0) > 0);
+  const rows = getVisibleResultRows();
   const companyCount = Math.max(state.masterRows.length - (getRootRow() ? 1 : 0), 0);
 
   elements.resultTableTitle.textContent = `${getGroupName()}共 ${companyCount} 間公司`;
@@ -1808,11 +1976,15 @@ function renderResults() {
     tr.draggable = true;
     let dropZone = "middle";
     tr.addEventListener("dragstart", (e) => {
-      _dragNodeId = row.node_id;
+      _dragNodeIds = currentDragIds(row.node_id);
+      _dragNodeId = _dragNodeIds[0] || row.node_id;
       e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", row.node_id);
+      e.dataTransfer.setData("text/plain", _dragNodeId);
+      e.dataTransfer.setData("application/json", JSON.stringify(_dragNodeIds));
       const ghost = document.createElement("div");
-      ghost.textContent = row.canonical_name || row.chart1_name || "";
+      ghost.textContent = _dragNodeIds.length > 1
+        ? `移動 ${_dragNodeIds.length} 間公司`
+        : (row.canonical_name || row.chart1_name || "");
       ghost.style.cssText = "position:fixed;top:-200px;left:0;background:#4f46e5;color:#fff;padding:5px 14px;border-radius:99px;font-size:13px;font-weight:600;white-space:nowrap;";
       document.body.appendChild(ghost);
       e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, 18);
@@ -1823,10 +1995,10 @@ function renderResults() {
       document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
       document.getElementById("drag-tooltip")?.remove();
       _dragNodeId = null;
+      _dragNodeIds = [];
     });
     tr.addEventListener("dragover", (e) => {
-      if (!_dragNodeId || _dragNodeId === row.node_id) return;
-      if (isAncestor(_dragNodeId, row.node_id)) return;
+      if (!_dragNodeId || invalidBulkDrop(row.node_id, _dragNodeIds.length ? _dragNodeIds : [_dragNodeId])) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
@@ -1842,8 +2014,8 @@ function renderResults() {
       let tip = document.getElementById("drag-tooltip");
       if (!tip) { tip = document.createElement("div"); tip.id = "drag-tooltip"; document.body.appendChild(tip); }
       tip.textContent = dropZone === "middle"
-        ? `↳ 放入「${row.canonical_name || row.chart1_name}」底下`
-        : `↕ 插入「${row.canonical_name || row.chart1_name}」${dropZone === "top" ? "上方" : "下方"}`;
+        ? `↳ 放入「${row.canonical_name || row.chart1_name}」底下${_dragNodeIds.length > 1 ? `（${_dragNodeIds.length} 間）` : ""}`
+        : `↕ 插入「${row.canonical_name || row.chart1_name}」${dropZone === "top" ? "上方" : "下方"}${_dragNodeIds.length > 1 ? `（${_dragNodeIds.length} 間）` : ""}`;
       tip.style.left = e.clientX + "px";
       tip.style.top  = e.clientY + "px";
     });
@@ -1856,14 +2028,20 @@ function renderResults() {
       e.preventDefault();
       tr.classList.remove("drag-target", "drag-insert-top", "drag-insert-bottom");
       document.getElementById("drag-tooltip")?.remove();
-      const draggedId = e.dataTransfer.getData("text/plain");
-      if (!draggedId || draggedId === row.node_id || isAncestor(draggedId, row.node_id)) return;
+      const fallbackId = e.dataTransfer.getData("text/plain");
+      let draggedIds = _dragNodeIds.length ? _dragNodeIds : [fallbackId];
+      try {
+        const parsed = JSON.parse(e.dataTransfer.getData("application/json") || "[]");
+        if (Array.isArray(parsed) && parsed.length) draggedIds = parsed;
+      } catch {}
+      draggedIds = topLevelDragIds(draggedIds.filter(Boolean));
+      if (!draggedIds.length || invalidBulkDrop(row.node_id, draggedIds)) return;
       if (dropZone === "middle") {
-        await reparentNode(draggedId, row.node_id);
+        await reparentNodes(draggedIds, row.node_id);
       } else {
-        await reorderSiblingNode(draggedId, row.node_id, dropZone);
+        await reorderSiblingNodes(draggedIds, row.node_id, dropZone);
       }
-      document.querySelector(`tr[data-node-id="${draggedId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.querySelector(`tr[data-node-id="${draggedIds[0]}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
 
     // ── 層級欄：公司名在對應欄，其餘空白 ────────────────────
@@ -3301,12 +3479,50 @@ c.setOption(${option});window.addEventListener('resize',()=>c.resize());<\/scrip
   }
 }
 
-function printChart() {
-  const choice = window.prompt("列印方向：輸入 L（橫式）或 P（直式）", state.printOrientation === "portrait" ? "P" : "L");
-  if (choice !== null) {
-    const token = String(choice).trim().toUpperCase();
-    state.printOrientation = token === "P" || token === "PORTRAIT" ? "portrait" : "landscape";
-  }
+function openPrintSettings() {
+  document.getElementById("printSettingsModal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "printSettingsModal";
+  modal.className = "modal-backdrop";
+  modal.innerHTML = `
+    <div class="print-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="printSettingsTitle">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">列印設定</p>
+          <h3 id="printSettingsTitle">選擇紙張方向</h3>
+        </div>
+      </div>
+      <div class="print-orientation-grid">
+        <button class="print-orientation-btn" data-print-orientation="portrait" type="button">
+          <span class="print-paper portrait"></span>
+          <strong>直式列印</strong>
+        </button>
+        <button class="print-orientation-btn" data-print-orientation="landscape" type="button">
+          <span class="print-paper landscape"></span>
+          <strong>橫式列印</strong>
+        </button>
+      </div>
+      <div class="detail-actions">
+        <button class="ghost-btn" id="printSettingsCancel" type="button">取消</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.querySelectorAll("[data-print-orientation]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.printOrientation === state.printOrientation);
+    button.addEventListener("click", () => {
+      modal.remove();
+      printChart(button.dataset.printOrientation);
+    });
+  });
+  modal.querySelector("#printSettingsCancel")?.addEventListener("click", () => modal.remove());
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) modal.remove();
+  });
+}
+
+function printChart(orientation = state.printOrientation) {
+  state.printOrientation = orientation === "portrait" ? "portrait" : "landscape";
   document.body.classList.toggle("print-portrait", state.printOrientation === "portrait");
   document.body.classList.toggle("print-landscape", state.printOrientation !== "portrait");
   document.getElementById("dynamicPrintPageStyle")?.remove();
@@ -3421,7 +3637,7 @@ function bindEvents() {
     redoTaskEdit().catch((error) => alert(`重做失敗：${error.message}`));
   });
   elements.saveDraftBtn?.addEventListener("click", () => {
-    saveDraftSnapshot(false).catch((error) => alert(`暫存失敗：${error.message}`));
+    saveDraftSnapshot(false).catch((error) => console.error("draft save failed", error));
   });
   elements.restoreDraftBtn?.addEventListener("click", () => {
     restoreDraftSnapshot().catch((error) => alert(`還原草稿失敗：${error.message}`));
@@ -3497,10 +3713,13 @@ function bindEvents() {
     resetChartViewport();
     renderChart();
   });
+  elements.reviewConfirmAllBtn?.addEventListener("click", () => {
+    confirmAllReviewRows().catch((err) => alert(`全部確認失敗：${err.message}`));
+  });
   elements.exportBtn.addEventListener("click", exportWorkbook);
   elements.exportPngBtn.addEventListener("click", exportPNG);
   elements.exportHtmlBtn.addEventListener("click", exportHTML);
-  elements.printChartBtn.addEventListener("click", printChart);
+  elements.printChartBtn.addEventListener("click", openPrintSettings);
 }
 
 bindEvents();

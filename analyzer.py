@@ -154,6 +154,14 @@ def _encode_image(image_path: Path) -> tuple[str, str]:
 
 MAX_RETRIES = 1  # JSON 解析失敗時最多重試次數（失敗就讓用戶重傳，不要讓他等太久）
 
+
+def _log_info(message: str) -> None:
+    print(message, flush=True)
+
+
+def _log_warn(message: str) -> None:
+    print(message, flush=True)
+
 def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
     """呼叫 Qwen-VL，回傳解析後的 list。JSON 解析失敗時自動重試最多 MAX_RETRIES 次。"""
     last_err: Exception | None = None
@@ -162,8 +170,7 @@ def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
             return _call_qwen_vl_once(image_path, prompt)
         except RuntimeError as e:
             last_err = e
-            import sys
-            print(f"[Qwen] attempt {attempt}/{MAX_RETRIES} failed: {e}", file=sys.stderr)
+            _log_warn(f"[Qwen] attempt {attempt}/{MAX_RETRIES} failed: {e}")
             if attempt < MAX_RETRIES:
                 import time
                 time.sleep(2)  # 短暫等待後重試
@@ -174,7 +181,6 @@ def _call_qwen_vl_once(image_path: Path, prompt: str) -> list[dict]:
     """單次呼叫 Qwen-VL。"""
     import re as _re
     import ast
-    import sys
 
     api_key = os.environ.get("DASHSCOPE_API_KEY", "")
     if not api_key:
@@ -206,8 +212,10 @@ def _call_qwen_vl_once(image_path: Path, prompt: str) -> list[dict]:
     finish_reason = response.choices[0].finish_reason
     raw = response.choices[0].message.content.strip()
 
-    print(f"[Qwen] finish_reason={finish_reason} raw_len={len(raw)}", file=sys.stderr)
-    print(f"[Qwen] raw={raw}", file=sys.stderr)
+    _log_info(f"[Qwen] finish_reason={finish_reason} raw_len={len(raw)}")
+    if os.environ.get("DEBUG_QWEN_RAW", "").strip().lower() in {"1", "true", "yes"}:
+        preview = raw[:1200] + ("..." if len(raw) > 1200 else "")
+        _log_info(f"[Qwen] raw_preview={preview}")
 
     if finish_reason == "length":
         raise RuntimeError(f"模型輸出被截斷（公司數量過多），raw_len={len(raw)}，請裁切圖片後重試")
@@ -692,15 +700,12 @@ def analyze_chart1(image_path: Path) -> list[dict]:
 
 def analyze_chart1_with_quality(image_path: Path) -> tuple[list[dict], dict]:
     """先跑原本完整辨識；若結果品質偏低，再啟動公司名清單 + 層級重建補救。"""
-    import sys
-
     raw = _call_qwen_vl(image_path, PROMPT_CHART1)
     primary_nodes = _parse_chart1_nodes(raw)
     primary_quality = _evaluate_chart1_quality(primary_nodes)
-    print(
+    _log_info(
         f"[Chart1] primary quality={primary_quality['score']} "
-        f"count={primary_quality['company_count']} max_level={primary_quality['max_level']}",
-        file=sys.stderr,
+        f"count={primary_quality['company_count']} max_level={primary_quality['max_level']}"
     )
 
     if not primary_quality["needs_rescue"]:
@@ -708,7 +713,7 @@ def analyze_chart1_with_quality(image_path: Path) -> tuple[list[dict], dict]:
 
     try:
         company_names = _analyze_chart1_company_names(image_path)
-        print(f"[Chart1] rescue company list count={len(company_names)}", file=sys.stderr)
+        _log_info(f"[Chart1] rescue company list count={len(company_names)}")
     except Exception as exc:
         primary_quality["notes"] = list(primary_quality.get("notes", [])) + [f"補救公司清單失敗：{exc}"]
         return primary_nodes, primary_quality
@@ -720,10 +725,9 @@ def analyze_chart1_with_quality(image_path: Path) -> tuple[list[dict], dict]:
             rescue_raw = _call_qwen_vl(image_path, _build_chart1_relation_prompt(company_names))
             rescued_nodes = _parse_chart1_nodes(rescue_raw)
             rescued_quality = _evaluate_chart1_quality(rescued_nodes)
-            print(
+            _log_info(
                 f"[Chart1] rescue quality={rescued_quality['score']} "
-                f"count={rescued_quality['company_count']} max_level={rescued_quality['max_level']}",
-                file=sys.stderr,
+                f"count={rescued_quality['company_count']} max_level={rescued_quality['max_level']}"
             )
         except Exception as exc:
             primary_quality["notes"] = list(primary_quality.get("notes", [])) + [f"補救層級重建失敗：{exc}"]
@@ -757,7 +761,6 @@ def _split_image_into_chunks(image_path: Path) -> list[Path]:
     若圖片不夠長或 PIL 未安裝，回傳原路徑的單元素清單。
     """
     import io
-    import sys
     import tempfile
 
     try:
@@ -797,10 +800,9 @@ def _split_image_into_chunks(image_path: Path) -> list[Path]:
         y += step
         idx += 1
 
-    print(
+    _log_info(
         f"[Chart2] 圖高 {h}px，切成 {len(chunks)} 塊"
-        f"（每塊 {CHUNK_HEIGHT_PX}px，重疊 {CHUNK_OVERLAP_PX}px）",
-        file=sys.stderr,
+        f"（每塊 {CHUNK_HEIGHT_PX}px，重疊 {CHUNK_OVERLAP_PX}px）"
     )
     return chunks
 
@@ -879,8 +881,6 @@ def analyze_chart2(
 ) -> list[dict]:
     """解析圖二（集團概覽），回傳公司屬性清單。超長截圖自動切塊處理。"""
     import shutil
-    import sys
-
     chunk_paths = _split_image_into_chunks(image_path)
     is_chunked = not (len(chunk_paths) == 1 and chunk_paths[0] == image_path)
     tmp_dir = chunk_paths[0].parent if is_chunked else None
@@ -909,7 +909,7 @@ def analyze_chart2(
                 raise InterruptedError("task_cancelled")
             try:
                 rows = _analyze_chart2_single(chunk_path)
-                print(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 辨識到 {len(rows)} 家", file=sys.stderr)
+                _log_info(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 辨識到 {len(rows)} 家")
                 all_rows.extend(rows)
                 if progress_callback:
                     progress_callback({
@@ -921,7 +921,7 @@ def analyze_chart2(
                         "failed_chunks": failed_chunks,
                     })
             except RuntimeError as exc:
-                print(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 失敗，跳過：{exc}", file=sys.stderr)
+                _log_warn(f"[Chart2] 塊 {i + 1}/{len(chunk_paths)} 失敗，跳過：{exc}")
                 failed_chunks.append({"chunk": i + 1, "message": str(exc)[:300]})
                 if progress_callback:
                     progress_callback({
@@ -938,7 +938,7 @@ def analyze_chart2(
 
         if is_chunked:
             deduped = _dedup_merge_chart2(all_rows)
-            print(f"[Chart2] 合併後共 {len(deduped)} 家（原始 {len(all_rows)} 筆）", file=sys.stderr)
+            _log_info(f"[Chart2] 合併後共 {len(deduped)} 家（原始 {len(all_rows)} 筆）")
             if progress_callback:
                 progress_callback({
                     "status": "partial_done" if failed_chunks else "done",

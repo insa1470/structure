@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -43,7 +45,20 @@ class JsonTaskStore:
         task["updated_at"] = now_iso()
         path = self.task_path(task["id"])
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = json.dumps(task, ensure_ascii=False, indent=2)
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=".task.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_name = f.name
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
 
     def ensure_ready(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -75,7 +90,20 @@ class JsonOcrTestStore:
     def save_test(self, record: dict) -> None:
         self.ensure_ready()
         path = self.data_dir / f"{record['id']}.json"
-        path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = json.dumps(record, ensure_ascii=False, indent=2)
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=".ocr.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_name = f.name
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
 
     def list_tests(self, limit: int = 50) -> list[dict]:
         self.ensure_ready()
