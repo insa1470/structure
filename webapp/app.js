@@ -28,6 +28,8 @@ const state = {
   chartPanX: 0,
   chartPanY: 0,
   printOrientation: "landscape",
+  printTitle: "",
+  printFitToPage: true,
   activityEvents: [],
   activityKeys: new Set(),
   selectedResultNodeIds: new Set(),
@@ -968,6 +970,9 @@ function hydrateTask(task) {
   state.reviewRows = (task.review_rows || []).filter((row) => row.issue_type !== "chart2_only");
   state.candidateRows = task.candidate_rows || [];
   state.chartShareholders = task.chart_shareholders || [];
+  state.printTitle = task.chart_print_settings?.title || "";
+  state.printFitToPage = task.chart_print_settings?.fit_to_page !== false;
+  state.printOrientation = task.chart_print_settings?.orientation || state.printOrientation;
   state.reviewDecisions = task.review_decisions || {};
   state.candidateDecisions = task.candidate_decisions || {};
   state.selectedReviewIndex = 0;
@@ -999,6 +1004,11 @@ function applyTaskRefresh(payload) {
   if (payload.review_rows) state.reviewRows = payload.review_rows.filter((row) => row.issue_type !== "chart2_only");
   if (payload.candidate_rows) state.candidateRows = payload.candidate_rows;
   if (payload.chart_shareholders) state.chartShareholders = payload.chart_shareholders;
+  if (payload.chart_print_settings) {
+    state.printTitle = payload.chart_print_settings.title || "";
+    state.printFitToPage = payload.chart_print_settings.fit_to_page !== false;
+    state.printOrientation = payload.chart_print_settings.orientation || state.printOrientation;
+  }
   state.selectedResultNodeIds = new Set(
     [...state.selectedResultNodeIds].filter((nodeId) => state.masterRows.some((row) => row.node_id === nodeId))
   );
@@ -2778,6 +2788,10 @@ function getChartTitle() {
   return base.includes("股權架構圖") ? base : `${base}股權架構圖`;
 }
 
+function getPrintTitle() {
+  return (state.printTitle || getChartTitle()).trim();
+}
+
 function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
   const validRows = rows.filter((r) => r.node_id);
   const ids = new Set(validRows.map((r) => r.node_id));
@@ -3480,7 +3494,7 @@ function renderChart() {
   syncChartModeButtons();
   const isList = state.chartView === "list";
   const title = getChartTitle();
-  if (elements.printChartTitle) elements.printChartTitle.textContent = title;
+  if (elements.printChartTitle) elements.printChartTitle.textContent = getPrintTitle();
 
   elements.chartLayoutBadge.textContent = isList
     ? `${total} 家公司 · 條列層級 · ${getChartDepthLabel()}`
@@ -3659,14 +3673,19 @@ function openPrintSettings() {
   const modal = document.createElement("div");
   modal.id = "printSettingsModal";
   modal.className = "modal-backdrop";
+  const currentTitle = svgEscape(getPrintTitle());
   modal.innerHTML = `
     <div class="print-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="printSettingsTitle">
       <div class="section-head">
         <div>
           <p class="eyebrow">列印設定</p>
-          <h3 id="printSettingsTitle">選擇紙張方向</h3>
+          <h3 id="printSettingsTitle">正式列印版面</h3>
         </div>
       </div>
+      <label class="field print-title-field">
+        <span>表頭</span>
+        <input id="printTitleInput" type="text" value="${currentTitle}" placeholder="輸入列印表頭" />
+      </label>
       <div class="print-orientation-grid">
         <button class="print-orientation-btn" data-print-orientation="portrait" type="button">
           <span class="print-paper portrait"></span>
@@ -3677,6 +3696,13 @@ function openPrintSettings() {
           <strong>橫式列印</strong>
         </button>
       </div>
+      <label class="print-fit-toggle">
+        <input id="printFitToPageInput" type="checkbox" ${state.printFitToPage ? "checked" : ""} />
+        <span>
+          <strong>自動縮到一頁</strong>
+          <small>系統會依紙張方向自動縮放並置中，避免手動排版。</small>
+        </span>
+      </label>
       <div class="detail-actions">
         <button class="ghost-btn" id="printSettingsCancel" type="button">取消</button>
       </div>
@@ -3685,7 +3711,12 @@ function openPrintSettings() {
   document.body.appendChild(modal);
   modal.querySelectorAll("[data-print-orientation]").forEach((button) => {
     button.classList.toggle("active", button.dataset.printOrientation === state.printOrientation);
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
+      const titleInput = modal.querySelector("#printTitleInput");
+      const fitInput = modal.querySelector("#printFitToPageInput");
+      state.printTitle = titleInput?.value.trim() || getChartTitle();
+      state.printFitToPage = Boolean(fitInput?.checked);
+      await savePrintSettings(button.dataset.printOrientation).catch((error) => console.error("print settings save failed", error));
       modal.remove();
       printChart(button.dataset.printOrientation);
     });
@@ -3696,8 +3727,19 @@ function openPrintSettings() {
   });
 }
 
+async function savePrintSettings(orientation = state.printOrientation) {
+  if (!state.taskId) return;
+  const payload = await apiPost(`/api/tasks/${state.taskId}/chart-print-settings`, {
+    title: state.printTitle || getChartTitle(),
+    orientation,
+    fit_to_page: state.printFitToPage,
+  });
+  applyTaskRefresh(payload);
+}
+
 function printChart(orientation = state.printOrientation) {
   state.printOrientation = orientation === "portrait" ? "portrait" : "landscape";
+  if (elements.printChartTitle) elements.printChartTitle.textContent = getPrintTitle();
   document.body.classList.toggle("print-portrait", state.printOrientation === "portrait");
   document.body.classList.toggle("print-landscape", state.printOrientation !== "portrait");
   preparePrintLayout();
@@ -3712,16 +3754,16 @@ function printChart(orientation = state.printOrientation) {
 function preparePrintLayout() {
   const container = elements.chartContainer;
   if (!container) return;
-  const svg = container.querySelector(".elk-svg");
-  if (!svg) return;
-  const width = Number(svg.getAttribute("width")) || svg.viewBox?.baseVal?.width || 1;
-  const height = Number(svg.getAttribute("height")) || svg.viewBox?.baseVal?.height || 1;
   const maxWidthMm = state.printOrientation === "portrait" ? 180 : 267;
   const maxHeightMm = state.printOrientation === "portrait" ? 235 : 148;
-  const scale = Math.min(maxWidthMm / width, maxHeightMm / height, 1);
-  const printWidth = Math.max(60, Math.min(maxWidthMm, width * scale));
-  svg.style.setProperty("--print-svg-width", `${printWidth.toFixed(2)}mm`);
-  svg.style.setProperty("--print-svg-height", "auto");
+  container.querySelectorAll(".elk-svg").forEach((svg) => {
+    const width = Number(svg.getAttribute("width")) || svg.viewBox?.baseVal?.width || 1;
+    const height = Number(svg.getAttribute("height")) || svg.viewBox?.baseVal?.height || 1;
+    const scale = state.printFitToPage ? Math.min(maxWidthMm / width, maxHeightMm / height, 1) : Math.min(maxWidthMm / width, 1);
+    const printWidth = Math.max(60, Math.min(maxWidthMm, width * scale));
+    svg.style.setProperty("--print-svg-width", `${printWidth.toFixed(2)}mm`);
+    svg.style.setProperty("--print-svg-height", "auto");
+  });
 }
 
 function bindEvents() {

@@ -1249,6 +1249,34 @@ def update_chart_shareholders(task_id: str):
     })
 
 
+@app.route("/api/tasks/<task_id>/chart-print-settings", methods=["POST"])
+def update_chart_print_settings(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    title = str(payload.get("title") or "").strip()
+    orientation = str(payload.get("orientation") or "landscape").strip()
+    if orientation not in {"portrait", "landscape"}:
+        orientation = "landscape"
+    task["chart_print_settings"] = {
+        "title": title,
+        "orientation": orientation,
+        "fit_to_page": bool(payload.get("fit_to_page", True)),
+    }
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "chart_print_settings": task["chart_print_settings"],
+        "chart_shareholders": task.get("chart_shareholders", []),
+        "master_rows": task.get("master_rows", []),
+        "review_rows": task.get("review_rows", []),
+        "candidate_rows": task.get("candidate_rows", []),
+        "summary": task.get("summary", {}),
+        "graph": task.get("graph", {}),
+    })
+
+
 @app.route("/api/candidate-decision", methods=["POST"])
 def candidate_decision():
     payload = request.get_json(silent=True) or {}
