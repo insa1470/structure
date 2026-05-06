@@ -2747,6 +2747,23 @@ function renderListTree() {
 
   let rows = [];
 
+  function escapeAttr(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("\"", "&quot;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  function companyLinkByName(name = "") {
+    const text = String(name || "").trim();
+    if (!text) return "";
+    if (/[協协]創數據技術股份有限公司/.test(text)) return "https://www.sharetronic.com/";
+    if (/追覓|追觅|DREAME|Dreame/i.test(text)) return "https://www.dreame.tech/";
+    if (/華碩|华硕|ASUS/i.test(text)) return "https://www.asus.com/";
+    return `https://www.qcc.com/web/search?key=${encodeURIComponent(text)}`;
+  }
+
   function walk(node, prefixLines, isLast) {
     const level = Number(node.chart1_level) || 0;
     const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
@@ -2759,6 +2776,7 @@ function renderListTree() {
 
     // 資訊欄
     const name = node.canonical_name || node.chart1_name || "—";
+    const link = (level <= 1) ? companyLinkByName(name) : "";
     const attrs = [
       node.legal_representative ? `法代：${node.legal_representative}` : "",
       node.registered_capital   ? `資本：${formatCapital(node.registered_capital)}` : "",
@@ -2768,7 +2786,7 @@ function renderListTree() {
       node.chart_note            ? `備註：${node.chart_note}` : "",
     ].filter(Boolean).join("｜");
 
-    rows.push({ prefix, name, attrs, color, uncertain, isRoot, level });
+    rows.push({ prefix, name, attrs, color, uncertain, isRoot, level, link });
 
     if (node.children?.length) {
       const childBase = isRoot ? "" : (isLast ? "    " : "│   ");
@@ -2786,7 +2804,11 @@ function renderListTree() {
       ${rows.map((r) => `
         <div class="lt-row ${r.uncertain ? "lt-uncertain" : ""} ${r.isRoot ? "lt-root" : ""}">
           <span class="lt-prefix">${r.isRoot ? "" : r.prefix}</span>
-          <span class="lt-name" style="color:${r.color}">${r.name}</span>
+          ${
+            r.link
+              ? `<a class="lt-name" style="color:${r.color}" href="${escapeAttr(r.link)}" target="_blank" rel="noopener noreferrer">${svgEscape(r.name)}</a>`
+              : `<span class="lt-name" style="color:${r.color}">${svgEscape(r.name)}</span>`
+          }
           ${r.uncertain ? '<span class="lt-warn">⚠ 待確認</span>' : ""}
           ${r.attrs ? `<span class="lt-attrs">${r.attrs}</span>` : ""}
         </div>
