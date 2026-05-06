@@ -31,6 +31,8 @@ const state = {
   activityEvents: [],
   activityKeys: new Set(),
   selectedResultNodeIds: new Set(),
+  undoStack: [],
+  redoStack: [],
 };
 
 const elements = {
@@ -61,6 +63,8 @@ const elements = {
   statusFilter: document.getElementById("statusFilter"),
   resultTableTitle: document.getElementById("resultTableTitle"),
   resultTableBody: document.getElementById("resultTableBody"),
+  undoBtn: document.getElementById("undoBtn"),
+  redoBtn: document.getElementById("redoBtn"),
   resultSelectAll: document.getElementById("resultSelectAll"),
   batchFieldSelect: document.getElementById("batchFieldSelect"),
   batchValueInput: document.getElementById("batchValueInput"),
@@ -912,6 +916,8 @@ function hydrateTask(task) {
   state.selectedReviewIndex = 0;
   state.selectedCandidateIndex = 0;
   state.selectedResultNodeIds = new Set();
+  state.undoStack = [];
+  state.redoStack = [];
   state.started = true;
   updateTaskBadge();
   showAnalysisBanner(task);
@@ -921,6 +927,7 @@ function hydrateTask(task) {
   renderCandidateList();
   renderCandidateDetail();
   renderResults();
+  updateUndoRedoButtons();
 }
 
 function applyTaskRefresh(payload) {
@@ -939,6 +946,52 @@ function applyTaskRefresh(payload) {
   renderCandidateList();
   renderCandidateDetail();
   renderResults();
+  updateUndoRedoButtons();
+}
+
+function snapshotTaskState() {
+  return {
+    master_rows: JSON.parse(JSON.stringify(state.masterRows || [])),
+    review_rows: JSON.parse(JSON.stringify(state.reviewRows || [])),
+    candidate_rows: JSON.parse(JSON.stringify(state.candidateRows || [])),
+    review_decisions: JSON.parse(JSON.stringify(state.reviewDecisions || {})),
+    candidate_decisions: JSON.parse(JSON.stringify(state.candidateDecisions || {})),
+  };
+}
+
+function pushUndoSnapshot(snapshot) {
+  state.undoStack.push(snapshot);
+  if (state.undoStack.length > 20) state.undoStack.shift();
+  state.redoStack = [];
+  updateUndoRedoButtons();
+}
+
+function updateUndoRedoButtons() {
+  if (elements.undoBtn) elements.undoBtn.disabled = !state.taskId || state.undoStack.length === 0;
+  if (elements.redoBtn) elements.redoBtn.disabled = !state.taskId || state.redoStack.length === 0;
+}
+
+async function restoreTaskSnapshot(snapshot) {
+  const payload = await apiPost(`/api/tasks/${state.taskId}/replace-state`, snapshot);
+  applyTaskRefresh(payload);
+}
+
+async function undoTaskEdit() {
+  if (!state.taskId || !state.undoStack.length) return;
+  const current = snapshotTaskState();
+  const target = state.undoStack.pop();
+  state.redoStack.push(current);
+  await restoreTaskSnapshot(target);
+  updateUndoRedoButtons();
+}
+
+async function redoTaskEdit() {
+  if (!state.taskId || !state.redoStack.length) return;
+  const current = snapshotTaskState();
+  const target = state.redoStack.pop();
+  state.undoStack.push(current);
+  await restoreTaskSnapshot(target);
+  updateUndoRedoButtons();
 }
 
 async function loadTaskCenter() {
@@ -1300,6 +1353,7 @@ function isAncestor(candidateAncestorId, nodeId) {
 }
 
 async function reparentNode(nodeId, newParentId) {
+  const before = snapshotTaskState();
   const byId = {};
   state.masterRows.forEach((r) => { byId[r.node_id] = r; });
   const node = byId[nodeId];
@@ -1347,6 +1401,7 @@ async function reparentNode(nodeId, newParentId) {
       subsidiary_level_label: r.subsidiary_level_label,
     }).catch((err) => console.error("reparent save failed", err))
   ));
+  pushUndoSnapshot(before);
 }
 
 // ── 樹狀結構建立 ─────────────────────────────────────────────
@@ -1413,12 +1468,14 @@ async function addCompanyToResults() {
   elements.saveAddCompanyBtn.disabled = true;
   elements.saveAddCompanyBtn.textContent = "加入中...";
   try {
+    const before = snapshotTaskState();
     const result = await apiPost(`/api/tasks/${state.taskId}/add-row`, {
       canonical_name: name,
       chart1_parent: elements.addCompanyParent?.value || "",
       actual_controller_share: elements.addCompanyShare?.value.trim() || "",
     });
     applyTaskRefresh(result);
+    pushUndoSnapshot(before);
     setAddCompanyPanel(false);
     setView("results");
     document.querySelector(`tr[data-node-id="${result.added_node_id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1457,12 +1514,14 @@ function attachNameEdit(td, row) {
       nameSpan.contentEditable = "false";
       const newVal = nameSpan.textContent.trim();
       if (save && newVal && newVal !== curName) {
+        const before = snapshotTaskState();
         row.canonical_name = newVal;
         try {
           const result = await apiPost(`/api/tasks/${state.taskId}/update-row`, {
             node_id: row.node_id, canonical_name: newVal,
           });
           applyTaskRefresh(result);
+          pushUndoSnapshot(before);
         } catch (err) {
           console.error(err);
           nameSpan.textContent = curName;
@@ -1472,9 +1531,9 @@ function attachNameEdit(td, row) {
         nameSpan.textContent = curName;
       }
     };
-    nameSpan.addEventListener("blur", () => finish(true), { once: true });
+    nameSpan.addEventListener("blur", () => finish(false), { once: true });
     nameSpan.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter")  { ev.preventDefault(); nameSpan.blur(); }
+      if (ev.key === "Enter")  { ev.preventDefault(); finish(true); }
       if (ev.key === "Escape") { finish(false); }
     }, { once: true });
   });
@@ -1514,6 +1573,7 @@ function makeEditable(cell, row, field, displayValue) {
       if (newRaw === rawOriginal) return; // 沒有改變
 
       try {
+        const before = snapshotTaskState();
         let result;
         if (CASCADE_FIELDS.has(field) && rawOriginal) {
           // 連動：同名全部更新
@@ -1530,6 +1590,7 @@ function makeEditable(cell, row, field, displayValue) {
           });
         }
         applyTaskRefresh(result);
+        pushUndoSnapshot(before);
         // 連動時重新渲染整張表
         if (CASCADE_FIELDS.has(field)) renderResults();
       } catch (e) {
@@ -1538,9 +1599,12 @@ function makeEditable(cell, row, field, displayValue) {
       }
     };
 
-    input.addEventListener("blur", save);
+    input.addEventListener("blur", () => {
+      const display = field === "registered_capital" ? formatCapital(rawOriginal) : rawOriginal;
+      cell.textContent = display || (BLANK_DISPLAY_FIELDS.has(field) ? "" : "—");
+    });
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+      if (e.key === "Enter") { e.preventDefault(); save(); }
       if (e.key === "Escape") { cell.textContent = displayValue || "—"; }
     });
   });
@@ -1633,8 +1697,10 @@ function renderResults() {
       e.stopPropagation();
       if (!confirm(`確定要從主表移除「${row.canonical_name || row.chart1_name}」嗎？`)) return;
       try {
+        const before = snapshotTaskState();
         const result = await apiPost(`/api/tasks/${state.taskId}/delete-row`, { node_id: row.node_id });
         applyTaskRefresh(result);
+        pushUndoSnapshot(before);
       } catch (err) { console.error("刪除失敗", err); }
     });
     delTd.appendChild(delBtn);
@@ -3230,6 +3296,12 @@ function bindEvents() {
   elements.taskStatusSelect?.addEventListener("change", () => { loadTaskCenter().catch((e) => console.error(e)); });
   elements.batchApplyBtn?.addEventListener("click", () => {
     runBatchUpdate().catch((error) => alert(`批次更新失敗：${error.message}`));
+  });
+  elements.undoBtn?.addEventListener("click", () => {
+    undoTaskEdit().catch((error) => alert(`回復失敗：${error.message}`));
+  });
+  elements.redoBtn?.addEventListener("click", () => {
+    redoTaskEdit().catch((error) => alert(`重做失敗：${error.message}`));
   });
   elements.addCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(true));
   elements.cancelAddCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(false));

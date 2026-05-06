@@ -833,6 +833,40 @@ def update_row(task_id: str):
     })
 
 
+@app.route("/api/tasks/<task_id>/replace-state", methods=["POST"])
+def replace_task_state(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    master_rows = payload.get("master_rows")
+    if not isinstance(master_rows, list):
+        return jsonify({"error": "master_rows_required"}), 400
+
+    task["master_rows"] = master_rows
+    if isinstance(payload.get("review_rows"), list):
+        task["review_rows"] = payload.get("review_rows")
+    if isinstance(payload.get("candidate_rows"), list):
+        task["candidate_rows"] = payload.get("candidate_rows")
+    if isinstance(payload.get("review_decisions"), dict):
+        task["review_decisions"] = payload.get("review_decisions")
+    if isinstance(payload.get("candidate_decisions"), dict):
+        task["candidate_decisions"] = payload.get("candidate_decisions")
+
+    rebuild_task_state(task)
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "review_decisions": task["review_decisions"],
+        "candidate_decisions": task["candidate_decisions"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
+
+
 @app.route("/api/tasks/<task_id>/batch-update", methods=["POST"])
 def batch_update_rows(task_id: str):
     task = read_task(task_id)
