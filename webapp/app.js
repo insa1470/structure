@@ -33,6 +33,8 @@ const state = {
   selectedResultNodeIds: new Set(),
   undoStack: [],
   redoStack: [],
+  hasUnsavedEdits: false,
+  autoDraftTimer: null,
 };
 
 const elements = {
@@ -65,6 +67,9 @@ const elements = {
   resultTableBody: document.getElementById("resultTableBody"),
   undoBtn: document.getElementById("undoBtn"),
   redoBtn: document.getElementById("redoBtn"),
+  saveDraftBtn: document.getElementById("saveDraftBtn"),
+  restoreDraftBtn: document.getElementById("restoreDraftBtn"),
+  draftStatusText: document.getElementById("draftStatusText"),
   resultSelectAll: document.getElementById("resultSelectAll"),
   batchFieldSelect: document.getElementById("batchFieldSelect"),
   batchValueInput: document.getElementById("batchValueInput"),
@@ -918,6 +923,11 @@ function hydrateTask(task) {
   state.selectedResultNodeIds = new Set();
   state.undoStack = [];
   state.redoStack = [];
+  state.hasUnsavedEdits = false;
+  if (state.autoDraftTimer) clearTimeout(state.autoDraftTimer);
+  const draftSavedAt = task?.draft?.saved_at;
+  if (draftSavedAt) setDraftStatus(`草稿：${String(draftSavedAt).replace("T", " ").slice(0, 19)}`);
+  else setDraftStatus("尚未暫存");
   state.started = true;
   updateTaskBadge();
   showAnalysisBanner(task);
@@ -963,6 +973,7 @@ function pushUndoSnapshot(snapshot) {
   state.undoStack.push(snapshot);
   if (state.undoStack.length > 20) state.undoStack.shift();
   state.redoStack = [];
+  markTaskDirty();
   updateUndoRedoButtons();
 }
 
@@ -992,6 +1003,39 @@ async function redoTaskEdit() {
   state.undoStack.push(current);
   await restoreTaskSnapshot(target);
   updateUndoRedoButtons();
+}
+
+function setDraftStatus(text, tone = "") {
+  if (!elements.draftStatusText) return;
+  elements.draftStatusText.textContent = text;
+  elements.draftStatusText.className = `topbar-status ${tone}`.trim();
+}
+
+function markTaskDirty() {
+  state.hasUnsavedEdits = true;
+  setDraftStatus("尚有未暫存變更", "status-warn");
+  if (state.autoDraftTimer) clearTimeout(state.autoDraftTimer);
+  if (!state.taskId) return;
+  state.autoDraftTimer = setTimeout(() => {
+    saveDraftSnapshot(true).catch((error) => console.error("auto draft save failed", error));
+  }, 1500);
+}
+
+async function saveDraftSnapshot(silent = false) {
+  if (!state.taskId) return;
+  const payload = { state: snapshotTaskState() };
+  const result = await apiPost(`/api/tasks/${state.taskId}/save-draft`, payload);
+  state.hasUnsavedEdits = false;
+  setDraftStatus(`已暫存：${(result.saved_at || "").replace("T", " ").slice(0, 19)}`, "status-ok");
+  if (!silent) alert("草稿已暫存。");
+}
+
+async function restoreDraftSnapshot() {
+  if (!state.taskId) return;
+  const payload = await apiPost(`/api/tasks/${state.taskId}/restore-draft`, {});
+  applyTaskRefresh(payload);
+  state.hasUnsavedEdits = false;
+  setDraftStatus("已還原草稿", "status-ok");
 }
 
 async function loadTaskCenter() {
@@ -1404,6 +1448,56 @@ async function reparentNode(nodeId, newParentId) {
   pushUndoSnapshot(before);
 }
 
+function normalizeSiblingOrder() {
+  const groups = new Map();
+  state.masterRows.forEach((row) => {
+    const key = row.chart1_parent || "__root__";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  });
+  groups.forEach((rows) => {
+    rows
+      .sort((a, b) => Number(a.sort_index || 0) - Number(b.sort_index || 0))
+      .forEach((row, idx) => { row.sort_index = idx + 1; });
+  });
+}
+
+async function reorderSiblingNode(nodeId, targetId, zone) {
+  const before = snapshotTaskState();
+  const byId = {};
+  state.masterRows.forEach((r) => { byId[r.node_id] = r; });
+  const node = byId[nodeId];
+  const target = byId[targetId];
+  if (!node || !target) return;
+
+  const parentId = target.chart1_parent || "";
+  node.chart1_parent = parentId;
+  node.chart1_parent_name = target.chart1_parent_name || "";
+  node.chart1_level = target.chart1_level;
+  node.subsidiary_level_label = target.subsidiary_level_label;
+
+  const siblings = state.masterRows
+    .filter((row) => (row.chart1_parent || "") === parentId && row.node_id !== nodeId)
+    .sort((a, b) => Number(a.sort_index || 0) - Number(b.sort_index || 0));
+  const targetIndex = siblings.findIndex((row) => row.node_id === targetId);
+  const insertIndex = zone === "top" ? targetIndex : targetIndex + 1;
+  siblings.splice(Math.max(insertIndex, 0), 0, node);
+  siblings.forEach((row, idx) => { row.sort_index = idx + 1; });
+  normalizeSiblingOrder();
+  renderResults();
+
+  const payload = {
+    master_rows: JSON.parse(JSON.stringify(state.masterRows)),
+    review_rows: JSON.parse(JSON.stringify(state.reviewRows)),
+    candidate_rows: JSON.parse(JSON.stringify(state.candidateRows)),
+    review_decisions: JSON.parse(JSON.stringify(state.reviewDecisions)),
+    candidate_decisions: JSON.parse(JSON.stringify(state.candidateDecisions)),
+  };
+  const result = await apiPost(`/api/tasks/${state.taskId}/replace-state`, payload);
+  applyTaskRefresh(result);
+  pushUndoSnapshot(before);
+}
+
 // ── 樹狀結構建立 ─────────────────────────────────────────────
 function buildTree(rows) {
   const byId = {};
@@ -1414,6 +1508,10 @@ function buildTree(rows) {
     if (parent) parent.children.push(byId[r.node_id]);
     else roots.push(byId[r.node_id]);
   });
+  Object.values(byId).forEach((node) => {
+    node.children.sort((a, b) => Number(a.sort_index || 0) - Number(b.sort_index || 0));
+  });
+  roots.sort((a, b) => Number(a.sort_index || 0) - Number(b.sort_index || 0));
   return roots;
 }
 
@@ -1708,6 +1806,7 @@ function renderResults() {
 
     // ── 拖曳事件（整行） ────────────────────────────────────
     tr.draggable = true;
+    let dropZone = "middle";
     tr.addEventListener("dragstart", (e) => {
       _dragNodeId = row.node_id;
       e.dataTransfer.effectAllowed = "move";
@@ -1731,21 +1830,39 @@ function renderResults() {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       document.querySelectorAll(".drag-target").forEach((el) => el.classList.remove("drag-target"));
+      tr.classList.remove("drag-insert-top", "drag-insert-bottom");
       tr.classList.add("drag-target");
+      const rect = tr.getBoundingClientRect();
+      const ratio = (e.clientY - rect.top) / Math.max(rect.height, 1);
+      if (ratio < 0.25) dropZone = "top";
+      else if (ratio > 0.75) dropZone = "bottom";
+      else dropZone = "middle";
+      if (dropZone === "top") tr.classList.add("drag-insert-top");
+      if (dropZone === "bottom") tr.classList.add("drag-insert-bottom");
       let tip = document.getElementById("drag-tooltip");
       if (!tip) { tip = document.createElement("div"); tip.id = "drag-tooltip"; document.body.appendChild(tip); }
-      tip.textContent = `↳ 放入「${row.canonical_name || row.chart1_name}」底下`;
+      tip.textContent = dropZone === "middle"
+        ? `↳ 放入「${row.canonical_name || row.chart1_name}」底下`
+        : `↕ 插入「${row.canonical_name || row.chart1_name}」${dropZone === "top" ? "上方" : "下方"}`;
       tip.style.left = e.clientX + "px";
       tip.style.top  = e.clientY + "px";
     });
-    tr.addEventListener("dragleave", (e) => { if (!tr.contains(e.relatedTarget)) tr.classList.remove("drag-target"); });
+    tr.addEventListener("dragleave", (e) => {
+      if (!tr.contains(e.relatedTarget)) {
+        tr.classList.remove("drag-target", "drag-insert-top", "drag-insert-bottom");
+      }
+    });
     tr.addEventListener("drop", async (e) => {
       e.preventDefault();
-      tr.classList.remove("drag-target");
+      tr.classList.remove("drag-target", "drag-insert-top", "drag-insert-bottom");
       document.getElementById("drag-tooltip")?.remove();
       const draggedId = e.dataTransfer.getData("text/plain");
       if (!draggedId || draggedId === row.node_id || isAncestor(draggedId, row.node_id)) return;
-      await reparentNode(draggedId, row.node_id);
+      if (dropZone === "middle") {
+        await reparentNode(draggedId, row.node_id);
+      } else {
+        await reorderSiblingNode(draggedId, row.node_id, dropZone);
+      }
       document.querySelector(`tr[data-node-id="${draggedId}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
 
@@ -3303,6 +3420,12 @@ function bindEvents() {
   elements.redoBtn?.addEventListener("click", () => {
     redoTaskEdit().catch((error) => alert(`重做失敗：${error.message}`));
   });
+  elements.saveDraftBtn?.addEventListener("click", () => {
+    saveDraftSnapshot(false).catch((error) => alert(`暫存失敗：${error.message}`));
+  });
+  elements.restoreDraftBtn?.addEventListener("click", () => {
+    restoreDraftSnapshot().catch((error) => alert(`還原草稿失敗：${error.message}`));
+  });
   elements.addCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(true));
   elements.cancelAddCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(false));
   elements.saveAddCompanyBtn?.addEventListener("click", addCompanyToResults);
@@ -3386,6 +3509,13 @@ setAdminUnlocked(false);
 renderActivityPanel();
 syncActivityPanelVisibility("upload");
 document.body.classList.add("print-landscape");
+updateUndoRedoButtons();
+
+window.addEventListener("beforeunload", (event) => {
+  if (!state.hasUnsavedEdits) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 
 // 頁面載入時靜默 ping 後端，提前喚醒 Railway（冷啟動可能需 10–30 秒）
 fetch(API_BASE + "/api/health").catch(() => {});

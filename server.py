@@ -185,6 +185,16 @@ def rebuild_task_state(task: dict) -> None:
     task["graph"] = _make_graph(task.get("master_rows", []))
 
 
+def _draft_payload_from_task(task: dict) -> dict:
+    return {
+        "master_rows": copy.deepcopy(task.get("master_rows", [])),
+        "review_rows": copy.deepcopy(task.get("review_rows", [])),
+        "candidate_rows": copy.deepcopy(task.get("candidate_rows", [])),
+        "review_decisions": copy.deepcopy(task.get("review_decisions", {})),
+        "candidate_decisions": copy.deepcopy(task.get("candidate_decisions", {})),
+    }
+
+
 def make_chart2_progress_saver(task: dict):
     def save_progress(progress: dict) -> None:
         task["status"] = "processing_chart2"
@@ -383,6 +393,56 @@ def get_task(task_id: str):
     if not task:
         return jsonify({"error": "task_not_found"}), 404
     return jsonify(task)
+
+
+@app.route("/api/tasks/<task_id>/save-draft", methods=["POST"])
+def save_task_draft(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    draft_state = payload.get("state") if isinstance(payload, dict) else None
+    if not isinstance(draft_state, dict):
+        draft_state = _draft_payload_from_task(task)
+    task["draft"] = {
+        "saved_at": now_iso(),
+        "state": draft_state,
+    }
+    save_task(task)
+    return jsonify({"ok": True, "saved_at": task["draft"]["saved_at"]})
+
+
+@app.route("/api/tasks/<task_id>/restore-draft", methods=["POST"])
+def restore_task_draft(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    draft = task.get("draft") or {}
+    state = draft.get("state") if isinstance(draft, dict) else None
+    if not isinstance(state, dict):
+        return jsonify({"error": "draft_not_found", "message": "目前沒有可還原的草稿。"}), 404
+    if isinstance(state.get("master_rows"), list):
+        task["master_rows"] = state["master_rows"]
+    if isinstance(state.get("review_rows"), list):
+        task["review_rows"] = state["review_rows"]
+    if isinstance(state.get("candidate_rows"), list):
+        task["candidate_rows"] = state["candidate_rows"]
+    if isinstance(state.get("review_decisions"), dict):
+        task["review_decisions"] = state["review_decisions"]
+    if isinstance(state.get("candidate_decisions"), dict):
+        task["candidate_decisions"] = state["candidate_decisions"]
+    rebuild_task_state(task)
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "review_decisions": task["review_decisions"],
+        "candidate_decisions": task["candidate_decisions"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
 
 
 @app.route("/api/tasks")
@@ -795,7 +855,7 @@ def update_row(task_id: str):
     editable = ["canonical_name", "legal_representative", "registered_capital",
                 "established_date", "actual_controller_share", "company_status",
                 "chart1_parent_name", "chart1_parent", "chart1_level",
-                "subsidiary_level_label", "role_label", "chart_note"]
+                "subsidiary_level_label", "role_label", "chart_note", "sort_index"]
 
     # 連動更新模式：同欄位相同原始值的列全部更新
     if payload.get("cascade") and payload.get("field") and "original_value" in payload:
@@ -980,6 +1040,7 @@ def add_row(task_id: str):
 
     parent_level = parse_level_value(parent_row.get("chart1_level")) if parent_row else None
     level = (parent_level + 1) if parent_level is not None else 0
+    sibling_count = sum(1 for row in task.get("master_rows", []) if (row.get("chart1_parent") or "") == (parent_row.get("node_id", "") if parent_row else ""))
     new_row = {
         "node_id": f"M{uuid.uuid4().hex[:6].upper()}",
         "chart1_name": name,
@@ -987,6 +1048,7 @@ def add_row(task_id: str):
         "chart1_level": level,
         "chart1_parent": parent_row.get("node_id", "") if parent_row else "",
         "chart1_parent_name": parent_row.get("canonical_name", "") or parent_row.get("chart1_name", "") if parent_row else "",
+        "sort_index": sibling_count + 1,
         "matched_chart2_name": "",
         "legal_representative": str(payload.get("legal_representative") or "").strip(),
         "established_date": str(payload.get("established_date") or "").strip(),
@@ -1092,6 +1154,7 @@ def candidate_decision():
             parent_level = parse_level_value(parent_row.get("chart1_level")) if parent_row else None
             level = (parent_level + 1) if parent_level is not None else parse_level_value(candidate.get("subsidiary_level_label")) or 0
             final_name = corrected_name or candidate.get("chart2_name") or candidate.get("company") or ""
+            sibling_count = sum(1 for row in task.get("master_rows", []) if (row.get("chart1_parent") or "") == (parent_row.get("node_id", "") if parent_row else ""))
             new_row = {
                 "node_id": f"A{uuid.uuid4().hex[:6].upper()}",
                 "chart1_name": final_name,
@@ -1099,6 +1162,7 @@ def candidate_decision():
                 "chart1_level": level,
                 "chart1_parent": parent_row.get("node_id", "") if parent_row else "",
                 "chart1_parent_name": parent_row.get("canonical_name", "") if parent_row else parent_name,
+                "sort_index": sibling_count + 1,
                 "matched_chart2_name": candidate.get("chart2_name", ""),
                 "legal_representative": candidate.get("legal_representative", ""),
                 "established_date": candidate.get("established_date", ""),

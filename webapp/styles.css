@@ -1786,6 +1786,14 @@ tr.drag-target td:first-child {
   border-left: 3px solid var(--primary);
 }
 
+tr.drag-insert-top td {
+  box-shadow: inset 0 3px 0 #635bff;
+}
+
+tr.drag-insert-bottom td {
+  box-shadow: inset 0 -3px 0 #635bff;
+}
+
 /* Drag tooltip */
 #drag-tooltip {
   position: fixed;
