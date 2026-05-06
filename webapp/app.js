@@ -75,6 +75,8 @@ const elements = {
   batchFieldSelect: document.getElementById("batchFieldSelect"),
   batchValueInput: document.getElementById("batchValueInput"),
   batchApplyBtn: document.getElementById("batchApplyBtn"),
+  batchDeleteBtn: document.getElementById("batchDeleteBtn"),
+  selectedRowsHint: document.getElementById("selectedRowsHint"),
   taskSearchInput: document.getElementById("taskSearchInput"),
   taskStatusSelect: document.getElementById("taskStatusSelect"),
   taskSearchBtn: document.getElementById("taskSearchBtn"),
@@ -1113,10 +1115,21 @@ function updateResultSelectAllState(rows) {
   if (!elements.resultSelectAll) return;
   if (!rows.length) {
     elements.resultSelectAll.checked = false;
+    elements.resultSelectAll.indeterminate = false;
+    updateSelectedRowsHint(0);
     return;
   }
   const selected = rows.filter((row) => state.selectedResultNodeIds.has(row.node_id)).length;
   elements.resultSelectAll.checked = selected > 0 && selected === rows.length;
+  elements.resultSelectAll.indeterminate = selected > 0 && selected < rows.length;
+  updateSelectedRowsHint(selected);
+}
+
+function updateSelectedRowsHint(selected = state.selectedResultNodeIds.size) {
+  if (!elements.selectedRowsHint) return;
+  elements.selectedRowsHint.textContent = selected ? `已勾選 ${selected} 間，可批次編輯或拖曳` : "尚未勾選";
+  if (elements.batchDeleteBtn) elements.batchDeleteBtn.disabled = !selected;
+  if (elements.batchApplyBtn) elements.batchApplyBtn.disabled = !selected;
 }
 
 async function runBatchUpdate() {
@@ -1127,8 +1140,24 @@ async function runBatchUpdate() {
   }
   const field = elements.batchFieldSelect?.value || "";
   const value = elements.batchValueInput?.value || "";
+  const before = snapshotTaskState();
   const payload = await apiPost(`/api/tasks/${state.taskId}/batch-update`, { node_ids: nodeIds, field, value });
   applyTaskRefresh(payload);
+  pushUndoSnapshot(before);
+}
+
+async function runBatchDelete() {
+  const nodeIds = [...state.selectedResultNodeIds];
+  if (!state.taskId || !nodeIds.length) {
+    alert("請先勾選至少一筆公司。");
+    return;
+  }
+  if (!confirm(`確定要刪除已勾選的 ${nodeIds.length} 間公司嗎？`)) return;
+  const before = snapshotTaskState();
+  const payload = await apiPost(`/api/tasks/${state.taskId}/batch-delete`, { node_ids: nodeIds });
+  state.selectedResultNodeIds = new Set();
+  applyTaskRefresh(payload);
+  pushUndoSnapshot(before);
 }
 
 function renderOverview(summary) {
@@ -1776,7 +1805,10 @@ function attachNameEdit(td, row) {
     range.collapse(false);
     sel.removeAllRanges();
     sel.addRange(range);
+    let finished = false;
     const finish = async (save) => {
+      if (finished) return;
+      finished = true;
       nameSpan.contentEditable = "false";
       const newVal = nameSpan.textContent.trim();
       if (save && newVal && newVal !== curName) {
@@ -1797,7 +1829,7 @@ function attachNameEdit(td, row) {
         nameSpan.textContent = curName;
       }
     };
-    nameSpan.addEventListener("blur", () => finish(false), { once: true });
+    nameSpan.addEventListener("blur", () => finish(true), { once: true });
     nameSpan.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter")  { ev.preventDefault(); finish(true); }
       if (ev.key === "Escape") { finish(false); }
@@ -1902,6 +1934,7 @@ function renderResults() {
     <th class="status-col">備註 ✏️</th>`;
   theadTr.innerHTML = headHtml;
   elements.resultSelectAll = document.getElementById("resultSelectAll");
+  updateSelectedRowsHint(rows.filter((row) => state.selectedResultNodeIds.has(row.node_id)).length);
   elements.resultSelectAll?.addEventListener("change", (event) => {
     if (event.target.checked) {
       rows.forEach((row) => state.selectedResultNodeIds.add(row.node_id));
@@ -2014,8 +2047,8 @@ function renderResults() {
       let tip = document.getElementById("drag-tooltip");
       if (!tip) { tip = document.createElement("div"); tip.id = "drag-tooltip"; document.body.appendChild(tip); }
       tip.textContent = dropZone === "middle"
-        ? `↳ 放入「${row.canonical_name || row.chart1_name}」底下${_dragNodeIds.length > 1 ? `（${_dragNodeIds.length} 間）` : ""}`
-        : `↕ 插入「${row.canonical_name || row.chart1_name}」${dropZone === "top" ? "上方" : "下方"}${_dragNodeIds.length > 1 ? `（${_dragNodeIds.length} 間）` : ""}`;
+        ? `↳ 移到「${row.canonical_name || row.chart1_name}」的下一個層級${_dragNodeIds.length > 1 ? `（${_dragNodeIds.length} 間）` : ""}`
+        : `↕ 插入為「${row.canonical_name || row.chart1_name}」${dropZone === "top" ? "上方同層級" : "下方同層級"}${_dragNodeIds.length > 1 ? `（${_dragNodeIds.length} 間）` : ""}`;
       tip.style.left = e.clientX + "px";
       tip.style.top  = e.clientY + "px";
     });
@@ -2727,6 +2760,15 @@ function edgeLabelPosition(edge) {
   return { x: (mid.x + next.x) / 2, y: (mid.y + next.y) / 2 };
 }
 
+function ratioPercentText(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const match = text.match(/-?\d+(?:\.\d+)?\s*%/);
+  if (match) return match[0].replace(/\s+/g, "");
+  const number = text.match(/-?\d+(?:\.\d+)?/);
+  return number ? `${number[0]}%` : text;
+}
+
 function renderBranchEdges(layout, profile) {
   const nodesById = {};
   (layout.children || []).forEach((node) => {
@@ -2832,10 +2874,11 @@ function renderRightBranchGroup(parent, childEdges, profile) {
 }
 
 function renderEdgeRatioLabel(x, y, ratio, profile) {
+  const label = ratioPercentText(ratio);
+  if (!label) return "";
   return `
     <g transform="translate(${x.toFixed(1)}, ${y.toFixed(1)})">
-      <rect x="-34" y="-13" width="68" height="23" rx="4" fill="#ffffff" stroke="#cbd5e1" />
-      <text text-anchor="middle" dominant-baseline="middle" font-size="${profile.edgeFont}" font-weight="800" fill="#1e293b">${svgEscape(ratio)}</text>
+      <text class="edge-ratio-label" text-anchor="middle" dominant-baseline="middle" font-size="${profile.edgeFont}" font-weight="800">${svgEscape(label)}</text>
     </g>`;
 }
 
@@ -3114,15 +3157,12 @@ function buildEChartsTree(rows) {
       // 持股比例顯示在連線上
       edgeLabel: r.actual_controller_share ? {
         show: true,
-        formatter: r.actual_controller_share,
+        formatter: ratioPercentText(r.actual_controller_share),
         fontSize: 12,
         fontWeight: "bold",
         color: "#1e293b",
-        backgroundColor: "#ffffff",
-        padding: [3, 7],
-        borderRadius: 4,
-        borderWidth: 1,
-        borderColor: "#cbd5e1",
+        textBorderColor: "#ffffff",
+        textBorderWidth: 3,
       } : undefined,
       children: r._children.map(toNode).filter(Boolean),
     };
@@ -3525,12 +3565,28 @@ function printChart(orientation = state.printOrientation) {
   state.printOrientation = orientation === "portrait" ? "portrait" : "landscape";
   document.body.classList.toggle("print-portrait", state.printOrientation === "portrait");
   document.body.classList.toggle("print-landscape", state.printOrientation !== "portrait");
+  preparePrintLayout();
   document.getElementById("dynamicPrintPageStyle")?.remove();
   const style = document.createElement("style");
   style.id = "dynamicPrintPageStyle";
   style.textContent = `@media print { @page { size: A4 ${state.printOrientation}; margin: 12mm 15mm; } }`;
   document.head.appendChild(style);
   window.print();
+}
+
+function preparePrintLayout() {
+  const container = elements.chartContainer;
+  if (!container) return;
+  const svg = container.querySelector(".elk-svg");
+  if (!svg) return;
+  const width = Number(svg.getAttribute("width")) || svg.viewBox?.baseVal?.width || 1;
+  const height = Number(svg.getAttribute("height")) || svg.viewBox?.baseVal?.height || 1;
+  const maxWidthMm = state.printOrientation === "portrait" ? 180 : 267;
+  const maxHeightMm = state.printOrientation === "portrait" ? 235 : 148;
+  const scale = Math.min(maxWidthMm / width, maxHeightMm / height, 1);
+  const printWidth = Math.max(60, Math.min(maxWidthMm, width * scale));
+  svg.style.setProperty("--print-svg-width", `${printWidth.toFixed(2)}mm`);
+  svg.style.setProperty("--print-svg-height", "auto");
 }
 
 function bindEvents() {
@@ -3629,6 +3685,9 @@ function bindEvents() {
   elements.taskStatusSelect?.addEventListener("change", () => { loadTaskCenter().catch((e) => console.error(e)); });
   elements.batchApplyBtn?.addEventListener("click", () => {
     runBatchUpdate().catch((error) => alert(`批次更新失敗：${error.message}`));
+  });
+  elements.batchDeleteBtn?.addEventListener("click", () => {
+    runBatchDelete().catch((error) => alert(`批次刪除失敗：${error.message}`));
   });
   elements.undoBtn?.addEventListener("click", () => {
     undoTaskEdit().catch((error) => alert(`回復失敗：${error.message}`));

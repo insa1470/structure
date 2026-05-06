@@ -309,6 +309,7 @@
               <label class="field">
                 <span>批次欄位</span>
                 <select id="batchFieldSelect">
+                  <option value="canonical_name">公司名稱</option>
                   <option value="legal_representative">法定代表人</option>
                   <option value="registered_capital">資本額</option>
                   <option value="established_date">成立日期</option>
@@ -322,6 +323,8 @@
                 <input id="batchValueInput" type="text" placeholder="輸入要套用的值" />
               </label>
               <button id="batchApplyBtn" class="ghost-btn" type="button">套用到勾選列</button>
+              <button id="batchDeleteBtn" class="ghost-btn danger-btn" type="button">刪除勾選列</button>
+              <span id="selectedRowsHint" class="selected-rows-hint">尚未勾選</span>
             </div>
             <div id="addCompanyPanel" class="add-company-panel">
               <label class="field">

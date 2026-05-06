@@ -1165,6 +1165,46 @@ def delete_row(task_id: str):
     })
 
 
+@app.route("/api/tasks/<task_id>/batch-delete", methods=["POST"])
+def batch_delete_rows(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    node_ids = payload.get("node_ids")
+    if not isinstance(node_ids, list) or not node_ids:
+        return jsonify({"error": "node_ids_required", "message": "請先勾選要刪除的公司。"}), 400
+
+    delete_ids = {str(node_id) for node_id in node_ids if str(node_id).strip()}
+    deleted = 0
+    kept_rows = []
+    for row in task.get("master_rows", []):
+        if str(row.get("node_id")) in delete_ids:
+            deleted += 1
+            continue
+        kept_rows.append(row)
+
+    for row in kept_rows:
+        if str(row.get("chart1_parent")) in delete_ids:
+            row["chart1_parent"] = ""
+            row["chart1_parent_name"] = ""
+            row["chart1_level"] = 0
+            row["subsidiary_level_label"] = level_label(0)
+
+    task["master_rows"] = kept_rows
+    rebuild_task_state(task)
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "deleted_count": deleted,
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
+
+
 @app.route("/api/candidate-decision", methods=["POST"])
 def candidate_decision():
     payload = request.get_json(silent=True) or {}

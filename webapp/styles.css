@@ -502,6 +502,27 @@ textarea {
   border-color: #c4cdd8;
 }
 
+.ghost-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.danger-btn {
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.danger-btn:hover {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.selected-rows-hint {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
 /* ── OCR test ───────────────────────────────────────────────────── */
 .ocr-test-layout {
   display: grid;
@@ -1295,6 +1316,14 @@ tbody tr.drag-insert-bottom td {
   color: #fff;
   font-size: 12px;
   pointer-events: none;
+}
+
+.edge-ratio-label {
+  fill: #1e293b;
+  stroke: #fff;
+  stroke-width: 3px;
+  paint-order: stroke fill;
+  stroke-linejoin: round;
 }
 
 .table-note {
@@ -2393,39 +2422,67 @@ tr:hover .row-del-btn {
     display: none !important;
   }
 
+  html,
+  body {
+    width: 100%;
+    min-height: 100%;
+    background: #fff !important;
+  }
+
   .shell { display: block; }
-  .main  { padding: 0; }
+  .main  {
+    display: block;
+    padding: 0;
+    background: #fff !important;
+  }
 
   #chart {
-    display: block !important;
+    display: grid !important;
+    grid-template-rows: auto 1fr;
+    align-items: center;
+    justify-items: center;
     padding: 0;
+    width: 100%;
+    min-height: calc(100vh - 1mm);
+    background: #fff !important;
   }
 
   .print-chart-title {
     display: block;
-    margin: 0 0 8mm;
+    margin: 0 0 7mm;
     color: #0f172a;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 800;
     text-align: center;
+    letter-spacing: 0;
   }
 
   .chart-container {
+    display: grid !important;
+    place-items: center;
+    width: 100%;
     border: none;
     box-shadow: none;
-    height: auto !important;
+    height: 100% !important;
     min-height: 0 !important;
     overflow: visible !important;
     border-radius: 0;
+    background: #fff !important;
   }
 
   .chart-panzoom-shell {
-    height: auto;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
     overflow: visible;
     cursor: default;
+    background: #fff !important;
   }
 
   .chart-panzoom-content {
+    display: grid;
+    place-items: center;
     width: auto;
     min-width: 0;
     transform: none !important;
@@ -2433,14 +2490,62 @@ tr:hover .row-del-btn {
 
   .chart-container-elk:not(.chart-container-paged) .elk-svg,
   .elk-page .elk-svg {
-    width: 100%;
-    max-height: 175mm;
-    height: auto;
+    display: block;
+    width: var(--print-svg-width, 100%);
+    height: var(--print-svg-height, auto);
+    max-width: 100%;
+    max-height: none;
+    margin: 0 auto;
+    background: #fff !important;
+    box-shadow: none;
   }
 
   .elk-svg {
     min-width: 0;
     min-height: 0;
+  }
+
+  .elk-svg > rect:first-of-type {
+    fill: #ffffff;
+  }
+
+  .print-landscape #chart {
+    min-height: 172mm;
+  }
+
+  .print-portrait #chart {
+    min-height: 259mm;
+  }
+
+  .elk-pages {
+    display: block;
+    width: 100%;
+  }
+
+  .elk-page {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    place-items: center;
+    min-height: 172mm;
+    page-break-after: always;
+    break-after: page;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: #fff !important;
+  }
+
+  .print-portrait .elk-page {
+    min-height: 259mm;
+  }
+
+  .elk-page-title {
+    margin: 0 0 6mm;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
   }
 
   .chart-container-list {
