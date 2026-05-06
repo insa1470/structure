@@ -1205,6 +1205,50 @@ def batch_delete_rows(task_id: str):
     })
 
 
+@app.route("/api/tasks/<task_id>/chart-shareholders", methods=["POST"])
+def update_chart_shareholders(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    rows = payload.get("chart_shareholders")
+    if not isinstance(rows, list):
+        return jsonify({"error": "chart_shareholders_required", "message": "請提供上層股東清單。"}), 400
+
+    valid_targets = {str(row.get("node_id")) for row in task.get("master_rows", []) if row.get("node_id")}
+    cleaned = []
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        target_node_id = str(row.get("target_node_id") or "").strip()
+        if not name or target_node_id not in valid_targets:
+            continue
+        holder_type = str(row.get("type") or "company").strip()
+        if holder_type not in {"company", "person"}:
+            holder_type = "company"
+        cleaned.append({
+            "id": str(row.get("id") or f"holder_{idx + 1}").strip(),
+            "name": name,
+            "type": holder_type,
+            "share": str(row.get("share") or "").strip(),
+            "target_node_id": target_node_id,
+            "note": str(row.get("note") or "").strip(),
+        })
+
+    task["chart_shareholders"] = cleaned
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "chart_shareholders": task["chart_shareholders"],
+        "master_rows": task.get("master_rows", []),
+        "review_rows": task.get("review_rows", []),
+        "candidate_rows": task.get("candidate_rows", []),
+        "summary": task.get("summary", {}),
+        "graph": task.get("graph", {}),
+    })
+
+
 @app.route("/api/candidate-decision", methods=["POST"])
 def candidate_decision():
     payload = request.get_json(silent=True) or {}

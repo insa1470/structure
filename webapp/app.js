@@ -31,6 +31,7 @@ const state = {
   activityEvents: [],
   activityKeys: new Set(),
   selectedResultNodeIds: new Set(),
+  chartShareholders: [],
   undoStack: [],
   redoStack: [],
   hasUnsavedEdits: false,
@@ -117,6 +118,12 @@ const elements = {
   exportPngBtn: document.getElementById("exportPngBtn"),
   exportHtmlBtn: document.getElementById("exportHtmlBtn"),
   printChartBtn: document.getElementById("printChartBtn"),
+  shareholderNameInput: document.getElementById("shareholderNameInput"),
+  shareholderTypeSelect: document.getElementById("shareholderTypeSelect"),
+  shareholderShareInput: document.getElementById("shareholderShareInput"),
+  shareholderTargetSelect: document.getElementById("shareholderTargetSelect"),
+  addShareholderBtn: document.getElementById("addShareholderBtn"),
+  shareholderList: document.getElementById("shareholderList"),
 };
 
 const pageTitles = {
@@ -222,6 +229,47 @@ function getChartRows() {
   const root = getRootRow();
   if (!root?.node_id) return levelRows;
   return levelRows.filter((row) => row.node_id !== root.node_id);
+}
+
+function getTopLevelCompanyRows() {
+  return state.masterRows.filter((row) => (Number(row.chart1_level) || 0) === 1);
+}
+
+function makeShareholderId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `sh_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function shareholderTypeText(type) {
+  return type === "person" ? "個人" : "公司";
+}
+
+function chartRowsWithShareholders(rows) {
+  if (!state.chartShareholders.length) return rows;
+  const byId = {};
+  rows.forEach((row) => { byId[row.node_id] = row; });
+  const extraRows = [];
+  state.chartShareholders.forEach((holder) => {
+    const target = byId[holder.target_node_id];
+    if (!target) return;
+    const targetLevel = Number(target.chart1_level) || 1;
+    extraRows.push({
+      node_id: `SH_${holder.id}`,
+      canonical_name: holder.name,
+      chart1_name: holder.name,
+      chart1_level: Math.max(0, targetLevel - 1),
+      chart1_parent: "",
+      actual_controller_share: "",
+      role_label: shareholderTypeText(holder.type),
+      chart_note: holder.note || "",
+      node_status: "enriched",
+      is_chart_shareholder: true,
+      shareholder_type: holder.type || "company",
+      shareholder_target: holder.target_node_id,
+      shareholder_share: holder.share || "",
+    });
+  });
+  return [...extraRows, ...rows];
 }
 
 function getChartDepthLabel() {
@@ -919,6 +967,7 @@ function hydrateTask(task) {
   state.masterRows = task.master_rows || [];
   state.reviewRows = (task.review_rows || []).filter((row) => row.issue_type !== "chart2_only");
   state.candidateRows = task.candidate_rows || [];
+  state.chartShareholders = task.chart_shareholders || [];
   state.reviewDecisions = task.review_decisions || {};
   state.candidateDecisions = task.candidate_decisions || {};
   state.selectedReviewIndex = 0;
@@ -940,6 +989,7 @@ function hydrateTask(task) {
   renderCandidateList();
   renderCandidateDetail();
   renderResults();
+  renderShareholderPanel();
   updateUndoRedoButtons();
 }
 
@@ -948,6 +998,7 @@ function applyTaskRefresh(payload) {
   if (payload.master_rows) state.masterRows = payload.master_rows;
   if (payload.review_rows) state.reviewRows = payload.review_rows.filter((row) => row.issue_type !== "chart2_only");
   if (payload.candidate_rows) state.candidateRows = payload.candidate_rows;
+  if (payload.chart_shareholders) state.chartShareholders = payload.chart_shareholders;
   state.selectedResultNodeIds = new Set(
     [...state.selectedResultNodeIds].filter((nodeId) => state.masterRows.some((row) => row.node_id === nodeId))
   );
@@ -959,6 +1010,7 @@ function applyTaskRefresh(payload) {
   renderCandidateList();
   renderCandidateDetail();
   renderResults();
+  renderShareholderPanel();
   updateUndoRedoButtons();
 }
 
@@ -2504,6 +2556,75 @@ function exportWorkbook() {
   XLSX.writeFile(workbook, `${state.taskName || "股權圖整併審核結果"}.xlsx`);
 }
 
+function renderShareholderPanel() {
+  if (!elements.shareholderTargetSelect || !elements.shareholderList) return;
+  const targets = getTopLevelCompanyRows();
+  elements.shareholderTargetSelect.innerHTML = targets.length
+    ? targets.map((row) => `<option value="${row.node_id}">${row.canonical_name || row.chart1_name || "未命名公司"}</option>`).join("")
+    : `<option value="">尚無一級子公司</option>`;
+  if (elements.addShareholderBtn) elements.addShareholderBtn.disabled = !state.taskId || !targets.length;
+
+  if (!state.chartShareholders.length) {
+    elements.shareholderList.innerHTML = `<span class="shareholder-empty">尚未加入上層股東</span>`;
+    return;
+  }
+
+  const byId = {};
+  state.masterRows.forEach((row) => { byId[row.node_id] = row; });
+  elements.shareholderList.innerHTML = state.chartShareholders.map((holder) => {
+    const target = byId[holder.target_node_id];
+    return `
+      <article class="shareholder-chip">
+        <span><strong>${holder.name}</strong>（${shareholderTypeText(holder.type)}）</span>
+        <span>${holder.share || "—"} → ${target?.canonical_name || target?.chart1_name || "未指定"}</span>
+        <button type="button" data-shareholder-delete="${holder.id}" title="移除此股東">×</button>
+      </article>
+    `;
+  }).join("");
+  elements.shareholderList.querySelectorAll("[data-shareholder-delete]").forEach((button) => {
+    button.addEventListener("click", () => {
+      deleteChartShareholder(button.dataset.shareholderDelete).catch((error) => alert(`移除失敗：${error.message}`));
+    });
+  });
+}
+
+async function saveChartShareholders(nextShareholders) {
+  const payload = await apiPost(`/api/tasks/${state.taskId}/chart-shareholders`, {
+    chart_shareholders: nextShareholders,
+  });
+  applyTaskRefresh(payload);
+  renderChart();
+}
+
+async function addChartShareholder() {
+  if (!state.taskId) return;
+  const name = elements.shareholderNameInput?.value.trim() || "";
+  const targetNodeId = elements.shareholderTargetSelect?.value || "";
+  if (!name || !targetNodeId) {
+    elements.shareholderNameInput?.focus();
+    return;
+  }
+  const next = [
+    ...state.chartShareholders,
+    {
+      id: makeShareholderId(),
+      name,
+      type: elements.shareholderTypeSelect?.value || "company",
+      share: elements.shareholderShareInput?.value.trim() || "",
+      target_node_id: targetNodeId,
+      note: "",
+    },
+  ];
+  await saveChartShareholders(next);
+  elements.shareholderNameInput.value = "";
+  elements.shareholderShareInput.value = "";
+}
+
+async function deleteChartShareholder(id) {
+  if (!state.taskId || !id) return;
+  await saveChartShareholders(state.chartShareholders.filter((holder) => holder.id !== id));
+}
+
 // ══════════════════════════════════════════════════════════════
 // 股權架構圖
 // ══════════════════════════════════════════════════════════════
@@ -2660,6 +2781,14 @@ function getChartTitle() {
 function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
   const validRows = rows.filter((r) => r.node_id);
   const ids = new Set(validRows.map((r) => r.node_id));
+  const shareholderEdges = validRows
+    .filter((r) => r.is_chart_shareholder && r.shareholder_target && ids.has(r.shareholder_target))
+    .map((r) => ({
+      id: `edge_${r.node_id}_${r.shareholder_target}`,
+      sources: [r.node_id],
+      targets: [r.shareholder_target],
+      ratio: r.shareholder_share || "",
+    }));
 
   return {
     id: graphId,
@@ -2674,10 +2803,12 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
     },
     children: validRows.map((r) => {
       const name = r.canonical_name || r.chart1_name || "—";
-      const width = Math.min(profile.maxNodeW, Math.max(profile.nodeW, 172 + Math.ceil(name.length / 8) * 18));
-      return { id: r.node_id, width, height: profile.nodeH, row: r };
+      const baseWidth = r.is_chart_shareholder ? Math.max(190, profile.nodeW - 34) : profile.nodeW;
+      const width = Math.min(profile.maxNodeW, Math.max(baseWidth, 172 + Math.ceil(name.length / 8) * 18));
+      return { id: r.node_id, width, height: r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH, row: r };
     }),
-    edges: validRows
+    edges: [
+      ...validRows
       .filter((r) => r.chart1_parent && ids.has(r.chart1_parent))
       .map((r) => ({
         id: `edge_${r.chart1_parent}_${r.node_id}`,
@@ -2685,6 +2816,8 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
         targets: [r.node_id],
         ratio: r.actual_controller_share || "",
       })),
+      ...shareholderEdges,
+    ],
   };
 }
 
@@ -2901,17 +3034,19 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const level = Number(r.chart1_level) || 0;
     const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
     const isMono = state.chartStyle === "mono";
+    const isShareholder = Boolean(r.is_chart_shareholder);
     const uncertain = r.node_status !== "enriched";
-    const fill = isMono ? "#ffffff" : color;
-    const stroke = isMono ? (uncertain ? "#f59e0b" : "#334155") : (uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)");
-    const nameColor = isMono ? "#0f172a" : "#ffffff";
-    const detailColor = isMono ? "#334155" : "rgba(255,255,255,0.92)";
+    const fill = isShareholder ? "#f8fafc" : (isMono ? "#ffffff" : color);
+    const stroke = isShareholder ? "#64748b" : (isMono ? (uncertain ? "#f59e0b" : "#334155") : (uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)"));
+    const nameColor = isShareholder || isMono ? "#0f172a" : "#ffffff";
+    const detailColor = isShareholder || isMono ? "#334155" : "rgba(255,255,255,0.92)";
     const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", profile.nameLen, profile.nameLines);
     const repCap = [
       r.legal_representative ? `法代：${r.legal_representative}` : "",
       r.registered_capital ? `資本：${formatCapital(r.registered_capital)}` : "",
     ].filter(Boolean).join("  ");
     const details = [
+      isShareholder ? `上層股東：${shareholderTypeText(r.shareholder_type)}` : "",
       repCap,
       r.established_date ? `成立：${r.established_date}` : "",
       r.role_label ? `定位：${r.role_label}` : "",
@@ -2921,7 +3056,7 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const detailStart = profile.nodeH - (details.length > 1 ? 35 : 26);
     return `
       <g class="elk-node" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
-        <rect width="${node.width}" height="${node.height}" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="${uncertain ? 2.2 : 1.4}" ${uncertain ? 'stroke-dasharray="7 4"' : ""} />
+        <rect width="${node.width}" height="${node.height}" rx="${isShareholder ? 18 : 4}" fill="${fill}" stroke="${stroke}" stroke-width="${isShareholder ? 1.8 : (uncertain ? 2.2 : 1.4)}" ${uncertain || isShareholder ? 'stroke-dasharray="7 4"' : ""} />
         <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="${nameColor}" font-size="${profile.nameFont}" font-weight="800">
           ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 18}">${svgEscape(line)}</tspan>`).join("")}
         </text>
@@ -3073,7 +3208,7 @@ async function renderElkChart() {
       for (let i = 0; i < visiblePages.length; i += 1) {
         const page = visiblePages[i];
         const sourceIndex = pages.findIndex((item) => (item.id || item.title) === (page.id || page.title));
-        const graph = buildElkGraph(page.rows, profile, `page_${i + 1}`);
+        const graph = buildElkGraph(chartRowsWithShareholders(page.rows), profile, `page_${i + 1}`);
         if (!graph.children.length) continue;
         const layout = await elk.layout(graph);
         const pageTitle = state.selectedBranchId === "__all__"
@@ -3093,7 +3228,7 @@ async function renderElkChart() {
     }
 
     syncBranchSelect([]);
-    const graph = buildElkGraph(chartRows, profile);
+    const graph = buildElkGraph(chartRowsWithShareholders(chartRows), profile);
     if (!graph.children.length) {
       elements.chartContainer.innerHTML = `<div class="elk-empty">沒有可顯示的公司資料</div>`;
       return;
@@ -3688,6 +3823,9 @@ function bindEvents() {
   });
   elements.batchDeleteBtn?.addEventListener("click", () => {
     runBatchDelete().catch((error) => alert(`批次刪除失敗：${error.message}`));
+  });
+  elements.addShareholderBtn?.addEventListener("click", () => {
+    addChartShareholder().catch((error) => alert(`加入上層股東失敗：${error.message}`));
   });
   elements.undoBtn?.addEventListener("click", () => {
     undoTaskEdit().catch((error) => alert(`回復失敗：${error.message}`));

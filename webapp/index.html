@@ -416,6 +416,31 @@
               <button id="printChartBtn" class="ghost-btn">🖨 列印</button>
             </div>
           </div>
+          <div class="chart-shareholder-panel">
+            <div class="chart-shareholder-form">
+              <label class="field">
+                <span>上層股東</span>
+                <input id="shareholderNameInput" type="text" placeholder="公司或個人名稱" />
+              </label>
+              <label class="field">
+                <span>類型</span>
+                <select id="shareholderTypeSelect">
+                  <option value="company">公司</option>
+                  <option value="person">個人</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>持股</span>
+                <input id="shareholderShareInput" type="text" placeholder="例如：60%" />
+              </label>
+              <label class="field">
+                <span>投資對象</span>
+                <select id="shareholderTargetSelect"></select>
+              </label>
+              <button id="addShareholderBtn" class="ghost-btn" type="button">＋ 加入圖面</button>
+            </div>
+            <div id="shareholderList" class="chart-shareholder-list"></div>
+          </div>
           <h2 id="printChartTitle" class="print-chart-title">股權架構圖</h2>
           <div id="chartLegend" class="chart-legend"></div>
           <div id="chartContainer" class="chart-container"></div>
