@@ -2198,11 +2198,29 @@ tr:hover .row-del-btn {
   justify-items: center;
 }
 
+.chart-entity-inline-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px 14px;
+}
+
 .chart-entity-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.chart-entity-chip-row {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: center;
+  gap: 6px;
 }
 
 .entity-modal-backdrop {
@@ -2234,66 +2252,77 @@ tr:hover .row-del-btn {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  min-height: 22px;
-  justify-content: center;
+  min-height: 0;
+  justify-content: flex-start;
 }
 
 .external-empty {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 11.5px;
+  padding: 3px 2px;
 }
 
 .external-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 7px 4px 9px;
+  gap: 5px;
+  padding: 3px 6px 3px 8px;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
   background: #f8fafc;
   color: #334155;
-  font-size: 11.5px;
+  font-size: 10.5px;
 }
 
 .external-chip button {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
   border: 0;
-  background: transparent;
-  color: #64748b;
-  font-size: 14px;
-  line-height: 1;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #475569;
   cursor: pointer;
+  font-weight: 800;
+}
+
+.external-chip button:hover {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .chart-shareholder-list {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  min-height: 22px;
-  justify-content: center;
+  min-height: 0;
+  justify-content: flex-start;
 }
 
 .shareholder-empty {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 11.5px;
+  padding: 3px 2px;
 }
 
 .shareholder-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 7px 4px 9px;
+  gap: 5px;
+  padding: 3px 6px 3px 8px;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
   background: #f8fafc;
   color: #334155;
-  font-size: 11.5px;
+  font-size: 10.5px;
 }
 
 .shareholder-chip button {
   display: inline-grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border: 0;
   border-radius: 50%;
   background: #e2e8f0;
@@ -2525,6 +2554,10 @@ tr:hover .row-del-btn {
   .add-company-panel,
   .chart-shareholder-form,
   .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-entity-inline-row {
     grid-template-columns: 1fr;
   }
 }

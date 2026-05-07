@@ -475,12 +475,16 @@
             </div>
           </div>
           <div class="chart-shareholder-panel">
-            <div class="chart-entity-actions">
-              <button id="openShareholderModalBtn" class="ghost-btn" type="button">新增上層股東</button>
-              <button id="openExternalEntityModalBtn" class="ghost-btn" type="button">新增集團外主體</button>
+            <div class="chart-entity-inline-row">
+              <div class="chart-entity-actions">
+                <button id="openShareholderModalBtn" class="ghost-btn" type="button">新增上層股東</button>
+                <button id="openExternalEntityModalBtn" class="ghost-btn" type="button">新增集團外主體</button>
+              </div>
+              <div class="chart-entity-chip-row">
+                <div id="shareholderList" class="chart-shareholder-list"></div>
+                <div id="externalEntityList" class="chart-external-list"></div>
+              </div>
             </div>
-            <div id="shareholderList" class="chart-shareholder-list"></div>
-            <div id="externalEntityList" class="chart-external-list"></div>
           </div>
           <h2 id="printChartTitle" class="print-chart-title">股權架構圖</h2>
           <div id="chartLegend" class="chart-legend"></div>
