@@ -435,6 +435,7 @@ textarea {
 }
 
 .main.chart-mode .topbar {
+  display: none;
   margin-bottom: 12px;
   padding: 8px 12px;
   border: 1px solid var(--line);
@@ -2130,6 +2131,10 @@ tr:hover .row-del-btn {
   border-color: #c7d2fe;
 }
 
+#chartLayoutBadge {
+  display: none;
+}
+
 .chart-advanced-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2226,8 +2231,8 @@ tr:hover .row-del-btn {
 .chart-external-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  min-height: 26px;
+  gap: 6px;
+  min-height: 22px;
 }
 
 .external-empty {
@@ -2238,20 +2243,20 @@ tr:hover .row-del-btn {
 .external-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px 6px 10px;
+  gap: 6px;
+  padding: 4px 7px 4px 9px;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
   background: #f8fafc;
   color: #334155;
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 
 .external-chip button {
   border: 0;
   background: transparent;
   color: #64748b;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
 }
@@ -2259,8 +2264,8 @@ tr:hover .row-del-btn {
 .chart-shareholder-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  min-height: 26px;
+  gap: 6px;
+  min-height: 22px;
 }
 
 .shareholder-empty {
@@ -2271,20 +2276,20 @@ tr:hover .row-del-btn {
 .shareholder-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px 6px 10px;
+  gap: 6px;
+  padding: 4px 7px 4px 9px;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
   background: #f8fafc;
   color: #334155;
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 
 .shareholder-chip button {
   display: inline-grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border: 0;
   border-radius: 50%;
   background: #e2e8f0;

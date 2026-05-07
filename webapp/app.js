@@ -27,7 +27,7 @@ const state = {
   hybridMode: "auto",
   hybridThreshold: 8,
   chartFontScale: 100,
-  chartDensity: "standard",
+  chartDensity: "full",
   selectedBranchId: "__all__",
   chartScale: 1,
   chartPanX: 0,
@@ -3426,13 +3426,13 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
 
   const nodeSvg = nodes.map((node) => {
     const r = node.row || {};
-    const fontScale = Math.max(0.85, Math.min(1.25, Number(state.chartFontScale || 100) / 100));
+    const fontScale = Math.max(0.85, Math.min(1.2, Number(state.chartFontScale || 100) / 100));
     const nameFont = Math.max(10, profile.nameFont * fontScale);
     const detailFont = Math.max(8.5, profile.detailFont * fontScale);
     if (r.is_hybrid_column) {
       const itemLines = (r.hybrid_items || []).slice(0, 22);
       const extraCount = Math.max(0, (r.hybrid_items || []).length - itemLines.length);
-      const header = svgEscape(`${r.role_label || ""}（垂直清單）`);
+      const header = svgEscape(`${r.role_label || ""}`);
       const lineStartY = 48;
       return `
       <g class="elk-node elk-node-hybrid-column" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
@@ -3467,7 +3467,8 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       r.role_label ? `定位：${r.role_label}` : "",
       r.chart_note ? `備註：${r.chart_note}` : "",
     ].filter(Boolean);
-    const detailLimit = state.chartDensity === "compact" ? 1 : state.chartDensity === "full" ? Math.max(4, profile.detailLines + 1) : profile.detailLines;
+    const baseLimit = state.chartDensity === "compact" ? 1 : state.chartDensity === "full" ? Math.max(4, profile.detailLines + 1) : profile.detailLines;
+    const detailLimit = fontScale > 1.1 ? Math.max(1, baseLimit - 1) : baseLimit;
     const details = baseDetails.slice(0, detailLimit);
     const nameStart = profile.nodeH <= 96 ? 31 - (nameLines.length - 1) * 8 : 36 - (nameLines.length - 1) * 9;
     const detailStart = profile.nodeH - (details.length > 1 ? 35 : 26);
@@ -4283,7 +4284,7 @@ function printChart(orientation = state.printOrientation) {
     medium: 1,
     large: 1.08,
   }[state.printFontSize] || 1;
-  const chartFontScale = clampNumber(Number(state.chartFontScale || 100), 85, 125) / 100;
+  const chartFontScale = clampNumber(Number(state.chartFontScale || 100), 85, 120) / 100;
   const spacingScale = {
     compact: 0.92,
     normal: 1,
@@ -4534,11 +4535,11 @@ function bindEvents() {
   });
   elements.chartFontScaleSelect?.addEventListener("change", (event) => {
     const n = Number(event.target.value || 100);
-    state.chartFontScale = Math.max(85, Math.min(125, Number.isFinite(n) ? n : 100));
+    state.chartFontScale = Math.max(85, Math.min(120, Number.isFinite(n) ? n : 100));
     renderChart();
   });
   elements.chartDensitySelect?.addEventListener("change", (event) => {
-    state.chartDensity = ["compact", "standard", "full"].includes(event.target.value) ? event.target.value : "standard";
+    state.chartDensity = ["compact", "standard", "full"].includes(event.target.value) ? event.target.value : "full";
     renderChart();
   });
   elements.toggleToolbarBtn?.addEventListener("click", () => {
