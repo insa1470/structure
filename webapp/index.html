@@ -396,6 +396,23 @@
                 <button class="chart-intent-btn" data-chart-intent="print_single" type="button">列印一頁</button>
                 <button class="chart-intent-btn" data-chart-intent="print_paged" type="button">分頁列印</button>
               </div>
+              <label class="chart-branch-picker" title="子公司數達門檻時改為清單柱">
+                <span>清單柱</span>
+                <select id="hybridModeSelect">
+                  <option value="auto" selected>自動</option>
+                  <option value="off">關閉</option>
+                  <option value="on">強制</option>
+                </select>
+              </label>
+              <label class="chart-branch-picker" title="下一層公司數量達門檻時切成清單柱">
+                <span>門檻</span>
+                <select id="hybridThresholdSelect">
+                  <option value="3">3</option>
+                  <option value="5">5</option>
+                  <option value="8" selected>8</option>
+                  <option value="10">10</option>
+                </select>
+              </label>
               <details class="chart-advanced-panel" id="chartAdvancedPanel">
                 <summary>進階設定</summary>
                 <div class="chart-advanced-content">

@@ -24,6 +24,8 @@ const state = {
   chartMode: "a4",
   chartDepth: "all",
   showGroupRoot: false,
+  hybridMode: "auto",
+  hybridThreshold: 8,
   selectedBranchId: "__all__",
   chartScale: 1,
   chartPanX: 0,
@@ -121,6 +123,8 @@ const elements = {
   chartDepthButtons: [...document.querySelectorAll(".chart-depth-btn")],
   chartBranchPicker: document.getElementById("chartBranchPicker"),
   chartBranchSelect: document.getElementById("chartBranchSelect"),
+  hybridModeSelect: document.getElementById("hybridModeSelect"),
+  hybridThresholdSelect: document.getElementById("hybridThresholdSelect"),
   chartZoomButtons: [...document.querySelectorAll(".chart-zoom-btn")],
   chartZoomLabel: document.getElementById("chartZoomLabel"),
   chartShowRootToggle: document.getElementById("chartShowRootToggle"),
@@ -3045,6 +3049,8 @@ function syncChartModeButtons() {
     button.classList.toggle("active", button.dataset.chartDepth === state.chartDepth);
   });
   if (elements.chartShowRootToggle) elements.chartShowRootToggle.checked = state.showGroupRoot;
+  if (elements.hybridModeSelect) elements.hybridModeSelect.value = state.hybridMode;
+  if (elements.hybridThresholdSelect) elements.hybridThresholdSelect.value = String(state.hybridThreshold);
   if (elements.chartBranchPicker) {
     elements.chartBranchPicker.style.display = isGraph && state.chartMode === "paged" ? "" : "none";
   }
@@ -3089,7 +3095,11 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       const excluded = child.is_chart_shareholder || child.is_external_entity || child.is_external_group;
       return isLeaf && !excluded;
     });
-    if (leafChildren.length < HYBRID_COLUMN_THRESHOLD) return;
+    const threshold = Math.max(2, Number(state.hybridThreshold) || HYBRID_COLUMN_THRESHOLD);
+    const forceOn = state.hybridMode === "on";
+    const forceOff = state.hybridMode === "off";
+    if (forceOff) return;
+    if (!forceOn && leafChildren.length < threshold) return;
     const sortedLeaves = leafChildren.sort((a, b) => (a.sort_index || 0) - (b.sort_index || 0));
     sortedLeaves.forEach((child) => collapsedChildIds.add(child.node_id));
     const columnId = `COL_${parentId}`;
@@ -3881,10 +3891,15 @@ function renderChart() {
     print_single: "列印一頁",
     print_paged: "分頁列印",
   }[state.chartIntent] || "簡報模式";
+  const hybridLabel = state.hybridMode === "on"
+    ? "清單柱：強制"
+    : state.hybridMode === "off"
+      ? "清單柱：關閉"
+      : `清單柱：自動≥${state.hybridThreshold}`;
 
   elements.chartLayoutBadge.textContent = isList
     ? `${total} 家公司 · ${intentLabel} · 條列層級 · ${getChartDepthLabel()}`
-    : `${total} 家公司 · ${intentLabel} · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${getChartDepthLabel()} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
+    : `${total} 家公司 · ${intentLabel} · ${hybridLabel} · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${getChartDepthLabel()} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
 
   // 切換容器樣式
   elements.chartContainer.classList.toggle("chart-container-list", isList);
@@ -4489,6 +4504,17 @@ function bindEvents() {
   elements.chartShowRootToggle?.addEventListener("change", (event) => {
     state.showGroupRoot = event.target.checked;
     state.selectedBranchId = "__all__";
+    resetChartViewport();
+    renderChart();
+  });
+  elements.hybridModeSelect?.addEventListener("change", (event) => {
+    state.hybridMode = ["auto", "off", "on"].includes(event.target.value) ? event.target.value : "auto";
+    resetChartViewport();
+    renderChart();
+  });
+  elements.hybridThresholdSelect?.addEventListener("change", (event) => {
+    const n = Number(event.target.value || HYBRID_COLUMN_THRESHOLD);
+    state.hybridThreshold = Math.max(2, Math.min(20, Number.isFinite(n) ? n : HYBRID_COLUMN_THRESHOLD));
     resetChartViewport();
     renderChart();
   });
