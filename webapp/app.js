@@ -3173,7 +3173,9 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
         return { id: r.node_id, width, height, row: r };
       }
       const baseWidth = r.is_chart_shareholder ? Math.max(190, profile.nodeW - 34) : profile.nodeW;
-      const width = baseWidth;
+      const level = Number(r.chart1_level) || 0;
+      const adaptiveWidth = Math.max(164, Math.min(profile.maxNodeW, 156 + Math.ceil(name.length / 7) * 16));
+      const width = level >= 2 ? Math.min(baseWidth, adaptiveWidth) : Math.max(baseWidth, adaptiveWidth);
       return { id: r.node_id, width, height: r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH, row: r };
     }),
     edges: [
@@ -3189,6 +3191,59 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       ...externalRelationEdges,
     ],
   };
+}
+
+function rebalanceLayoutSymmetry(layout) {
+  if (!layout?.children?.length || state.chartDirection === "right") return layout;
+  const nodesById = {};
+  (layout.children || []).forEach((node) => { nodesById[node.id] = node; });
+  const childIdsByParent = {};
+  (layout.edges || []).forEach((edge) => {
+    const source = edge.sources?.[0];
+    const target = edge.targets?.[0];
+    if (!source || !target || !nodesById[source] || !nodesById[target]) return;
+    if (!childIdsByParent[source]) childIdsByParent[source] = [];
+    childIdsByParent[source].push(target);
+  });
+
+  const visited = new Set();
+  const shiftSubtree = (rootId, dx) => {
+    if (!dx) return;
+    const stack = [rootId];
+    while (stack.length) {
+      const id = stack.pop();
+      if (visited.has(`${id}:${dx}`)) continue;
+      visited.add(`${id}:${dx}`);
+      const node = nodesById[id];
+      if (node) node.x = (node.x || 0) + dx;
+      (childIdsByParent[id] || []).forEach((childId) => stack.push(childId));
+    }
+  };
+
+  Object.keys(childIdsByParent)
+    .map((id) => nodesById[id])
+    .filter(Boolean)
+    .sort((a, b) => (a.y || 0) - (b.y || 0))
+    .forEach((parent) => {
+      const childNodes = (childIdsByParent[parent.id] || [])
+        .map((id) => nodesById[id])
+        .filter(Boolean);
+      if (childNodes.length < 2) return;
+      const minLeft = Math.min(...childNodes.map((n) => n.x || 0));
+      const maxRight = Math.max(...childNodes.map((n) => (n.x || 0) + (n.width || 0)));
+      const groupCenter = (minLeft + maxRight) / 2;
+      const parentCenter = (parent.x || 0) + (parent.width || 0) / 2;
+      const dx = Math.max(-120, Math.min(120, parentCenter - groupCenter));
+      if (Math.abs(dx) < 6) return;
+      childNodes.forEach((child) => shiftSubtree(child.id, dx));
+    });
+
+  const minX = Math.min(...(layout.children || []).map((n) => n.x || 0));
+  if (minX < 0) {
+    (layout.children || []).forEach((n) => { n.x = (n.x || 0) + Math.abs(minX) + 8; });
+  }
+  layout.width = Math.max(...(layout.children || []).map((n) => (n.x || 0) + (n.width || 0))) + 16;
+  return layout;
 }
 
 function buildPagedRowSets(rows) {
@@ -3628,7 +3683,7 @@ async function renderElkChart() {
         const sourceIndex = pages.findIndex((item) => (item.id || item.title) === (page.id || page.title));
         const graph = buildElkGraph(chartRowsWithShareholders(page.rows), profile, `page_${i + 1}`);
         if (!graph.children.length) continue;
-        const layout = await elk.layout(graph);
+        const layout = rebalanceLayoutSymmetry(await elk.layout(graph));
         const pageTitle = state.selectedBranchId === "__all__"
           ? `第 ${sourceIndex + 1} 頁 / ${pages.length}：${page.title}`
           : `分支：${page.title}`;
@@ -3651,7 +3706,7 @@ async function renderElkChart() {
       elements.chartContainer.innerHTML = `<div class="elk-empty">沒有可顯示的公司資料</div>`;
       return;
     }
-    const layout = await elk.layout(graph);
+    const layout = rebalanceLayoutSymmetry(await elk.layout(graph));
     if (seq !== _elkRenderSeq) return;
     elements.chartContainer.innerHTML = renderChartViewport(renderElkSvg(layout, profile));
     bindChartViewport();
