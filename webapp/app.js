@@ -3999,6 +3999,14 @@ function openPrintSettings() {
           <small>系統會依紙張方向自動縮放並置中，避免手動排版。</small>
         </span>
       </label>
+      <div class="field">
+        <span>快速套用</span>
+        <div class="print-orientation-grid">
+          <button class="ghost-btn" data-print-preset="fit" type="button">一頁優先</button>
+          <button class="ghost-btn" data-print-preset="balance" type="button">平衡</button>
+          <button class="ghost-btn" data-print-preset="readable" type="button">可讀優先</button>
+        </div>
+      </div>
       <label class="field">
         <span>縮放（%）</span>
         <input id="printScaleInput" type="number" min="70" max="130" step="5" value="${state.printScale}" />
@@ -4059,14 +4067,44 @@ function openPrintSettings() {
     const h4 = modal.querySelector(".print-preview-paper h4");
     if (h4) h4.textContent = title;
   });
+  const fitInput = modal.querySelector("#printFitToPageInput");
+  const scaleInput = modal.querySelector("#printScaleInput");
+  const marginSelect = modal.querySelector("#printMarginSelect");
+  const fontSizeSelect = modal.querySelector("#printFontSizeSelect");
+  const spacingSelect = modal.querySelector("#printSpacingSelect");
+  const forceOnePageInput = modal.querySelector("#printForceOnePageInput");
+  const applyPrintPreset = (preset) => {
+    if (!fitInput || !scaleInput || !marginSelect || !fontSizeSelect || !spacingSelect || !forceOnePageInput) return;
+    if (preset === "fit") {
+      fitInput.checked = true;
+      scaleInput.value = "90";
+      marginSelect.value = "narrow";
+      fontSizeSelect.value = "small";
+      spacingSelect.value = "compact";
+      forceOnePageInput.checked = true;
+      return;
+    }
+    if (preset === "readable") {
+      fitInput.checked = false;
+      scaleInput.value = "110";
+      marginSelect.value = "normal";
+      fontSizeSelect.value = "large";
+      spacingSelect.value = "loose";
+      forceOnePageInput.checked = false;
+      return;
+    }
+    fitInput.checked = true;
+    scaleInput.value = "100";
+    marginSelect.value = "normal";
+    fontSizeSelect.value = "medium";
+    spacingSelect.value = "normal";
+    forceOnePageInput.checked = false;
+  };
+  modal.querySelectorAll("[data-print-preset]").forEach((button) => {
+    button.addEventListener("click", () => applyPrintPreset(button.dataset.printPreset));
+  });
   modal.querySelector("#printSettingsSubmit")?.addEventListener("click", async () => {
     const titleInput = modal.querySelector("#printTitleInput");
-    const fitInput = modal.querySelector("#printFitToPageInput");
-    const scaleInput = modal.querySelector("#printScaleInput");
-    const marginSelect = modal.querySelector("#printMarginSelect");
-    const fontSizeSelect = modal.querySelector("#printFontSizeSelect");
-    const spacingSelect = modal.querySelector("#printSpacingSelect");
-    const forceOnePageInput = modal.querySelector("#printForceOnePageInput");
     state.printTitle = titleInput?.value.trim() || getChartTitle();
     state.printFitToPage = Boolean(fitInput?.checked);
     state.printScale = clampNumber(Number(scaleInput?.value || 100), 70, 130);
