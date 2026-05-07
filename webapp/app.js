@@ -4389,8 +4389,8 @@ function openPrintSettings() {
     <div class="print-settings-preview" aria-hidden="true">
       <div class="print-preview-paper ${state.printOrientation}">
         <h4>${currentTitle}</h4>
-        <div class="print-preview-placeholder">
-          <span></span><span></span><span></span>
+        <div id="printPreviewFrame" class="print-preview-frame">
+          <div id="printPreviewViewport" class="print-preview-viewport"></div>
         </div>
       </div>
     </div>
@@ -4483,6 +4483,7 @@ function openPrintSettings() {
       });
       previewPaper?.classList.toggle("portrait", selectedOrientation === "portrait");
       previewPaper?.classList.toggle("landscape", selectedOrientation !== "portrait");
+      requestAnimationFrame(() => renderPrintPreview());
     });
   });
   modal.querySelector("#printTitleInput")?.addEventListener("input", (event) => {
@@ -4496,6 +4497,39 @@ function openPrintSettings() {
   const fontSizeSelect = modal.querySelector("#printFontSizeSelect");
   const spacingSelect = modal.querySelector("#printSpacingSelect");
   const forceOnePageInput = modal.querySelector("#printForceOnePageInput");
+  const previewViewport = modal.querySelector("#printPreviewViewport");
+  const renderPrintPreview = () => {
+    if (!previewViewport) return;
+    const title = (modal.querySelector("#printTitleInput")?.value || "").trim() || getChartTitle();
+    const h4 = modal.querySelector(".print-preview-paper h4");
+    if (h4) h4.textContent = title;
+    const sourceSvg = document.querySelector("#chartContainer .elk-svg");
+    const sourceList = document.querySelector("#chartContainer #listTreeInner");
+    if (sourceSvg) {
+      previewViewport.innerHTML = sourceSvg.outerHTML;
+      const previewSvg = previewViewport.querySelector("svg");
+      if (!previewSvg) return;
+      previewSvg.removeAttribute("id");
+      const rawWidth = Number(previewSvg.getAttribute("width")) || 1200;
+      const rawHeight = Number(previewSvg.getAttribute("height")) || 900;
+      const vw = previewViewport.clientWidth || 700;
+      const vh = previewViewport.clientHeight || 440;
+      const fitToPage = Boolean(fitInput?.checked || forceOnePageInput?.checked);
+      const manualScale = clampNumber(Number(scaleInput?.value || 100), 70, 130) / 100;
+      const baseScale = Math.min(vw / rawWidth, vh / rawHeight, 1);
+      const scale = fitToPage ? baseScale * manualScale : Math.min(1.25, baseScale * manualScale);
+      previewSvg.style.width = `${Math.max(220, rawWidth * scale)}px`;
+      previewSvg.style.height = "auto";
+      previewSvg.style.display = "block";
+      previewSvg.style.margin = "0 auto";
+      return;
+    }
+    if (sourceList) {
+      previewViewport.innerHTML = `<div class="print-preview-list">${sourceList.innerHTML}</div>`;
+      return;
+    }
+    previewViewport.innerHTML = `<div class="print-preview-empty">目前沒有可預覽圖面</div>`;
+  };
   const applyPrintPreset = (preset) => {
     if (!fitInput || !scaleInput || !marginSelect || !fontSizeSelect || !spacingSelect || !forceOnePageInput) return;
     if (preset === "fit") {
@@ -4505,6 +4539,7 @@ function openPrintSettings() {
       fontSizeSelect.value = "small";
       spacingSelect.value = "compact";
       forceOnePageInput.checked = true;
+      renderPrintPreview();
       return;
     }
     if (preset === "readable") {
@@ -4514,6 +4549,7 @@ function openPrintSettings() {
       fontSizeSelect.value = "large";
       spacingSelect.value = "loose";
       forceOnePageInput.checked = false;
+      renderPrintPreview();
       return;
     }
     fitInput.checked = true;
@@ -4522,9 +4558,14 @@ function openPrintSettings() {
     fontSizeSelect.value = "medium";
     spacingSelect.value = "normal";
     forceOnePageInput.checked = false;
+    renderPrintPreview();
   };
   modal.querySelectorAll("[data-print-preset]").forEach((button) => {
     button.addEventListener("click", () => applyPrintPreset(button.dataset.printPreset));
+  });
+  [fitInput, scaleInput, forceOnePageInput, marginSelect, fontSizeSelect, spacingSelect].forEach((input) => {
+    input?.addEventListener("input", renderPrintPreview);
+    input?.addEventListener("change", renderPrintPreview);
   });
   modal.querySelector("#printSettingsSubmit")?.addEventListener("click", async () => {
     const titleInput = modal.querySelector("#printTitleInput");
@@ -4543,6 +4584,7 @@ function openPrintSettings() {
   modal.addEventListener("click", (event) => {
     if (event.target === modal) modal.remove();
   });
+  requestAnimationFrame(renderPrintPreview);
 }
 
 async function savePrintSettings(orientation = state.printOrientation) {
