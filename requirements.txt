@@ -4,3 +4,4 @@ dashscope
 openai
 Pillow
 gunicorn
+psycopg[binary]

@@ -77,7 +77,140 @@ class JsonTaskStore:
                 continue
 
 
-task_store = JsonTaskStore()
+class PostgresTaskStore:
+    """PostgreSQL-backed task storage.
+
+    This first database adapter stores the complete task JSON to preserve the
+    current API contract. Later migrations can split master/review/candidate
+    rows into normalized tables without changing route handlers again.
+    """
+
+    def __init__(self, database_url: str | None = None, data_dir: Path = DATA_DIR):
+        self.database_url = database_url or os.environ.get("DATABASE_URL", "")
+        self.data_dir = data_dir
+        self._schema_ready = False
+
+    def upload_dir(self, task_id: str) -> Path:
+        path = self.data_dir / task_id / "uploads"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _connect(self):
+        if not self.database_url:
+            raise RuntimeError("TASK_STORE=postgres requires DATABASE_URL")
+        try:
+            import psycopg
+        except ImportError as exc:
+            raise RuntimeError("TASK_STORE=postgres requires psycopg[binary]") from exc
+        return psycopg.connect(self.database_url)
+
+    def ensure_ready(self) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        if self._schema_ready:
+            return
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS tasks (
+                        id TEXT PRIMARY KEY,
+                        name TEXT,
+                        status TEXT,
+                        created_at TIMESTAMPTZ,
+                        updated_at TIMESTAMPTZ,
+                        source_files JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        error TEXT NOT NULL DEFAULT '',
+                        task JSONB NOT NULL
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS task_files (
+                        id BIGSERIAL PRIMARY KEY,
+                        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                        file_type TEXT NOT NULL,
+                        original_filename TEXT NOT NULL DEFAULT '',
+                        storage_path TEXT NOT NULL DEFAULT '',
+                        width INTEGER,
+                        height INTEGER,
+                        file_size BIGINT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS task_snapshots (
+                        id BIGSERIAL PRIMARY KEY,
+                        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                        task JSONB NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at DESC)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_task_snapshots_task_id ON task_snapshots(task_id, created_at DESC)")
+            conn.commit()
+        self._schema_ready = True
+
+    def read_task(self, task_id: str) -> dict | None:
+        self.ensure_ready()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT task FROM tasks WHERE id = %s", (task_id,))
+                row = cur.fetchone()
+                return row[0] if row else None
+
+    def save_task(self, task: dict) -> None:
+        self.ensure_ready()
+        task["updated_at"] = now_iso()
+        payload = json.dumps(task, ensure_ascii=False)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO tasks (id, name, status, created_at, updated_at, source_files, summary, error, task)
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb)
+                    ON CONFLICT (id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        status = EXCLUDED.status,
+                        updated_at = EXCLUDED.updated_at,
+                        source_files = EXCLUDED.source_files,
+                        summary = EXCLUDED.summary,
+                        error = EXCLUDED.error,
+                        task = EXCLUDED.task
+                    """,
+                    (
+                        task["id"],
+                        task.get("name", ""),
+                        task.get("status", ""),
+                        task.get("created_at") or task.get("updated_at"),
+                        task.get("updated_at"),
+                        json.dumps(task.get("source_files") or {}, ensure_ascii=False),
+                        json.dumps(task.get("summary") or {}, ensure_ascii=False),
+                        task.get("error", ""),
+                        payload,
+                    ),
+                )
+                cur.execute(
+                    "INSERT INTO task_snapshots (task_id, task) VALUES (%s, %s::jsonb)",
+                    (task["id"], payload),
+                )
+            conn.commit()
+
+    def iter_tasks(self) -> Iterable[dict]:
+        self.ensure_ready()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT task FROM tasks ORDER BY updated_at DESC NULLS LAST LIMIT 500")
+                for row in cur.fetchall():
+                    yield row[0]
+
+
+def make_task_store():
+    store_name = os.environ.get("TASK_STORE", "json").strip().lower()
+    if store_name == "postgres":
+        return PostgresTaskStore()
+    return JsonTaskStore()
+
+
+task_store = make_task_store()
 
 
 class JsonOcrTestStore:
