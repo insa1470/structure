@@ -3372,11 +3372,114 @@ function rebalanceLayoutSymmetry(layout) {
     }
   });
 
+  // 集團外主體子圖：自動放在主幹圖空白角落（非固定左上）
+  const externalRootNodes = (layout.children || []).filter((node) => node?.row?.is_external_group);
+  if (externalRootNodes.length) {
+    const collectSubtreeIds = (rootId, acc = new Set()) => {
+      if (acc.has(rootId)) return acc;
+      acc.add(rootId);
+      (childIdsByParent[rootId] || []).forEach((childId) => collectSubtreeIds(childId, acc));
+      return acc;
+    };
+    const bboxOfIds = (ids) => {
+      const nodes = [...ids].map((id) => nodesById[id]).filter(Boolean);
+      const minX = Math.min(...nodes.map((n) => n.x || 0));
+      const minY = Math.min(...nodes.map((n) => n.y || 0));
+      const maxX = Math.max(...nodes.map((n) => (n.x || 0) + (n.width || 0)));
+      const maxY = Math.max(...nodes.map((n) => (n.y || 0) + (n.height || 0)));
+      return { minX, minY, maxX, maxY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+    };
+    const overlapArea = (a, b) => {
+      const w = Math.max(0, Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX));
+      const h = Math.max(0, Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY));
+      return w * h;
+    };
+    const nodeCenter = (node) => ({
+      x: (node.x || 0) + (node.width || 0) / 2,
+      y: (node.y || 0) + (node.height || 0) / 2,
+    });
+
+    const externalGroups = externalRootNodes.map((root) => {
+      const ids = collectSubtreeIds(root.id);
+      return { root, ids, bbox: bboxOfIds(ids) };
+    });
+    const externalIds = new Set(externalGroups.flatMap((g) => [...g.ids]));
+    const mainNodes = (layout.children || []).filter((node) => !externalIds.has(node.id));
+    if (mainNodes.length) {
+      const mainBBox = bboxOfIds(new Set(mainNodes.map((n) => n.id)));
+      const GAP = 70;
+      const baseCandidates = [
+        { x: mainBBox.minX - GAP, y: mainBBox.minY - GAP, name: "top-left" },
+        { x: mainBBox.maxX + GAP, y: mainBBox.minY - GAP, name: "top-right" },
+        { x: mainBBox.minX - GAP, y: mainBBox.maxY + GAP, name: "bottom-left" },
+        { x: mainBBox.maxX + GAP, y: mainBBox.maxY + GAP, name: "bottom-right" },
+      ];
+
+      const occupied = [mainBBox];
+      externalGroups.forEach((group, index) => {
+        const sourceEdge = (layout.edges || []).find((edge) => edge.sources?.[0] && group.ids.has(edge.sources[0]) && nodesById[edge.targets?.[0]]);
+        const targetNode = sourceEdge ? nodesById[sourceEdge.targets[0]] : null;
+        const targetCenter = targetNode ? nodeCenter(targetNode) : { x: mainBBox.maxX, y: mainBBox.maxY };
+        const current = group.bbox;
+
+        const candidates = [];
+        for (let ring = 0; ring < 3; ring += 1) {
+          const spread = ring * (Math.max(current.width, current.height) + 40);
+          baseCandidates.forEach((base) => {
+            const shiftX = /right/.test(base.name) ? spread : -spread;
+            const shiftY = /bottom/.test(base.name) ? spread : -spread;
+            const next = {
+              minX: base.x + shiftX,
+              minY: base.y + shiftY,
+              maxX: base.x + shiftX + current.width,
+              maxY: base.y + shiftY + current.height,
+            };
+            const overlap = occupied.reduce((sum, box) => sum + overlapArea(next, box), 0);
+            const centerX = (next.minX + next.maxX) / 2;
+            const centerY = (next.minY + next.maxY) / 2;
+            const distance = Math.hypot(centerX - targetCenter.x, centerY - targetCenter.y);
+            candidates.push({
+              next,
+              overlap,
+              distance,
+              score: overlap * 100000 + distance + ring * 180 + index * 15,
+            });
+          });
+        }
+        candidates.sort((a, b) => a.score - b.score);
+        const best = candidates[0];
+        if (!best) return;
+        const dx = best.next.minX - current.minX;
+        const dy = best.next.minY - current.minY;
+        const stack = [group.root.id];
+        const visited = new Set();
+        while (stack.length) {
+          const id = stack.pop();
+          if (visited.has(id)) continue;
+          visited.add(id);
+          const node = nodesById[id];
+          if (node) {
+            node.x = (node.x || 0) + dx;
+            node.y = (node.y || 0) + dy;
+          }
+          (childIdsByParent[id] || []).forEach((childId) => stack.push(childId));
+        }
+        group.bbox = bboxOfIds(group.ids);
+        occupied.push(group.bbox);
+      });
+    }
+  }
+
   const minX = Math.min(...(layout.children || []).map((n) => n.x || 0));
   if (minX < 0) {
     (layout.children || []).forEach((n) => { n.x = (n.x || 0) + Math.abs(minX) + 8; });
   }
+  const minY = Math.min(...(layout.children || []).map((n) => n.y || 0));
+  if (minY < 0) {
+    (layout.children || []).forEach((n) => { n.y = (n.y || 0) + Math.abs(minY) + 8; });
+  }
   layout.width = Math.max(...(layout.children || []).map((n) => (n.x || 0) + (n.width || 0))) + 16;
+  layout.height = Math.max(...(layout.children || []).map((n) => (n.y || 0) + (n.height || 0))) + 16;
   return layout;
 }
 
