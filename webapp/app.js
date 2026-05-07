@@ -3190,12 +3190,15 @@ function rebalanceLayoutSymmetry(layout) {
   const nodesById = {};
   (layout.children || []).forEach((node) => { nodesById[node.id] = node; });
   const childIdsByParent = {};
+  const incomingSourcesByTarget = {};
   (layout.edges || []).forEach((edge) => {
     const source = edge.sources?.[0];
     const target = edge.targets?.[0];
     if (!source || !target || !nodesById[source] || !nodesById[target]) return;
     if (!childIdsByParent[source]) childIdsByParent[source] = [];
     childIdsByParent[source].push(target);
+    if (!incomingSourcesByTarget[target]) incomingSourcesByTarget[target] = [];
+    incomingSourcesByTarget[target].push(source);
   });
 
   const shiftSubtree = (rootId, dx) => {
@@ -3229,6 +3232,40 @@ function rebalanceLayoutSymmetry(layout) {
       if (Math.abs(dx) < 6) return;
       childNodes.forEach((child) => shiftSubtree(child.id, dx));
     });
+
+  // 上層股東：以目標公司中心做對稱排列
+  Object.entries(incomingSourcesByTarget).forEach(([targetId, sourceIds]) => {
+    const target = nodesById[targetId];
+    if (!target) return;
+    const shareholderNodes = sourceIds
+      .map((id) => nodesById[id])
+      .filter((node) => node?.row?.is_chart_shareholder);
+    if (!shareholderNodes.length) return;
+    shareholderNodes.sort((a, b) => (a.x || 0) - (b.x || 0));
+    const gap = 18;
+    const totalWidth = shareholderNodes.reduce((sum, node) => sum + (node.width || 0), 0) + gap * Math.max(0, shareholderNodes.length - 1);
+    const targetCenter = (target.x || 0) + (target.width || 0) / 2;
+    let cursorLeft = targetCenter - totalWidth / 2;
+    shareholderNodes.forEach((node) => {
+      const desiredCenter = cursorLeft + (node.width || 0) / 2;
+      const currentCenter = (node.x || 0) + (node.width || 0) / 2;
+      const dx = desiredCenter - currentCenter;
+      if (Math.abs(dx) > 1) shiftSubtree(node.id, dx);
+      cursorLeft += (node.width || 0) + gap;
+    });
+  });
+
+  // 只有一個下一層子節點：強制置中對齊父節點
+  Object.entries(childIdsByParent).forEach(([parentId, childIds]) => {
+    if (childIds.length !== 1) return;
+    const parent = nodesById[parentId];
+    const child = nodesById[childIds[0]];
+    if (!parent || !child) return;
+    const parentCenter = (parent.x || 0) + (parent.width || 0) / 2;
+    const childCenter = (child.x || 0) + (child.width || 0) / 2;
+    const dx = parentCenter - childCenter;
+    if (Math.abs(dx) > 1) shiftSubtree(child.id, dx);
+  });
 
   // 第二段：防碰撞，確保同層節點不重疊
   const MIN_GAP = 22;
