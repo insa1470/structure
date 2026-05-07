@@ -163,6 +163,7 @@ const TASK_SNAPSHOT_KEY = "equity-review-last-task";
 const MAX_CHART1_MB = 3;
 const MAX_CHART1_LONG_EDGE = 9000;
 const MAX_CHART2_CHUNKS = 9;
+const HYBRID_COLUMN_THRESHOLD = 8;
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -2969,7 +2970,57 @@ function getPrintTitle() {
 
 function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
   const validRows = rows.filter((r) => r.node_id);
-  const ids = new Set(validRows.map((r) => r.node_id));
+  const byId = {};
+  validRows.forEach((row) => { byId[row.node_id] = row; });
+  const childrenByParent = {};
+  validRows.forEach((row) => {
+    if (!row.chart1_parent || !byId[row.chart1_parent]) return;
+    if (!childrenByParent[row.chart1_parent]) childrenByParent[row.chart1_parent] = [];
+    childrenByParent[row.chart1_parent].push(row);
+  });
+
+  const collapsedChildIds = new Set();
+  const columnNodes = [];
+  Object.entries(childrenByParent).forEach(([parentId, childRows]) => {
+    const parent = byId[parentId];
+    if (!parent) return;
+    const parentLevel = Number(parent.chart1_level) || 0;
+    if (parentLevel < 1) return;
+    const leafChildren = childRows.filter((child) => {
+      const isLeaf = !(childrenByParent[child.node_id] || []).length;
+      const excluded = child.is_chart_shareholder || child.is_external_entity || child.is_external_group;
+      return isLeaf && !excluded;
+    });
+    if (leafChildren.length < HYBRID_COLUMN_THRESHOLD) return;
+    const sortedLeaves = leafChildren.sort((a, b) => (a.sort_index || 0) - (b.sort_index || 0));
+    sortedLeaves.forEach((child) => collapsedChildIds.add(child.node_id));
+    const columnId = `COL_${parentId}`;
+    const itemTexts = sortedLeaves.map((child) => {
+      const name = child.canonical_name || child.chart1_name || "—";
+      const ratio = ratioPercentText(child.actual_controller_share || "");
+      return ratio ? `${name}（${ratio}）` : name;
+    });
+    columnNodes.push({
+      node_id: columnId,
+      canonical_name: "下層公司清單",
+      chart1_name: "下層公司清單",
+      chart1_level: parentLevel + 1,
+      chart1_parent: parentId,
+      role_label: `共 ${sortedLeaves.length} 家`,
+      chart_note: "",
+      node_status: "enriched",
+      is_hybrid_column: true,
+      hybrid_items: itemTexts,
+      hybrid_count: sortedLeaves.length,
+    });
+  });
+
+  const visibleRows = [
+    ...validRows.filter((row) => !collapsedChildIds.has(row.node_id)),
+    ...columnNodes,
+  ];
+  const visibleIds = new Set(visibleRows.map((r) => r.node_id));
+  const ids = visibleIds;
   const shareholderEdges = validRows
     .filter((r) => r.is_chart_shareholder && r.shareholder_target && ids.has(r.shareholder_target))
     .map((r) => ({
@@ -2998,14 +3049,21 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
     },
-    children: validRows.map((r) => {
+    children: visibleRows.map((r) => {
       const name = r.canonical_name || r.chart1_name || "—";
+      if (r.is_hybrid_column) {
+        const itemCount = (r.hybrid_items || []).length;
+        const cappedCount = Math.min(itemCount, 22);
+        const height = Math.max(130, 72 + cappedCount * 22);
+        const width = Math.min(420, Math.max(250, profile.nodeW + 70));
+        return { id: r.node_id, width, height, row: r };
+      }
       const baseWidth = r.is_chart_shareholder ? Math.max(190, profile.nodeW - 34) : profile.nodeW;
       const width = Math.min(profile.maxNodeW, Math.max(baseWidth, 172 + Math.ceil(name.length / 8) * 18));
       return { id: r.node_id, width, height: r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH, row: r };
     }),
     edges: [
-      ...validRows
+      ...visibleRows
       .filter((r) => r.chart1_parent && ids.has(r.chart1_parent))
       .map((r) => ({
         id: `edge_${r.chart1_parent}_${r.node_id}`,
@@ -3231,6 +3289,22 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
 
   const nodeSvg = nodes.map((node) => {
     const r = node.row || {};
+    if (r.is_hybrid_column) {
+      const itemLines = (r.hybrid_items || []).slice(0, 22);
+      const extraCount = Math.max(0, (r.hybrid_items || []).length - itemLines.length);
+      const header = svgEscape(`${r.role_label || ""}（垂直清單）`);
+      const lineStartY = 48;
+      return `
+      <g class="elk-node elk-node-hybrid-column" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
+        <rect width="${node.width}" height="${node.height}" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.6" stroke-dasharray="5 4" />
+        <text x="${node.width / 2}" y="28" text-anchor="middle" fill="#0f172a" font-size="${Math.max(12, profile.nameFont - 0.5)}" font-weight="800">下層公司清單</text>
+        <text x="${node.width / 2}" y="44" text-anchor="middle" fill="#475569" font-size="${Math.max(10, profile.detailFont)}" font-weight="700">${header}</text>
+        <text x="14" y="${lineStartY}" fill="#334155" font-size="${Math.max(10, profile.detailFont)}" font-weight="600">
+          ${itemLines.map((line, i) => `<tspan x="14" dy="${i === 0 ? 16 : 20}">• ${svgEscape(line)}</tspan>`).join("")}
+          ${extraCount > 0 ? `<tspan x="14" dy="20">• 其餘 ${extraCount} 家...</tspan>` : ""}
+        </text>
+      </g>`;
+    }
     const level = Number(r.chart1_level) || 0;
     const color = LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)];
     const isMono = state.chartStyle === "mono";
