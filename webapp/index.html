@@ -16,8 +16,8 @@
     <script src="https://cdn.jsdelivr.net/npm/elkjs@0.11.1/lib/elk.bundled.js"></script>
   </head>
   <body>
-    <div class="shell">
-      <aside class="sidebar">
+    <div class="shell" id="appShell">
+      <aside class="sidebar" id="appSidebar">
         <div class="brand">
           <div class="brand-badge">股</div>
           <div>
@@ -43,7 +43,7 @@
       </aside>
 
       <main class="main">
-        <header class="topbar">
+        <header class="topbar" id="topbar">
           <div>
             <p class="eyebrow">MVP Prototype</p>
             <h2 id="pageTitle">上傳任務</h2>
@@ -384,6 +384,11 @@
               <h3>股權架構圖</h3>
             </div>
             <div class="chart-actions">
+              <div class="chart-toggle-tabs chart-space-tools" aria-label="畫面空間">
+                <button id="toggleSidebarBtn" class="chart-view-btn" type="button">隱藏側欄</button>
+                <button id="toggleToolbarBtn" class="chart-view-btn" type="button">隱藏工具列</button>
+                <button id="toggleFocusModeBtn" class="chart-view-btn" type="button">專注看圖</button>
+              </div>
               <div class="chart-toggle-tabs" aria-label="顯示方式">
                 <button class="chart-view-btn active" data-chart-view="graph" type="button">圖形關係</button>
                 <button class="chart-view-btn" data-chart-view="list" type="button">條列層級</button>

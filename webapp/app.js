@@ -45,9 +45,16 @@ const state = {
   redoStack: [],
   hasUnsavedEdits: false,
   autoDraftTimer: null,
+  sidebarCollapsed: false,
+  toolbarCollapsed: false,
+  focusMode: false,
+  currentView: "upload",
 };
 
 const elements = {
+  shell: document.getElementById("appShell"),
+  sidebar: document.getElementById("appSidebar"),
+  topbar: document.getElementById("topbar"),
   pageTitle: document.getElementById("pageTitle"),
   navButtons: [...document.querySelectorAll(".nav-btn")],
   views: [...document.querySelectorAll(".view")],
@@ -130,6 +137,9 @@ const elements = {
   exportPngBtn: document.getElementById("exportPngBtn"),
   exportHtmlBtn: document.getElementById("exportHtmlBtn"),
   printChartBtn: document.getElementById("printChartBtn"),
+  toggleSidebarBtn: document.getElementById("toggleSidebarBtn"),
+  toggleToolbarBtn: document.getElementById("toggleToolbarBtn"),
+  toggleFocusModeBtn: document.getElementById("toggleFocusModeBtn"),
   shareholderNameInput: document.getElementById("shareholderNameInput"),
   shareholderTypeSelect: document.getElementById("shareholderTypeSelect"),
   shareholderShareInput: document.getElementById("shareholderShareInput"),
@@ -160,6 +170,7 @@ const API_BASE = (window.API_BASE || "").replace(/\/$/, "");
 const CHART_ZOOM_MIN = 0.35;
 const CHART_ZOOM_MAX = 2.5;
 const TASK_SNAPSHOT_KEY = "equity-review-last-task";
+const CHART_VIEW_PREFS_KEY = "equity-chart-view-prefs";
 const MAX_CHART1_MB = 3;
 const MAX_CHART1_LONG_EDGE = 9000;
 const MAX_CHART2_CHUNKS = 9;
@@ -354,6 +365,13 @@ function updateTaskBadge() {
 }
 
 function setView(viewName) {
+  if (viewName !== "chart" && state.focusMode) {
+    state.focusMode = false;
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }
+  state.currentView = viewName;
   elements.navButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.view === viewName);
   });
@@ -362,9 +380,74 @@ function setView(viewName) {
   });
   elements.main?.classList.toggle("chart-mode", viewName === "chart");
   elements.pageTitle.textContent = pageTitles[viewName];
+  applyWorkspaceModeUI();
   syncActivityPanelVisibility(viewName);
   if (viewName === "taskCenter") loadTaskCenter();
   if (viewName === "chart") setTimeout(renderChart, 50); // 等 DOM 顯示後再渲染
+}
+
+function saveChartViewPrefs() {
+  try {
+    localStorage.setItem(CHART_VIEW_PREFS_KEY, JSON.stringify({
+      sidebarCollapsed: state.sidebarCollapsed,
+      toolbarCollapsed: state.toolbarCollapsed,
+      focusMode: state.focusMode,
+    }));
+  } catch (_) {
+    // best effort
+  }
+}
+
+function applyWorkspaceModeUI() {
+  const inChartView = state.currentView === "chart";
+  document.body.classList.toggle("sidebar-collapsed", inChartView && state.sidebarCollapsed);
+  document.body.classList.toggle("toolbar-collapsed", inChartView && state.toolbarCollapsed);
+  if (elements.toggleSidebarBtn) {
+    elements.toggleSidebarBtn.textContent = state.sidebarCollapsed ? "顯示側欄" : "隱藏側欄";
+  }
+  if (elements.toggleToolbarBtn) {
+    elements.toggleToolbarBtn.textContent = state.toolbarCollapsed ? "顯示工具列" : "隱藏工具列";
+  }
+  if (elements.toggleFocusModeBtn) {
+    elements.toggleFocusModeBtn.textContent = state.focusMode ? "退出專注" : "專注看圖";
+    elements.toggleFocusModeBtn.classList.toggle("active", state.focusMode);
+  }
+}
+
+function loadChartViewPrefs() {
+  try {
+    const prefs = JSON.parse(localStorage.getItem(CHART_VIEW_PREFS_KEY) || "null");
+    if (!prefs || typeof prefs !== "object") return;
+    state.sidebarCollapsed = Boolean(prefs.sidebarCollapsed);
+    state.toolbarCollapsed = Boolean(prefs.toolbarCollapsed);
+    state.focusMode = Boolean(prefs.focusMode);
+  } catch (_) {
+    // ignore invalid local data
+  }
+}
+
+async function setFocusMode(nextFocus) {
+  state.focusMode = Boolean(nextFocus);
+  if (state.focusMode) {
+    state.sidebarCollapsed = true;
+    state.toolbarCollapsed = true;
+    const root = document.documentElement;
+    if (!document.fullscreenElement && root.requestFullscreen) {
+      try {
+        await root.requestFullscreen();
+      } catch (_) {
+        // fullscreen may be blocked by browser policy
+      }
+    }
+  } else if (document.fullscreenElement && document.exitFullscreen) {
+    try {
+      await document.exitFullscreen();
+    } catch (_) {
+      // ignore exit failure
+    }
+  }
+  applyWorkspaceModeUI();
+  saveChartViewPrefs();
 }
 
 function enableStartIfReady() {
@@ -4410,6 +4493,21 @@ function bindEvents() {
     resetChartViewport();
     renderChart();
   });
+  elements.toggleSidebarBtn?.addEventListener("click", () => {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    if (!state.sidebarCollapsed && state.focusMode) state.focusMode = false;
+    applyWorkspaceModeUI();
+    saveChartViewPrefs();
+  });
+  elements.toggleToolbarBtn?.addEventListener("click", () => {
+    state.toolbarCollapsed = !state.toolbarCollapsed;
+    if (!state.toolbarCollapsed && state.focusMode) state.focusMode = false;
+    applyWorkspaceModeUI();
+    saveChartViewPrefs();
+  });
+  elements.toggleFocusModeBtn?.addEventListener("click", () => {
+    setFocusMode(!state.focusMode).catch((error) => console.error("focus mode toggle failed", error));
+  });
   elements.reviewConfirmAllBtn?.addEventListener("click", () => {
     confirmAllReviewRows().catch((err) => alert(`全部確認失敗：${err.message}`));
   });
@@ -4421,12 +4519,30 @@ function bindEvents() {
 
 applyChartIntent(state.chartIntent);
 bindEvents();
+loadChartViewPrefs();
+applyWorkspaceModeUI();
 updateTaskBadge();
 setAdminUnlocked(false);
 renderActivityPanel();
 syncActivityPanelVisibility("upload");
 document.body.classList.add("print-landscape");
 updateUndoRedoButtons();
+
+document.addEventListener("fullscreenchange", () => {
+  const isFullscreen = Boolean(document.fullscreenElement);
+  if (!isFullscreen && state.focusMode) {
+    state.focusMode = false;
+    applyWorkspaceModeUI();
+    saveChartViewPrefs();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (!state.focusMode) return;
+  event.preventDefault();
+  setFocusMode(false).catch((error) => console.error("focus mode exit failed", error));
+});
 
 window.addEventListener("beforeunload", (event) => {
   if (!state.hasUnsavedEdits) return;

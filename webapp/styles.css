@@ -45,6 +45,14 @@ textarea {
   min-height: 100vh;
 }
 
+body.sidebar-collapsed .shell {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+body.sidebar-collapsed .sidebar {
+  display: none;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -458,6 +466,18 @@ textarea {
 
 .main.chart-mode .topbar-actions {
   display: none;
+}
+
+body.toolbar-collapsed .main.chart-mode .topbar,
+body.toolbar-collapsed .main.chart-mode .chart-shareholder-panel,
+body.toolbar-collapsed .main.chart-mode .chart-external-panel,
+body.toolbar-collapsed .main.chart-mode #printChartTitle,
+body.toolbar-collapsed .main.chart-mode .chart-legend {
+  display: none;
+}
+
+body.toolbar-collapsed .main.chart-mode .chart-header {
+  margin-bottom: 8px;
 }
 
 /* ── Buttons ────────────────────────────────────────────────────── */
@@ -2112,6 +2132,10 @@ tr:hover .row-del-btn {
 .chart-mode-btn.active {
   background: var(--primary);
   color: #fff;
+}
+
+.chart-space-tools {
+  border-color: #c7d2fe;
 }
 
 .chart-advanced-panel {
