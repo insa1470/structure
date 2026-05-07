@@ -18,6 +18,7 @@ const state = {
   selectedReviewIndex: 0,
   selectedCandidateIndex: 0,
   chartView: "graph",
+  chartIntent: "presentation",
   chartDirection: "down",
   chartStyle: "mono",
   chartMode: "a4",
@@ -30,10 +31,16 @@ const state = {
   printOrientation: "landscape",
   printTitle: "",
   printFitToPage: true,
+  printScale: 100,
+  printMargin: "normal",
+  printFontSize: "medium",
+  printSpacing: "normal",
+  printForceOnePage: false,
   activityEvents: [],
   activityKeys: new Set(),
   selectedResultNodeIds: new Set(),
   chartShareholders: [],
+  chartExternalEntities: [],
   undoStack: [],
   redoStack: [],
   hasUnsavedEdits: false,
@@ -105,6 +112,7 @@ const elements = {
   ocrRefreshHistoryBtn: document.getElementById("ocrRefreshHistoryBtn"),
   ocrTestHistory: document.getElementById("ocrTestHistory"),
   chartViewButtons: [...document.querySelectorAll(".chart-view-btn")],
+  chartIntentButtons: [...document.querySelectorAll(".chart-intent-btn")],
   chartDirectionButtons: [...document.querySelectorAll(".chart-direction-btn")],
   chartStyleButtons: [...document.querySelectorAll(".chart-style-btn")],
   chartModeButtons: [...document.querySelectorAll(".chart-mode-btn")],
@@ -117,6 +125,7 @@ const elements = {
   printChartTitle: document.getElementById("printChartTitle"),
   chartContainer: document.getElementById("chartContainer"),
   chartLayoutBadge: document.getElementById("chartLayoutBadge"),
+  chartAdvancedPanel: document.getElementById("chartAdvancedPanel"),
   chartLegend: document.getElementById("chartLegend"),
   exportPngBtn: document.getElementById("exportPngBtn"),
   exportHtmlBtn: document.getElementById("exportHtmlBtn"),
@@ -127,6 +136,13 @@ const elements = {
   shareholderTargetSelect: document.getElementById("shareholderTargetSelect"),
   addShareholderBtn: document.getElementById("addShareholderBtn"),
   shareholderList: document.getElementById("shareholderList"),
+  externalEntityNameInput: document.getElementById("externalEntityNameInput"),
+  externalEntityTypeSelect: document.getElementById("externalEntityTypeSelect"),
+  externalEntityGroupInput: document.getElementById("externalEntityGroupInput"),
+  externalEntityTargetSelect: document.getElementById("externalEntityTargetSelect"),
+  externalEntityShareInput: document.getElementById("externalEntityShareInput"),
+  addExternalEntityBtn: document.getElementById("addExternalEntityBtn"),
+  externalEntityList: document.getElementById("externalEntityList"),
 };
 
 const pageTitles = {
@@ -248,7 +264,6 @@ function shareholderTypeText(type) {
 }
 
 function chartRowsWithShareholders(rows) {
-  if (!state.chartShareholders.length) return rows;
   const byId = {};
   rows.forEach((row) => { byId[row.node_id] = row; });
   const extraRows = [];
@@ -272,6 +287,47 @@ function chartRowsWithShareholders(rows) {
       shareholder_share: holder.share || "",
     });
   });
+
+  const groupMap = new Map();
+  (state.chartExternalEntities || []).forEach((entity) => {
+    const name = String(entity.name || "").trim();
+    if (!name) return;
+    const groupName = String(entity.group || "集團外架構").trim() || "集團外架構";
+    if (!groupMap.has(groupName)) {
+      const groupId = `EXG_${groupName.replace(/\s+/g, "_")}_${groupMap.size + 1}`;
+      groupMap.set(groupName, groupId);
+      extraRows.push({
+        node_id: groupId,
+        canonical_name: groupName,
+        chart1_name: groupName,
+        chart1_level: 0,
+        chart1_parent: "",
+        actual_controller_share: "",
+        role_label: "外部群組",
+        chart_note: "集團外主體",
+        node_status: "enriched",
+        is_external_group: true,
+      });
+    }
+    const groupId = groupMap.get(groupName);
+    extraRows.push({
+      node_id: `EX_${entity.id}`,
+      canonical_name: name,
+      chart1_name: name,
+      chart1_level: 1,
+      chart1_parent: groupId,
+      actual_controller_share: "",
+      role_label: `集團外${shareholderTypeText(entity.type)}`,
+      chart_note: entity.note || "",
+      node_status: "enriched",
+      is_external_entity: true,
+      external_type: entity.type || "company",
+      external_group: groupName,
+      external_link_target: entity.target_node_id || "",
+      external_link_share: entity.share || "",
+    });
+  });
+
   return [...extraRows, ...rows];
 }
 
@@ -973,9 +1029,15 @@ function hydrateTask(task) {
   state.reviewRows = (task.review_rows || []).filter((row) => row.issue_type !== "chart2_only");
   state.candidateRows = task.candidate_rows || [];
   state.chartShareholders = task.chart_shareholders || [];
+  state.chartExternalEntities = task.chart_external_entities || [];
   state.printTitle = task.chart_print_settings?.title || "";
   state.printFitToPage = task.chart_print_settings?.fit_to_page !== false;
   state.printOrientation = task.chart_print_settings?.orientation || state.printOrientation;
+  state.printScale = Number(task.chart_print_settings?.scale || 100);
+  state.printMargin = task.chart_print_settings?.margin || "normal";
+  state.printFontSize = task.chart_print_settings?.font_size || "medium";
+  state.printSpacing = task.chart_print_settings?.spacing || "normal";
+  state.printForceOnePage = task.chart_print_settings?.force_one_page === true;
   state.reviewDecisions = task.review_decisions || {};
   state.candidateDecisions = task.candidate_decisions || {};
   state.selectedReviewIndex = 0;
@@ -998,6 +1060,7 @@ function hydrateTask(task) {
   renderCandidateDetail();
   renderResults();
   renderShareholderPanel();
+  renderExternalEntityPanel();
   updateUndoRedoButtons();
 }
 
@@ -1007,10 +1070,16 @@ function applyTaskRefresh(payload) {
   if (payload.review_rows) state.reviewRows = payload.review_rows.filter((row) => row.issue_type !== "chart2_only");
   if (payload.candidate_rows) state.candidateRows = payload.candidate_rows;
   if (payload.chart_shareholders) state.chartShareholders = payload.chart_shareholders;
+  if (payload.chart_external_entities) state.chartExternalEntities = payload.chart_external_entities;
   if (payload.chart_print_settings) {
     state.printTitle = payload.chart_print_settings.title || "";
     state.printFitToPage = payload.chart_print_settings.fit_to_page !== false;
     state.printOrientation = payload.chart_print_settings.orientation || state.printOrientation;
+    state.printScale = Number(payload.chart_print_settings.scale || 100);
+    state.printMargin = payload.chart_print_settings.margin || "normal";
+    state.printFontSize = payload.chart_print_settings.font_size || "medium";
+    state.printSpacing = payload.chart_print_settings.spacing || "normal";
+    state.printForceOnePage = payload.chart_print_settings.force_one_page === true;
   }
   state.selectedResultNodeIds = new Set(
     [...state.selectedResultNodeIds].filter((nodeId) => state.masterRows.some((row) => row.node_id === nodeId))
@@ -1024,6 +1093,7 @@ function applyTaskRefresh(payload) {
   renderCandidateDetail();
   renderResults();
   renderShareholderPanel();
+  renderExternalEntityPanel();
   updateUndoRedoButtons();
 }
 
@@ -2616,6 +2686,76 @@ async function saveChartShareholders(nextShareholders) {
   renderChart();
 }
 
+function renderExternalEntityPanel() {
+  if (!elements.externalEntityTargetSelect || !elements.externalEntityList) return;
+  const targets = getTopLevelCompanyRows();
+  elements.externalEntityTargetSelect.innerHTML = [
+    `<option value="">不指定（僅同圖並列）</option>`,
+    ...targets.map((row) => `<option value="${row.node_id}">${svgEscape(row.canonical_name || row.chart1_name)}</option>`),
+  ].join("");
+  if (elements.addExternalEntityBtn) elements.addExternalEntityBtn.disabled = !state.taskId;
+  if (!state.chartExternalEntities.length) {
+    elements.externalEntityList.innerHTML = `<span class="external-empty">尚未加入集團外主體</span>`;
+    return;
+  }
+  const byId = {};
+  state.masterRows.forEach((row) => { byId[row.node_id] = row; });
+  elements.externalEntityList.innerHTML = state.chartExternalEntities.map((entity) => {
+    const target = entity.target_node_id ? byId[entity.target_node_id] : null;
+    const targetName = target ? (target.canonical_name || target.chart1_name) : "同圖並列";
+    const groupName = entity.group || "集團外架構";
+    const relation = entity.share ? `${entity.share} → ${targetName}` : targetName;
+    return `
+      <article class="external-chip">
+        <span><strong>${svgEscape(entity.name)}</strong>（${shareholderTypeText(entity.type)}）</span>
+        <span>${svgEscape(groupName)}</span>
+        <span>${svgEscape(relation)}</span>
+        <button type="button" data-external-delete="${entity.id}" title="移除此主體">×</button>
+      </article>`;
+  }).join("");
+  elements.externalEntityList.querySelectorAll("[data-external-delete]").forEach((button) => {
+    button.addEventListener("click", () => {
+      deleteExternalEntity(button.dataset.externalDelete).catch((error) => alert(`移除失敗：${error.message}`));
+    });
+  });
+}
+
+async function saveExternalEntities(nextEntities) {
+  const payload = await apiPost(`/api/tasks/${state.taskId}/chart-external-entities`, {
+    chart_external_entities: nextEntities,
+  });
+  applyTaskRefresh(payload);
+  renderChart();
+}
+
+async function addExternalEntity() {
+  const name = elements.externalEntityNameInput?.value.trim() || "";
+  if (!name) {
+    elements.externalEntityNameInput?.focus();
+    return;
+  }
+  const next = [
+    ...state.chartExternalEntities,
+    {
+      id: makeShareholderId(),
+      name,
+      type: elements.externalEntityTypeSelect?.value || "company",
+      group: elements.externalEntityGroupInput?.value.trim() || "集團外架構",
+      target_node_id: elements.externalEntityTargetSelect?.value || "",
+      share: elements.externalEntityShareInput?.value.trim() || "",
+      note: "",
+    },
+  ];
+  await saveExternalEntities(next);
+  elements.externalEntityNameInput.value = "";
+  elements.externalEntityShareInput.value = "";
+}
+
+async function deleteExternalEntity(id) {
+  if (!id) return;
+  await saveExternalEntities(state.chartExternalEntities.filter((entity) => entity.id !== id));
+}
+
 async function addChartShareholder() {
   if (!state.taskId) return;
   const name = elements.shareholderNameInput?.value.trim() || "";
@@ -2763,10 +2903,35 @@ function getChartProfile() {
   return CHART_PROFILES[state.chartMode] || CHART_PROFILES.a4;
 }
 
+function applyChartIntent(intent, { fromUser = false } = {}) {
+  const next = intent || "presentation";
+  state.chartIntent = next;
+  if (next === "print_single") {
+    state.chartMode = "a4";
+    state.chartDepth = "2";
+    state.chartDirection = "down";
+    state.printFitToPage = true;
+  } else if (next === "print_paged") {
+    state.chartMode = "paged";
+    state.chartDepth = "all";
+    state.chartDirection = "down";
+    state.printFitToPage = false;
+  } else {
+    state.chartMode = "a3";
+    state.chartDepth = "all";
+  }
+  if (fromUser && elements.chartAdvancedPanel) {
+    elements.chartAdvancedPanel.open = false;
+  }
+}
+
 function syncChartModeButtons() {
   const isGraph = state.chartView === "graph";
   elements.chartViewButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.chartView === state.chartView);
+  });
+  elements.chartIntentButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.chartIntent === state.chartIntent);
   });
   elements.chartDirectionButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.chartDirection === state.chartDirection);
@@ -2813,6 +2978,14 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       targets: [r.shareholder_target],
       ratio: r.shareholder_share || "",
     }));
+  const externalRelationEdges = validRows
+    .filter((r) => r.is_external_entity && r.external_link_target && ids.has(r.external_link_target))
+    .map((r) => ({
+      id: `edge_${r.node_id}_${r.external_link_target}`,
+      sources: [r.node_id],
+      targets: [r.external_link_target],
+      ratio: r.external_link_share || "",
+    }));
 
   return {
     id: graphId,
@@ -2841,6 +3014,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
         ratio: r.actual_controller_share || "",
       })),
       ...shareholderEdges,
+      ...externalRelationEdges,
     ],
   };
 }
@@ -3507,10 +3681,15 @@ function renderChart() {
   const isList = state.chartView === "list";
   const title = getChartTitle();
   if (elements.printChartTitle) elements.printChartTitle.textContent = getPrintTitle();
+  const intentLabel = {
+    presentation: "簡報模式",
+    print_single: "列印一頁",
+    print_paged: "分頁列印",
+  }[state.chartIntent] || "簡報模式";
 
   elements.chartLayoutBadge.textContent = isList
-    ? `${total} 家公司 · 條列層級 · ${getChartDepthLabel()}`
-    : `${total} 家公司 · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${getChartDepthLabel()} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
+    ? `${total} 家公司 · ${intentLabel} · 條列層級 · ${getChartDepthLabel()}`
+    : `${total} 家公司 · ${intentLabel} · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${getChartDepthLabel()} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
 
   // 切換容器樣式
   elements.chartContainer.classList.toggle("chart-container-list", isList);
@@ -3723,6 +3902,41 @@ function openPrintSettings() {
           <small>系統會依紙張方向自動縮放並置中，避免手動排版。</small>
         </span>
       </label>
+      <label class="field">
+        <span>縮放（%）</span>
+        <input id="printScaleInput" type="number" min="70" max="130" step="5" value="${state.printScale}" />
+      </label>
+      <label class="field">
+        <span>邊界</span>
+        <select id="printMarginSelect">
+          <option value="narrow" ${state.printMargin === "narrow" ? "selected" : ""}>窄</option>
+          <option value="normal" ${state.printMargin === "normal" ? "selected" : ""}>標準</option>
+          <option value="wide" ${state.printMargin === "wide" ? "selected" : ""}>寬</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>字級</span>
+        <select id="printFontSizeSelect">
+          <option value="small" ${state.printFontSize === "small" ? "selected" : ""}>小</option>
+          <option value="medium" ${state.printFontSize === "medium" ? "selected" : ""}>中</option>
+          <option value="large" ${state.printFontSize === "large" ? "selected" : ""}>大</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>間距</span>
+        <select id="printSpacingSelect">
+          <option value="compact" ${state.printSpacing === "compact" ? "selected" : ""}>緊湊</option>
+          <option value="normal" ${state.printSpacing === "normal" ? "selected" : ""}>標準</option>
+          <option value="loose" ${state.printSpacing === "loose" ? "selected" : ""}>寬鬆</option>
+        </select>
+      </label>
+      <label class="print-fit-toggle">
+        <input id="printForceOnePageInput" type="checkbox" ${state.printForceOnePage ? "checked" : ""} />
+        <span>
+          <strong>強制一頁</strong>
+          <small>可能會變小，僅在必要時使用。</small>
+        </span>
+      </label>
       <div class="detail-actions">
         <button class="ghost-btn" id="printSettingsCancel" type="button">取消</button>
         <button class="primary-btn" id="printSettingsSubmit" type="button">開啟列印</button>
@@ -3751,8 +3965,18 @@ function openPrintSettings() {
   modal.querySelector("#printSettingsSubmit")?.addEventListener("click", async () => {
     const titleInput = modal.querySelector("#printTitleInput");
     const fitInput = modal.querySelector("#printFitToPageInput");
+    const scaleInput = modal.querySelector("#printScaleInput");
+    const marginSelect = modal.querySelector("#printMarginSelect");
+    const fontSizeSelect = modal.querySelector("#printFontSizeSelect");
+    const spacingSelect = modal.querySelector("#printSpacingSelect");
+    const forceOnePageInput = modal.querySelector("#printForceOnePageInput");
     state.printTitle = titleInput?.value.trim() || getChartTitle();
     state.printFitToPage = Boolean(fitInput?.checked);
+    state.printScale = clampNumber(Number(scaleInput?.value || 100), 70, 130);
+    state.printMargin = ["narrow", "normal", "wide"].includes(marginSelect?.value) ? marginSelect.value : "normal";
+    state.printFontSize = ["small", "medium", "large"].includes(fontSizeSelect?.value) ? fontSizeSelect.value : "medium";
+    state.printSpacing = ["compact", "normal", "loose"].includes(spacingSelect?.value) ? spacingSelect.value : "normal";
+    state.printForceOnePage = Boolean(forceOnePageInput?.checked);
     await savePrintSettings(selectedOrientation).catch((error) => console.error("print settings save failed", error));
     modal.remove();
     printChart(selectedOrientation);
@@ -3769,6 +3993,11 @@ async function savePrintSettings(orientation = state.printOrientation) {
     title: state.printTitle || getChartTitle(),
     orientation,
     fit_to_page: state.printFitToPage,
+    scale: state.printScale,
+    margin: state.printMargin,
+    font_size: state.printFontSize,
+    spacing: state.printSpacing,
+    force_one_page: state.printForceOnePage,
   });
   applyTaskRefresh(payload);
 }
@@ -3782,7 +4011,26 @@ function printChart(orientation = state.printOrientation) {
   document.getElementById("dynamicPrintPageStyle")?.remove();
   const style = document.createElement("style");
   style.id = "dynamicPrintPageStyle";
-  style.textContent = `@media print { @page { size: A4 ${state.printOrientation}; margin: 12mm 15mm; } }`;
+  const marginMap = {
+    narrow: "8mm 10mm",
+    normal: "12mm 15mm",
+    wide: "16mm 20mm",
+  };
+  const margin = marginMap[state.printMargin] || marginMap.normal;
+  const fontScale = {
+    small: 0.94,
+    medium: 1,
+    large: 1.08,
+  }[state.printFontSize] || 1;
+  const spacingScale = {
+    compact: 0.92,
+    normal: 1,
+    loose: 1.1,
+  }[state.printSpacing] || 1;
+  style.textContent = `@media print {
+    @page { size: A4 ${state.printOrientation}; margin: ${margin}; }
+    #chart { --print-font-scale: ${fontScale}; --print-spacing-scale: ${spacingScale}; }
+  }`;
   document.head.appendChild(style);
   window.print();
 }
@@ -3790,12 +4038,19 @@ function printChart(orientation = state.printOrientation) {
 function preparePrintLayout() {
   const container = elements.chartContainer;
   if (!container) return;
-  const maxWidthMm = state.printOrientation === "portrait" ? 180 : 267;
-  const maxHeightMm = state.printOrientation === "portrait" ? 235 : 148;
+  const marginWidthByProfile = { narrow: 6, normal: 0, wide: -10 };
+  const marginHeightByProfile = { narrow: 8, normal: 0, wide: -12 };
+  const maxWidthMmBase = state.printOrientation === "portrait" ? 180 : 267;
+  const maxHeightMmBase = state.printOrientation === "portrait" ? 235 : 148;
+  const maxWidthMm = maxWidthMmBase + (marginWidthByProfile[state.printMargin] || 0);
+  const maxHeightMm = maxHeightMmBase + (marginHeightByProfile[state.printMargin] || 0);
+  const manualScale = clampNumber(Number(state.printScale || 100), 70, 130) / 100;
   container.querySelectorAll(".elk-svg").forEach((svg) => {
     const width = Number(svg.getAttribute("width")) || svg.viewBox?.baseVal?.width || 1;
     const height = Number(svg.getAttribute("height")) || svg.viewBox?.baseVal?.height || 1;
-    const scale = state.printFitToPage ? Math.min(maxWidthMm / width, maxHeightMm / height, 1) : Math.min(maxWidthMm / width, 1);
+    const fitEnabled = state.printForceOnePage || state.printFitToPage;
+    const autoScale = fitEnabled ? Math.min(maxWidthMm / width, maxHeightMm / height, 1) : Math.min(maxWidthMm / width, 1);
+    const scale = Math.min(1.4, autoScale * manualScale);
     const printWidth = Math.max(60, Math.min(maxWidthMm, width * scale));
     svg.style.setProperty("--print-svg-width", `${printWidth.toFixed(2)}mm`);
     svg.style.setProperty("--print-svg-height", "auto");
@@ -3911,6 +4166,21 @@ function bindEvents() {
   elements.addShareholderBtn?.addEventListener("click", () => {
     addChartShareholder().catch((error) => alert(`加入上層股東失敗：${error.message}`));
   });
+  elements.addExternalEntityBtn?.addEventListener("click", () => {
+    addExternalEntity().catch((error) => alert(`加入集團外主體失敗：${error.message}`));
+  });
+  elements.externalEntityNameInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addExternalEntity().catch((error) => alert(`加入集團外主體失敗：${error.message}`));
+    }
+  });
+  elements.externalEntityShareInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addExternalEntity().catch((error) => alert(`加入集團外主體失敗：${error.message}`));
+    }
+  });
   elements.undoBtn?.addEventListener("click", () => {
     undoTaskEdit().catch((error) => alert(`回復失敗：${error.message}`));
   });
@@ -3945,9 +4215,18 @@ function bindEvents() {
       renderChart();
     });
   });
+  elements.chartIntentButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      applyChartIntent(button.dataset.chartIntent || "presentation", { fromUser: true });
+      state.selectedBranchId = "__all__";
+      resetChartViewport();
+      renderChart();
+    });
+  });
   elements.chartDirectionButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartDirection = button.dataset.chartDirection || "down";
+      if (state.chartIntent !== "presentation") state.chartIntent = "presentation";
       resetChartViewport();
       renderChart();
     });
@@ -3961,6 +4240,7 @@ function bindEvents() {
   elements.chartModeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartMode = button.dataset.chartMode || "a4";
+      if (state.chartIntent !== "presentation") state.chartIntent = "presentation";
       state.selectedBranchId = "__all__";
       resetChartViewport();
       renderChart();
@@ -3969,6 +4249,7 @@ function bindEvents() {
   elements.chartDepthButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.chartDepth = button.dataset.chartDepth || "all";
+      if (state.chartIntent !== "presentation") state.chartIntent = "presentation";
       state.selectedBranchId = "__all__";
       resetChartViewport();
       renderChart();
@@ -4003,6 +4284,7 @@ function bindEvents() {
   elements.printChartBtn.addEventListener("click", openPrintSettings);
 }
 
+applyChartIntent(state.chartIntent);
 bindEvents();
 updateTaskBadge();
 setAdminUnlocked(false);

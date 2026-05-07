@@ -1302,6 +1302,56 @@ def update_chart_shareholders(task_id: str):
     return jsonify({
         "ok": True,
         "chart_shareholders": task["chart_shareholders"],
+        "chart_external_entities": task.get("chart_external_entities", []),
+        "master_rows": task.get("master_rows", []),
+        "review_rows": task.get("review_rows", []),
+        "candidate_rows": task.get("candidate_rows", []),
+        "summary": task.get("summary", {}),
+        "graph": task.get("graph", {}),
+    })
+
+
+@app.route("/api/tasks/<task_id>/chart-external-entities", methods=["POST"])
+def update_chart_external_entities(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    rows = payload.get("chart_external_entities")
+    if not isinstance(rows, list):
+        return jsonify({"error": "chart_external_entities_required", "message": "請提供集團外主體清單。"}), 400
+
+    valid_targets = {str(row.get("node_id")) for row in task.get("master_rows", []) if row.get("node_id")}
+    cleaned = []
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if not name:
+            continue
+        entity_type = str(row.get("type") or "company").strip()
+        if entity_type not in {"company", "person"}:
+            entity_type = "company"
+        target_node_id = str(row.get("target_node_id") or "").strip()
+        if target_node_id and target_node_id not in valid_targets:
+            target_node_id = ""
+        group_name = str(row.get("group") or "").strip() or "集團外架構"
+        cleaned.append({
+            "id": str(row.get("id") or f"external_{idx + 1}").strip(),
+            "name": name,
+            "type": entity_type,
+            "group": group_name,
+            "share": str(row.get("share") or "").strip(),
+            "target_node_id": target_node_id,
+            "note": str(row.get("note") or "").strip(),
+        })
+
+    task["chart_external_entities"] = cleaned
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "chart_shareholders": task.get("chart_shareholders", []),
+        "chart_external_entities": task["chart_external_entities"],
         "master_rows": task.get("master_rows", []),
         "review_rows": task.get("review_rows", []),
         "candidate_rows": task.get("candidate_rows", []),
@@ -1320,16 +1370,36 @@ def update_chart_print_settings(task_id: str):
     orientation = str(payload.get("orientation") or "landscape").strip()
     if orientation not in {"portrait", "landscape"}:
         orientation = "landscape"
+    margin = str(payload.get("margin") or "normal").strip()
+    if margin not in {"narrow", "normal", "wide"}:
+        margin = "normal"
+    font_size = str(payload.get("font_size") or "medium").strip()
+    if font_size not in {"small", "medium", "large"}:
+        font_size = "medium"
+    spacing = str(payload.get("spacing") or "normal").strip()
+    if spacing not in {"compact", "normal", "loose"}:
+        spacing = "normal"
+    try:
+        scale = int(payload.get("scale", 100))
+    except (TypeError, ValueError):
+        scale = 100
+    scale = max(70, min(scale, 130))
     task["chart_print_settings"] = {
         "title": title,
         "orientation": orientation,
         "fit_to_page": bool(payload.get("fit_to_page", True)),
+        "scale": scale,
+        "margin": margin,
+        "font_size": font_size,
+        "spacing": spacing,
+        "force_one_page": bool(payload.get("force_one_page", False)),
     }
     save_task(task)
     return jsonify({
         "ok": True,
         "chart_print_settings": task["chart_print_settings"],
         "chart_shareholders": task.get("chart_shareholders", []),
+        "chart_external_entities": task.get("chart_external_entities", []),
         "master_rows": task.get("master_rows", []),
         "review_rows": task.get("review_rows", []),
         "candidate_rows": task.get("candidate_rows", []),

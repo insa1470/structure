@@ -388,6 +388,14 @@
                 <button class="chart-view-btn active" data-chart-view="graph" type="button">圖形關係</button>
                 <button class="chart-view-btn" data-chart-view="list" type="button">條列層級</button>
               </div>
+              <div class="chart-toggle-tabs chart-intent-tabs" aria-label="使用目的">
+                <button class="chart-intent-btn active" data-chart-intent="presentation" type="button">簡報模式</button>
+                <button class="chart-intent-btn" data-chart-intent="print_single" type="button">列印一頁</button>
+                <button class="chart-intent-btn" data-chart-intent="print_paged" type="button">分頁列印</button>
+              </div>
+              <details class="chart-advanced-panel" id="chartAdvancedPanel">
+                <summary>進階設定</summary>
+                <div class="chart-advanced-content">
               <div class="chart-toggle-tabs chart-direction-tabs" aria-label="圖形方向">
                 <button class="chart-direction-btn active" data-chart-direction="down" type="button">上到下</button>
                 <button class="chart-direction-btn" data-chart-direction="right" type="button">左到右</button>
@@ -421,6 +429,8 @@
                 <input id="chartShowRootToggle" type="checkbox" />
                 <span>顯示集團主體</span>
               </label>
+                </div>
+              </details>
               <span id="chartLayoutBadge" class="pill info"></span>
               <button id="exportPngBtn" class="ghost-btn">⬇ 下載 PNG</button>
               <button id="exportHtmlBtn" class="ghost-btn">⬇ 下載 HTML</button>
@@ -451,6 +461,35 @@
               <button id="addShareholderBtn" class="ghost-btn" type="button">＋ 加入圖面</button>
             </div>
             <div id="shareholderList" class="chart-shareholder-list"></div>
+          </div>
+          <div class="chart-external-panel">
+            <div class="chart-external-form">
+              <label class="field">
+                <span>集團外主體</span>
+                <input id="externalEntityNameInput" type="text" placeholder="公司或個人名稱" />
+              </label>
+              <label class="field">
+                <span>類型</span>
+                <select id="externalEntityTypeSelect">
+                  <option value="company">公司</option>
+                  <option value="person">個人</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>群組</span>
+                <input id="externalEntityGroupInput" type="text" placeholder="例如：集團外關聯主體 A" />
+              </label>
+              <label class="field">
+                <span>關聯對象（可選）</span>
+                <select id="externalEntityTargetSelect"></select>
+              </label>
+              <label class="field">
+                <span>關聯持股（可選）</span>
+                <input id="externalEntityShareInput" type="text" placeholder="例如：35%" />
+              </label>
+              <button id="addExternalEntityBtn" class="ghost-btn" type="button">＋ 加入同圖</button>
+            </div>
+            <div id="externalEntityList" class="chart-external-list"></div>
           </div>
           <h2 id="printChartTitle" class="print-chart-title">股權架構圖</h2>
           <div id="chartLegend" class="chart-legend"></div>
