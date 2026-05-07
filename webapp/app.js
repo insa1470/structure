@@ -133,18 +133,9 @@ const elements = {
   exportHtmlBtn: document.getElementById("exportHtmlBtn"),
   printChartBtn: document.getElementById("printChartBtn"),
   toggleToolbarBtn: document.getElementById("toggleToolbarBtn"),
-  shareholderNameInput: document.getElementById("shareholderNameInput"),
-  shareholderTypeSelect: document.getElementById("shareholderTypeSelect"),
-  shareholderShareInput: document.getElementById("shareholderShareInput"),
-  shareholderTargetSelect: document.getElementById("shareholderTargetSelect"),
-  addShareholderBtn: document.getElementById("addShareholderBtn"),
+  openShareholderModalBtn: document.getElementById("openShareholderModalBtn"),
+  openExternalEntityModalBtn: document.getElementById("openExternalEntityModalBtn"),
   shareholderList: document.getElementById("shareholderList"),
-  externalEntityNameInput: document.getElementById("externalEntityNameInput"),
-  externalEntityTypeSelect: document.getElementById("externalEntityTypeSelect"),
-  externalEntityGroupInput: document.getElementById("externalEntityGroupInput"),
-  externalEntityTargetSelect: document.getElementById("externalEntityTargetSelect"),
-  externalEntityShareInput: document.getElementById("externalEntityShareInput"),
-  addExternalEntityBtn: document.getElementById("addExternalEntityBtn"),
   externalEntityList: document.getElementById("externalEntityList"),
 };
 
@@ -2682,12 +2673,7 @@ function exportWorkbook() {
 }
 
 function renderShareholderPanel() {
-  if (!elements.shareholderTargetSelect || !elements.shareholderList) return;
-  const targets = getTopLevelCompanyRows();
-  elements.shareholderTargetSelect.innerHTML = targets.length
-    ? targets.map((row) => `<option value="${row.node_id}">${row.canonical_name || row.chart1_name || "未命名公司"}</option>`).join("")
-    : `<option value="">尚無一級子公司</option>`;
-  if (elements.addShareholderBtn) elements.addShareholderBtn.disabled = !state.taskId || !targets.length;
+  if (!elements.shareholderList) return;
 
   if (!state.chartShareholders.length) {
     elements.shareholderList.innerHTML = `<span class="shareholder-empty">尚未加入上層股東</span>`;
@@ -2722,13 +2708,7 @@ async function saveChartShareholders(nextShareholders) {
 }
 
 function renderExternalEntityPanel() {
-  if (!elements.externalEntityTargetSelect || !elements.externalEntityList) return;
-  const targets = getTopLevelCompanyRows();
-  elements.externalEntityTargetSelect.innerHTML = [
-    `<option value="">不指定（僅同圖並列）</option>`,
-    ...targets.map((row) => `<option value="${row.node_id}">${svgEscape(row.canonical_name || row.chart1_name)}</option>`),
-  ].join("");
-  if (elements.addExternalEntityBtn) elements.addExternalEntityBtn.disabled = !state.taskId;
+  if (!elements.externalEntityList) return;
   if (!state.chartExternalEntities.length) {
     elements.externalEntityList.innerHTML = `<span class="external-empty">尚未加入集團外主體</span>`;
     return;
@@ -2763,27 +2743,22 @@ async function saveExternalEntities(nextEntities) {
   renderChart();
 }
 
-async function addExternalEntity() {
-  const name = elements.externalEntityNameInput?.value.trim() || "";
-  if (!name) {
-    elements.externalEntityNameInput?.focus();
-    return;
-  }
+async function addExternalEntityWithPayload(form) {
+  const name = String(form?.name || "").trim();
+  if (!name) return;
   const next = [
     ...state.chartExternalEntities,
     {
       id: makeShareholderId(),
       name,
-      type: elements.externalEntityTypeSelect?.value || "company",
-      group: elements.externalEntityGroupInput?.value.trim() || "集團外架構",
-      target_node_id: elements.externalEntityTargetSelect?.value || "",
-      share: elements.externalEntityShareInput?.value.trim() || "",
+      type: form.type || "company",
+      group: String(form.group || "").trim() || "集團外架構",
+      target_node_id: form.target_node_id || "",
+      share: String(form.share || "").trim(),
       note: "",
     },
   ];
   await saveExternalEntities(next);
-  elements.externalEntityNameInput.value = "";
-  elements.externalEntityShareInput.value = "";
 }
 
 async function deleteExternalEntity(id) {
@@ -2791,12 +2766,11 @@ async function deleteExternalEntity(id) {
   await saveExternalEntities(state.chartExternalEntities.filter((entity) => entity.id !== id));
 }
 
-async function addChartShareholder() {
+async function addChartShareholderWithPayload(form) {
   if (!state.taskId) return;
-  const name = elements.shareholderNameInput?.value.trim() || "";
-  const targetNodeId = elements.shareholderTargetSelect?.value || "";
+  const name = String(form?.name || "").trim();
+  const targetNodeId = form?.target_node_id || "";
   if (!name || !targetNodeId) {
-    elements.shareholderNameInput?.focus();
     return;
   }
   const next = [
@@ -2804,20 +2778,110 @@ async function addChartShareholder() {
     {
       id: makeShareholderId(),
       name,
-      type: elements.shareholderTypeSelect?.value || "company",
-      share: elements.shareholderShareInput?.value.trim() || "",
+      type: form.type || "company",
+      share: String(form.share || "").trim(),
       target_node_id: targetNodeId,
       note: "",
     },
   ];
   await saveChartShareholders(next);
-  elements.shareholderNameInput.value = "";
-  elements.shareholderShareInput.value = "";
 }
 
 async function deleteChartShareholder(id) {
   if (!state.taskId || !id) return;
   await saveChartShareholders(state.chartShareholders.filter((holder) => holder.id !== id));
+}
+
+function closeEntityModal() {
+  document.getElementById("entityEditModal")?.remove();
+}
+
+function openShareholderModal() {
+  if (!state.taskId) return;
+  const targets = getTopLevelCompanyRows();
+  if (!targets.length) {
+    alert("目前沒有可選的一級子公司。");
+    return;
+  }
+  closeEntityModal();
+  const modal = document.createElement("div");
+  modal.id = "entityEditModal";
+  modal.className = "entity-modal-backdrop";
+  modal.innerHTML = `
+    <div class="entity-modal" role="dialog" aria-modal="true" aria-labelledby="entityModalTitle">
+      <h3 id="entityModalTitle">新增上層股東</h3>
+      <label class="field"><span>名稱</span><input id="entityNameInput" type="text" placeholder="公司或個人名稱" /></label>
+      <label class="field"><span>類型</span>
+        <select id="entityTypeSelect"><option value="company">公司</option><option value="person">個人</option></select>
+      </label>
+      <label class="field"><span>持股</span><input id="entityShareInput" type="text" placeholder="例如：60%" /></label>
+      <label class="field"><span>投資對象</span>
+        <select id="entityTargetSelect">${targets.map((row) => `<option value="${row.node_id}">${svgEscape(row.canonical_name || row.chart1_name || "未命名公司")}</option>`).join("")}</select>
+      </label>
+      <div class="detail-actions">
+        <button class="ghost-btn" id="entityCancelBtn" type="button">取消</button>
+        <button class="primary-btn" id="entitySubmitBtn" type="button">儲存</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const nameInput = modal.querySelector("#entityNameInput");
+  nameInput?.focus();
+  modal.querySelector("#entityCancelBtn")?.addEventListener("click", closeEntityModal);
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) closeEntityModal();
+  });
+  modal.querySelector("#entitySubmitBtn")?.addEventListener("click", async () => {
+    const name = modal.querySelector("#entityNameInput")?.value.trim() || "";
+    const type = modal.querySelector("#entityTypeSelect")?.value || "company";
+    const share = modal.querySelector("#entityShareInput")?.value.trim() || "";
+    const target_node_id = modal.querySelector("#entityTargetSelect")?.value || "";
+    if (!name || !target_node_id) return;
+    await addChartShareholderWithPayload({ name, type, share, target_node_id });
+    closeEntityModal();
+  });
+}
+
+function openExternalEntityModal() {
+  if (!state.taskId) return;
+  const targets = getTopLevelCompanyRows();
+  closeEntityModal();
+  const modal = document.createElement("div");
+  modal.id = "entityEditModal";
+  modal.className = "entity-modal-backdrop";
+  modal.innerHTML = `
+    <div class="entity-modal" role="dialog" aria-modal="true" aria-labelledby="entityModalTitle">
+      <h3 id="entityModalTitle">新增集團外主體</h3>
+      <label class="field"><span>名稱</span><input id="entityNameInput" type="text" placeholder="公司或個人名稱" /></label>
+      <label class="field"><span>類型</span>
+        <select id="entityTypeSelect"><option value="company">公司</option><option value="person">個人</option></select>
+      </label>
+      <label class="field"><span>群組</span><input id="entityGroupInput" type="text" placeholder="例如：集團外關聯主體 A" /></label>
+      <label class="field"><span>關聯對象（可選）</span>
+        <select id="entityTargetSelect"><option value="">不指定（僅同圖並列）</option>${targets.map((row) => `<option value="${row.node_id}">${svgEscape(row.canonical_name || row.chart1_name || "未命名公司")}</option>`).join("")}</select>
+      </label>
+      <label class="field"><span>關聯持股（可選）</span><input id="entityShareInput" type="text" placeholder="例如：35%" /></label>
+      <div class="detail-actions">
+        <button class="ghost-btn" id="entityCancelBtn" type="button">取消</button>
+        <button class="primary-btn" id="entitySubmitBtn" type="button">儲存</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const nameInput = modal.querySelector("#entityNameInput");
+  nameInput?.focus();
+  modal.querySelector("#entityCancelBtn")?.addEventListener("click", closeEntityModal);
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) closeEntityModal();
+  });
+  modal.querySelector("#entitySubmitBtn")?.addEventListener("click", async () => {
+    const name = modal.querySelector("#entityNameInput")?.value.trim() || "";
+    const type = modal.querySelector("#entityTypeSelect")?.value || "company";
+    const group = modal.querySelector("#entityGroupInput")?.value.trim() || "集團外架構";
+    const target_node_id = modal.querySelector("#entityTargetSelect")?.value || "";
+    const share = modal.querySelector("#entityShareInput")?.value.trim() || "";
+    if (!name) return;
+    await addExternalEntityWithPayload({ name, type, group, target_node_id, share });
+    closeEntityModal();
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -4332,24 +4396,8 @@ function bindEvents() {
   elements.batchDeleteBtn?.addEventListener("click", () => {
     runBatchDelete().catch((error) => alert(`批次刪除失敗：${error.message}`));
   });
-  elements.addShareholderBtn?.addEventListener("click", () => {
-    addChartShareholder().catch((error) => alert(`加入上層股東失敗：${error.message}`));
-  });
-  elements.addExternalEntityBtn?.addEventListener("click", () => {
-    addExternalEntity().catch((error) => alert(`加入集團外主體失敗：${error.message}`));
-  });
-  elements.externalEntityNameInput?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      addExternalEntity().catch((error) => alert(`加入集團外主體失敗：${error.message}`));
-    }
-  });
-  elements.externalEntityShareInput?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      addExternalEntity().catch((error) => alert(`加入集團外主體失敗：${error.message}`));
-    }
-  });
+  elements.openShareholderModalBtn?.addEventListener("click", openShareholderModal);
+  elements.openExternalEntityModalBtn?.addEventListener("click", openExternalEntityModal);
   elements.undoBtn?.addEventListener("click", () => {
     undoTaskEdit().catch((error) => alert(`回復失敗：${error.message}`));
   });

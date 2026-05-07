@@ -2192,21 +2192,35 @@ tr:hover .row-del-btn {
   background: #fff;
 }
 
-.chart-external-panel {
-  display: grid;
-  gap: 10px;
-  margin: 0 0 12px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
+.chart-entity-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.chart-external-form {
+.entity-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(15, 23, 42, 0.4);
   display: grid;
-  grid-template-columns: minmax(180px, 1.25fr) 110px minmax(170px, 1fr) minmax(190px, 1fr) 130px auto;
+  place-items: center;
+  padding: 18px;
+}
+
+.entity-modal {
+  width: min(560px, 100%);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
   gap: 10px;
-  align-items: end;
+}
+
+.entity-modal h3 {
+  margin: 0 0 2px;
+  font-size: 18px;
 }
 
 .chart-external-list {
@@ -2240,13 +2254,6 @@ tr:hover .row-del-btn {
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-}
-
-.chart-shareholder-form {
-  display: grid;
-  grid-template-columns: minmax(180px, 1.25fr) 110px 120px minmax(190px, 1fr) auto;
-  gap: 10px;
-  align-items: end;
 }
 
 .chart-shareholder-list {
