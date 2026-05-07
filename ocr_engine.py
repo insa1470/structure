@@ -41,11 +41,56 @@ OCR_TEXT_PROMPT = """請對這張圖片做 OCR 文字辨識。
 [{"text":"辨識到的文字"}]
 """
 
+OCR_PROMPT_STRICT_V2 = """你是 OCR 引擎，不是摘要器。
+
+任務：
+- 只擷取圖片中實際看得到的文字，不要推測、不要補全、不要翻譯。
+- 依畫面順序輸出（由上到下、由左到右）。
+
+輸出格式（必須完全遵守）：
+- 只能輸出一個合法 JSON Array。
+- 每個元素只能是 {"text":"..."}。
+- 不得輸出 markdown、註解、前言、結語、額外欄位。
+- 不得輸出包裝殘片，如 [, ], {, }（除非它們是圖片裡真的字元，且要放在 text 值中）。
+
+輸出前自檢：
+- 你要確認內容是合法 JSON。
+- 若無法保證合法 JSON，請輸出 []。
+
+只輸出 JSON：
+[{"text":"辨識到的文字"}]
+"""
+
+OCR_PROMPT_STRICT_V3 = """你正在執行高嚴格 OCR 結構化輸出。
+
+要求：
+1) 僅抄錄圖片可見文字，禁止推測。
+2) 每段文字只輸出一次，保持閱讀順序。
+3) 公司名稱要完整保留（含括號與大小寫）。
+
+格式要求（違反即視為失敗）：
+- 回覆只能是一個 JSON Array。
+- Array 內每筆格式固定：{"text":"..."}。
+- 不允許任何額外鍵值，不允許程式碼框，不允許自然語言解釋。
+- 不允許尾逗號，不允許單引號，不允許不完整 JSON。
+
+若圖片無可讀文字或你無法保證 JSON 正確，輸出 []。
+
+只輸出 JSON：
+[{"text":"辨識到的文字"}]
+"""
+
+OCR_PROMPT_PROFILES = {
+    "default": OCR_TEXT_PROMPT,
+    "strict_v2": OCR_PROMPT_STRICT_V2,
+    "strict_v3": OCR_PROMPT_STRICT_V3,
+}
+
 
 class OcrProvider(Protocol):
     name: str
 
-    def recognize(self, image_path: Path) -> dict:
+    def recognize(self, image_path: Path, prompt_text: str | None = None) -> dict:
         ...
 
 
@@ -72,7 +117,7 @@ def _build_result(provider: str, items: list[dict]) -> dict:
 class DisabledOcrProvider:
     name = "disabled"
 
-    def recognize(self, image_path: Path) -> dict:
+    def recognize(self, image_path: Path, prompt_text: str | None = None) -> dict:
         raise RuntimeError("OCR provider 尚未啟用。請設定 OCR_PROVIDER=paddle_local 或接入雲端 OCR provider。")
 
 
@@ -80,14 +125,14 @@ class PlaceholderCloudOcrProvider:
     def __init__(self, name: str):
         self.name = name
 
-    def recognize(self, image_path: Path) -> dict:
+    def recognize(self, image_path: Path, prompt_text: str | None = None) -> dict:
         raise RuntimeError(f"{self.name} provider 尚未接入。此版本只預留介面，尚未呼叫雲端 OCR API。")
 
 
 class PaddleLocalOcrProvider:
     name = "paddle_local"
 
-    def recognize(self, image_path: Path) -> dict:
+    def recognize(self, image_path: Path, prompt_text: str | None = None) -> dict:
         try:
             from paddleocr import PaddleOCR
         except Exception as exc:  # pragma: no cover - depends on optional heavy package
@@ -116,7 +161,7 @@ class AliyunQwenOcrProvider:
     name = "aliyun_ocr"
     model_name = ALIYUN_QWEN_OCR_MODEL
 
-    def recognize(self, image_path: Path) -> dict:
+    def recognize(self, image_path: Path, prompt_text: str | None = None) -> dict:
         api_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError("尚未設定 DASHSCOPE_API_KEY，無法呼叫阿里百鍊 Qwen-OCR。")
@@ -137,7 +182,7 @@ class AliyunQwenOcrProvider:
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                    {"type": "text", "text": OCR_TEXT_PROMPT},
+                    {"type": "text", "text": prompt_text or OCR_TEXT_PROMPT},
                 ],
             }],
             max_tokens=4096,
@@ -168,7 +213,7 @@ class InternVl28bOcrProvider(AliyunQwenOcrProvider):
 class ZhipuOcrProvider:
     name = "zhipu_ocr"
 
-    def recognize(self, image_path: Path) -> dict:
+    def recognize(self, image_path: Path, prompt_text: str | None = None) -> dict:
         api_key = (os.environ.get("ZHIPUAI_API_KEY") or os.environ.get("ZHIPU_API_KEY") or "").strip()
         if not api_key:
             raise RuntimeError("尚未設定 ZHIPUAI_API_KEY，無法呼叫智譜 GLM-OCR。")
@@ -374,6 +419,18 @@ def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
     return PlaceholderCloudOcrProvider(name)
 
 
-def run_ocr_probe(image_path: Path, provider_name: str | None = None) -> dict:
+def resolve_ocr_prompt(profile: str | None) -> tuple[str, str]:
+    name = (profile or "").strip().lower() or "default"
+    prompt = OCR_PROMPT_PROFILES.get(name)
+    if prompt:
+        return name, prompt
+    return "default", OCR_TEXT_PROMPT
+
+
+def run_ocr_probe(image_path: Path, provider_name: str | None = None, prompt_profile: str | None = None) -> dict:
     provider = get_ocr_provider(provider_name)
-    return provider.recognize(image_path)
+    prompt_name, prompt_text = resolve_ocr_prompt(prompt_profile)
+    result = provider.recognize(image_path, prompt_text=prompt_text)
+    if isinstance(result, dict):
+        result["prompt_profile"] = prompt_name
+    return result

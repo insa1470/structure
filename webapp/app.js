@@ -97,6 +97,7 @@ const elements = {
   ocrTestPreview: document.getElementById("ocrTestPreview"),
   ocrTestBtn: document.getElementById("ocrTestBtn"),
   ocrTestNote: document.getElementById("ocrTestNote"),
+  ocrPromptProfileSelect: document.getElementById("ocrPromptProfileSelect"),
   ocrTestResult: document.getElementById("ocrTestResult"),
   adminLoginPanel: document.getElementById("adminLoginPanel"),
   adminPasswordInput: document.getElementById("adminPasswordInput"),
@@ -526,7 +527,7 @@ function renderOcrTestResult(payload, elapsedMs = 0) {
   if (!elements.ocrTestResult) return;
   const items = Array.isArray(payload.items) ? payload.items : [];
   const candidates = Array.isArray(payload.company_candidates) ? payload.company_candidates : [];
-  const providerLabel = [payload.engine || payload.provider || "OCR", payload.model].filter(Boolean).join(" · ");
+  const providerLabel = [payload.engine || payload.provider || "OCR", payload.model, payload.prompt_profile].filter(Boolean).join(" · ");
   const shownCandidates = candidates.map(ocrDisplayText).filter(Boolean).slice(0, 80);
   const shownItems = items.map(ocrDisplayText).filter(Boolean).slice(0, 80);
   const candidateHtml = shownCandidates.length
@@ -608,7 +609,7 @@ function renderOcrTestHistory(records) {
     return `
       <article class="ocr-history-item">
         <div class="ocr-history-main">
-          <strong>${svgEscape(record.provider || "OCR")} ${record.model ? `· ${svgEscape(record.model)}` : ""}</strong>
+          <strong>${svgEscape(record.provider || "OCR")} ${record.model ? `· ${svgEscape(record.model)}` : ""} ${record.prompt_profile ? `· ${svgEscape(record.prompt_profile)}` : ""}</strong>
           <span>${svgEscape(record.filename || "未命名圖片")}</span>
           ${record.note ? `<small>${svgEscape(record.note)}</small>` : ""}
         </div>
@@ -633,6 +634,7 @@ async function runOcrTest() {
     return;
   }
   const provider = elements.ocrProviderSelect?.value || "zhipu_ocr";
+  const promptProfile = elements.ocrPromptProfileSelect?.value || "default";
   const originalText = elements.ocrTestBtn?.textContent || "開始 OCR 測試";
   const startedAt = performance.now();
   try {
@@ -646,10 +648,11 @@ async function runOcrTest() {
     const form = new FormData();
     form.append("image", state.ocrTestFile);
     form.append("provider", provider);
+    form.append("prompt_profile", promptProfile);
     form.append("save", "1");
     form.append("admin_password", state.adminPassword);
     if (elements.ocrTestNote?.value.trim()) form.append("note", elements.ocrTestNote.value.trim());
-    const payload = await apiPost(`/api/ocr/probe?provider=${encodeURIComponent(provider)}`, form, true);
+    const payload = await apiPost(`/api/ocr/probe?provider=${encodeURIComponent(provider)}&prompt_profile=${encodeURIComponent(promptProfile)}`, form, true);
     renderOcrTestResult(payload, Math.round(performance.now() - startedAt));
     await loadOcrTestHistory().catch(() => {});
   } catch (error) {
@@ -3835,6 +3838,12 @@ function bindEvents() {
     if (elements.ocrTestResult && !state.ocrTesting) {
       elements.ocrTestResult.className = "ocr-test-empty";
       elements.ocrTestResult.textContent = "已切換 Provider，可以重新開始 OCR 測試。";
+    }
+  });
+  elements.ocrPromptProfileSelect?.addEventListener("change", () => {
+    if (elements.ocrTestResult && !state.ocrTesting) {
+      elements.ocrTestResult.className = "ocr-test-empty";
+      elements.ocrTestResult.textContent = "已切換 Prompt 版本，可以重新開始 OCR 測試。";
     }
   });
   elements.ocrTestBtn?.addEventListener("click", runOcrTest);

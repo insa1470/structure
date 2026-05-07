@@ -352,6 +352,7 @@ def ocr_probe():
         return jsonify({"error": "image_required", "message": "請上傳 image、chart1 或 chart2 圖片。"}), 400
 
     provider = (request.form.get("provider") or request.args.get("provider") or "").strip() or None
+    prompt_profile = (request.form.get("prompt_profile") or request.args.get("prompt_profile") or "").strip() or "default"
     save_record = (request.form.get("save") or request.args.get("save") or "").lower() in {"1", "true", "yes"}
     if save_record and not is_admin_request():
         return admin_required_response()
@@ -365,13 +366,14 @@ def ocr_probe():
             image.save(tmp.name)
             temp_path = Path(tmp.name)
         from ocr_engine import run_ocr_probe
-        result = run_ocr_probe(temp_path, provider)
+        result = run_ocr_probe(temp_path, provider, prompt_profile=prompt_profile)
         elapsed_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
         if save_record:
             record = {
                 "id": f"T{uuid.uuid4().hex[:10].upper()}",
                 "created_at": now_iso(),
                 "provider": result.get("provider") or provider or "",
+                "prompt_profile": result.get("prompt_profile") or prompt_profile,
                 "model": result.get("model") or "",
                 "filename": original_filename,
                 "file_size": temp_path.stat().st_size if temp_path and temp_path.exists() else 0,

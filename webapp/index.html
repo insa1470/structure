@@ -222,6 +222,14 @@
                   <span>測試備註</span>
                   <input id="ocrTestNote" type="text" placeholder="例如：圖二長截圖、局部公司卡片" />
                 </label>
+                <label class="field">
+                  <span>Prompt 版本</span>
+                  <select id="ocrPromptProfileSelect">
+                    <option value="default">預設</option>
+                    <option value="strict_v2">嚴格 V2</option>
+                    <option value="strict_v3">嚴格 V3（最硬）</option>
+                  </select>
+                </label>
                 <label class="dropzone ocr-test-dropzone" id="ocrTestDropzone">
                   <input id="ocrTestInput" type="file" accept="image/*" />
                   <img id="ocrTestPreview" class="dz-thumb" alt="" />
