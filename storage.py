@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
@@ -203,11 +204,50 @@ class PostgresTaskStore:
                     yield row[0]
 
 
+class MirroredTaskStore:
+    """Primary task store with best-effort mirror writes.
+
+    Reads and uploads stay on the primary store. Mirror failures are logged but
+    never block the current production flow.
+    """
+
+    def __init__(self, primary, mirror):
+        self.primary = primary
+        self.mirror = mirror
+
+    def upload_dir(self, task_id: str) -> Path:
+        return self.primary.upload_dir(task_id)
+
+    def read_task(self, task_id: str) -> dict | None:
+        return self.primary.read_task(task_id)
+
+    def save_task(self, task: dict) -> None:
+        self.primary.save_task(task)
+        try:
+            self.mirror.save_task(copy.deepcopy(task))
+        except Exception as exc:
+            print(f"[Storage] mirror save failed for task {task.get('id', '')}: {exc}", flush=True)
+
+    def ensure_ready(self) -> None:
+        self.primary.ensure_ready()
+        try:
+            self.mirror.ensure_ready()
+        except Exception as exc:
+            print(f"[Storage] mirror ensure failed: {exc}", flush=True)
+
+    def iter_tasks(self) -> Iterable[dict]:
+        return self.primary.iter_tasks()
+
+
 def make_task_store():
     store_name = os.environ.get("TASK_STORE", "json").strip().lower()
+    mirror_name = os.environ.get("TASK_STORE_MIRROR", "").strip().lower()
     if store_name == "postgres":
         return PostgresTaskStore()
-    return JsonTaskStore()
+    primary = JsonTaskStore()
+    if mirror_name == "postgres":
+        return MirroredTaskStore(primary, PostgresTaskStore())
+    return primary
 
 
 task_store = make_task_store()

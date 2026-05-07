@@ -15,6 +15,18 @@ TASK_STORE=postgres
 DATABASE_URL=...
 ```
 
+The intermediate observation mode is:
+
+```text
+TASK_STORE=json
+TASK_STORE_MIRROR=postgres
+DATABASE_URL=...
+```
+
+In this mode, reads and uploads still use JSON. `save_task` writes to JSON
+first, then mirrors the same task document to PostgreSQL on a best-effort
+basis. A mirror failure is logged but does not block the user workflow.
+
 ## Phase 1: Storage Adapter
 
 `storage.py` now supports two task stores:
@@ -39,9 +51,10 @@ Recommended sequence:
 
 1. Keep production on `TASK_STORE=json`.
 2. Deploy the adapter and confirm current JSON flows still work.
-3. Create a staging environment with `TASK_STORE=postgres`.
-4. Run upload, recognition, review, candidate, chart shareholder, draft, and print workflows.
-5. Switch production to `TASK_STORE=postgres` only after staging passes.
+3. Enable `TASK_STORE_MIRROR=postgres` in production and observe mirrored writes.
+4. Create a staging environment with `TASK_STORE=postgres`.
+5. Run upload, recognition, review, candidate, chart shareholder, draft, and print workflows.
+6. Switch production to `TASK_STORE=postgres` only after staging passes.
 
 Rollback is immediate: set `TASK_STORE=json` and redeploy.
 
