@@ -26,6 +26,8 @@ const state = {
   showGroupRoot: false,
   hybridMode: "auto",
   hybridThreshold: 8,
+  chartFontScale: 100,
+  chartDensity: "standard",
   selectedBranchId: "__all__",
   chartScale: 1,
   chartPanX: 0,
@@ -125,6 +127,8 @@ const elements = {
   chartBranchSelect: document.getElementById("chartBranchSelect"),
   hybridModeSelect: document.getElementById("hybridModeSelect"),
   hybridThresholdSelect: document.getElementById("hybridThresholdSelect"),
+  chartFontScaleSelect: document.getElementById("chartFontScaleSelect"),
+  chartDensitySelect: document.getElementById("chartDensitySelect"),
   chartZoomButtons: [...document.querySelectorAll(".chart-zoom-btn")],
   chartZoomLabel: document.getElementById("chartZoomLabel"),
   chartShowRootToggle: document.getElementById("chartShowRootToggle"),
@@ -3051,6 +3055,8 @@ function syncChartModeButtons() {
   if (elements.chartShowRootToggle) elements.chartShowRootToggle.checked = state.showGroupRoot;
   if (elements.hybridModeSelect) elements.hybridModeSelect.value = state.hybridMode;
   if (elements.hybridThresholdSelect) elements.hybridThresholdSelect.value = String(state.hybridThreshold);
+  if (elements.chartFontScaleSelect) elements.chartFontScaleSelect.value = String(state.chartFontScale);
+  if (elements.chartDensitySelect) elements.chartDensitySelect.value = state.chartDensity;
   if (elements.chartBranchPicker) {
     elements.chartBranchPicker.style.display = isGraph && state.chartMode === "paged" ? "" : "none";
   }
@@ -3167,7 +3173,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
         return { id: r.node_id, width, height, row: r };
       }
       const baseWidth = r.is_chart_shareholder ? Math.max(190, profile.nodeW - 34) : profile.nodeW;
-      const width = Math.min(profile.maxNodeW, Math.max(baseWidth, 172 + Math.ceil(name.length / 8) * 18));
+      const width = baseWidth;
       return { id: r.node_id, width, height: r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH, row: r };
     }),
     edges: [
@@ -3420,6 +3426,9 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
 
   const nodeSvg = nodes.map((node) => {
     const r = node.row || {};
+    const fontScale = Math.max(0.85, Math.min(1.25, Number(state.chartFontScale || 100) / 100));
+    const nameFont = Math.max(10, profile.nameFont * fontScale);
+    const detailFont = Math.max(8.5, profile.detailFont * fontScale);
     if (r.is_hybrid_column) {
       const itemLines = (r.hybrid_items || []).slice(0, 22);
       const extraCount = Math.max(0, (r.hybrid_items || []).length - itemLines.length);
@@ -3428,9 +3437,9 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       return `
       <g class="elk-node elk-node-hybrid-column" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
         <rect width="${node.width}" height="${node.height}" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.6" stroke-dasharray="5 4" />
-        <text x="${node.width / 2}" y="28" text-anchor="middle" fill="#0f172a" font-size="${Math.max(12, profile.nameFont - 0.5)}" font-weight="800">下層公司清單</text>
-        <text x="${node.width / 2}" y="44" text-anchor="middle" fill="#475569" font-size="${Math.max(10, profile.detailFont)}" font-weight="700">${header}</text>
-        <text x="14" y="${lineStartY}" fill="#334155" font-size="${Math.max(10, profile.detailFont)}" font-weight="600">
+        <text x="${node.width / 2}" y="28" text-anchor="middle" fill="#0f172a" font-size="${Math.max(12, nameFont - 0.5)}" font-weight="800">下層公司清單</text>
+        <text x="${node.width / 2}" y="44" text-anchor="middle" fill="#475569" font-size="${Math.max(10, detailFont)}" font-weight="700">${header}</text>
+        <text x="14" y="${lineStartY}" fill="#334155" font-size="${Math.max(10, detailFont)}" font-weight="600">
           ${itemLines.map((line, i) => `<tspan x="14" dy="${i === 0 ? 16 : 20}">• ${svgEscape(line)}</tspan>`).join("")}
           ${extraCount > 0 ? `<tspan x="14" dy="20">• 其餘 ${extraCount} 家...</tspan>` : ""}
         </text>
@@ -3445,27 +3454,30 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const stroke = isShareholder ? "#64748b" : (isMono ? (uncertain ? "#f59e0b" : "#334155") : (uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)"));
     const nameColor = isShareholder || isMono ? "#0f172a" : "#ffffff";
     const detailColor = isShareholder || isMono ? "#334155" : "rgba(255,255,255,0.92)";
-    const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", profile.nameLen, profile.nameLines);
+    const nameMaxLines = (Number(r.chart1_level) || 0) >= 2 ? 2 : profile.nameLines;
+    const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", profile.nameLen, nameMaxLines);
     const repCap = [
       r.legal_representative ? `法代：${r.legal_representative}` : "",
       r.registered_capital ? `資本：${formatCapital(r.registered_capital)}` : "",
     ].filter(Boolean).join("  ");
-    const details = [
+    const baseDetails = [
       isShareholder ? `上層股東：${shareholderTypeText(r.shareholder_type)}` : "",
       repCap,
       r.established_date ? `成立：${r.established_date}` : "",
       r.role_label ? `定位：${r.role_label}` : "",
       r.chart_note ? `備註：${r.chart_note}` : "",
-    ].filter(Boolean).slice(0, profile.detailLines);
+    ].filter(Boolean);
+    const detailLimit = state.chartDensity === "compact" ? 1 : state.chartDensity === "full" ? Math.max(4, profile.detailLines + 1) : profile.detailLines;
+    const details = baseDetails.slice(0, detailLimit);
     const nameStart = profile.nodeH <= 96 ? 31 - (nameLines.length - 1) * 8 : 36 - (nameLines.length - 1) * 9;
     const detailStart = profile.nodeH - (details.length > 1 ? 35 : 26);
     return `
       <g class="elk-node" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
         <rect width="${node.width}" height="${node.height}" rx="${isShareholder ? 18 : 4}" fill="${fill}" stroke="${stroke}" stroke-width="${isShareholder ? 1.8 : (uncertain ? 2.2 : 1.4)}" ${uncertain || isShareholder ? 'stroke-dasharray="7 4"' : ""} />
-        <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="${nameColor}" font-size="${profile.nameFont}" font-weight="800">
+        <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="${nameColor}" font-size="${nameFont}" font-weight="800">
           ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 18}">${svgEscape(line)}</tspan>`).join("")}
         </text>
-        <text x="${node.width / 2}" y="${detailStart}" text-anchor="middle" fill="${detailColor}" font-size="${profile.detailFont}" font-weight="600">
+        <text x="${node.width / 2}" y="${detailStart}" text-anchor="middle" fill="${detailColor}" font-size="${detailFont}" font-weight="600">
           ${details.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 15}">${svgEscape(line)}</tspan>`).join("")}
         </text>
         ${uncertain ? `<text x="${node.width - 14}" y="20" text-anchor="middle" fill="#f59e0b" font-size="15" font-weight="900">!</text>` : ""}
@@ -3896,10 +3908,11 @@ function renderChart() {
     : state.hybridMode === "off"
       ? "清單柱：關閉"
       : `清單柱：自動≥${state.hybridThreshold}`;
+  const densityLabel = state.chartDensity === "compact" ? "精簡" : state.chartDensity === "full" ? "完整" : "標準";
 
   elements.chartLayoutBadge.textContent = isList
     ? `${total} 家公司 · ${intentLabel} · 條列層級 · ${getChartDepthLabel()}`
-    : `${total} 家公司 · ${intentLabel} · ${hybridLabel} · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${getChartDepthLabel()} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
+    : `${total} 家公司 · ${intentLabel} · ${hybridLabel} · 字體${state.chartFontScale}% · 內容${densityLabel} · ${profile.label} · ${state.chartDirection === "right" ? "左到右" : "上到下"} · ${getChartDepthLabel()} · ${state.chartStyle === "mono" ? "黑白正式" : "層級彩色"}${state.showGroupRoot ? " · 含集團主體" : ""}`;
 
   // 切換容器樣式
   elements.chartContainer.classList.toggle("chart-container-list", isList);
@@ -4270,6 +4283,7 @@ function printChart(orientation = state.printOrientation) {
     medium: 1,
     large: 1.08,
   }[state.printFontSize] || 1;
+  const chartFontScale = clampNumber(Number(state.chartFontScale || 100), 85, 125) / 100;
   const spacingScale = {
     compact: 0.92,
     normal: 1,
@@ -4277,7 +4291,7 @@ function printChart(orientation = state.printOrientation) {
   }[state.printSpacing] || 1;
   style.textContent = `@media print {
     @page { size: A4 ${state.printOrientation}; margin: ${margin}; }
-    #chart { --print-font-scale: ${fontScale}; --print-spacing-scale: ${spacingScale}; }
+    #chart { --print-font-scale: ${(fontScale * chartFontScale).toFixed(4)}; --print-spacing-scale: ${spacingScale}; }
   }`;
   document.head.appendChild(style);
   window.print();
@@ -4516,6 +4530,15 @@ function bindEvents() {
     const n = Number(event.target.value || HYBRID_COLUMN_THRESHOLD);
     state.hybridThreshold = Math.max(2, Math.min(20, Number.isFinite(n) ? n : HYBRID_COLUMN_THRESHOLD));
     resetChartViewport();
+    renderChart();
+  });
+  elements.chartFontScaleSelect?.addEventListener("change", (event) => {
+    const n = Number(event.target.value || 100);
+    state.chartFontScale = Math.max(85, Math.min(125, Number.isFinite(n) ? n : 100));
+    renderChart();
+  });
+  elements.chartDensitySelect?.addEventListener("change", (event) => {
+    state.chartDensity = ["compact", "standard", "full"].includes(event.target.value) ? event.target.value : "standard";
     renderChart();
   });
   elements.toggleToolbarBtn?.addEventListener("click", () => {
