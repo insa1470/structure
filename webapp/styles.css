@@ -2195,12 +2195,14 @@ tr:hover .row-del-btn {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+  justify-items: center;
 }
 
 .chart-entity-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  justify-content: center;
 }
 
 .entity-modal-backdrop {
@@ -2233,6 +2235,7 @@ tr:hover .row-del-btn {
   flex-wrap: wrap;
   gap: 6px;
   min-height: 22px;
+  justify-content: center;
 }
 
 .external-empty {
@@ -2266,6 +2269,7 @@ tr:hover .row-del-btn {
   flex-wrap: wrap;
   gap: 6px;
   min-height: 22px;
+  justify-content: center;
 }
 
 .shareholder-empty {

@@ -3451,6 +3451,8 @@ function renderBranchEdges(layout, profile) {
     const maxX = Math.max(...children.map((item) => item.x));
     const naturalBusY = parentBottom + Math.max(32, Math.min(76, (minChildTop - parentBottom) * 0.45));
     const busY = Math.min(minChildTop - 34, naturalBusY);
+    const busStartX = Math.min(minX, parentX);
+    const busEndX = Math.max(maxX, parentX);
 
     const drops = children.map((item) => `
       <polyline points="${item.x.toFixed(1)},${busY.toFixed(1)} ${item.x.toFixed(1)},${item.top.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
@@ -3460,7 +3462,7 @@ function renderBranchEdges(layout, profile) {
     return `
       <g class="elk-edge elk-edge-branch">
         <polyline points="${parentX.toFixed(1)},${parentBottom.toFixed(1)} ${parentX.toFixed(1)},${busY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
-        <polyline points="${minX.toFixed(1)},${busY.toFixed(1)} ${maxX.toFixed(1)},${busY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
+        <polyline points="${busStartX.toFixed(1)},${busY.toFixed(1)} ${busEndX.toFixed(1)},${busY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
         ${drops}
       </g>`;
   }).join("");
@@ -3494,6 +3496,8 @@ function renderRightBranchGroup(parent, childEdges, profile) {
   const maxY = Math.max(...children.map((item) => item.y));
   const naturalBusX = parentRight + Math.max(34, Math.min(82, (minChildLeft - parentRight) * 0.45));
   const busX = Math.min(minChildLeft - 42, naturalBusX);
+  const busStartY = Math.min(minY, parentY);
+  const busEndY = Math.max(maxY, parentY);
   const branches = children.map((item) => `
     <polyline points="${busX.toFixed(1)},${item.y.toFixed(1)} ${item.left.toFixed(1)},${item.y.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
     ${item.edge.ratio ? renderEdgeRatioLabel(item.left - 36, item.y - 14, item.edge.ratio, profile) : ""}
@@ -3502,7 +3506,7 @@ function renderRightBranchGroup(parent, childEdges, profile) {
   return `
     <g class="elk-edge elk-edge-branch">
       <polyline points="${parentRight.toFixed(1)},${parentY.toFixed(1)} ${busX.toFixed(1)},${parentY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
-      <polyline points="${busX.toFixed(1)},${minY.toFixed(1)} ${busX.toFixed(1)},${maxY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
+      <polyline points="${busX.toFixed(1)},${busStartY.toFixed(1)} ${busX.toFixed(1)},${busEndY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
       ${branches}
     </g>`;
 }
