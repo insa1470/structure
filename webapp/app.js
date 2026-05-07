@@ -3091,6 +3091,8 @@ function buildPagedRowSets(rows) {
   });
 
   const roots = rows.filter((row) => !row.chart1_parent || !byId[row.chart1_parent]);
+  const externalRootIds = new Set(roots.filter((row) => row.is_external_group).map((row) => row.node_id));
+  const internalRoots = roots.filter((row) => !externalRootIds.has(row.node_id));
   if (!roots.length) return [{ title: "完整架構", rows }];
 
   const pages = [];
@@ -3101,22 +3103,34 @@ function buildPagedRowSets(rows) {
     const childRows = (childrenByParent[id] || []).flatMap((childId) => collectSubtree(childId, seen));
     return [...current, ...childRows];
   }
+  const externalRows = Array.from(externalRootIds).flatMap((rootId) => collectSubtree(rootId));
 
   if (!state.showGroupRoot) {
-    roots.forEach((root) => {
+    internalRoots.forEach((root) => {
       pages.push({
         id: root.node_id,
         title: root.canonical_name || root.chart1_name || "分頁",
         rows: collectSubtree(root.node_id),
       });
     });
+    if (externalRows.length) {
+      pages.push({
+        id: "external_entities_page",
+        title: "集團外主體",
+        rows: externalRows,
+      });
+    }
     return pages.length ? pages : [{ title: "完整架構", rows }];
   }
 
-  roots.forEach((root) => {
+  internalRoots.forEach((root) => {
     const firstLevel = childrenByParent[root.node_id] || [];
     if (!firstLevel.length) {
-      pages.push({ id: root.node_id, title: root.canonical_name || root.chart1_name || "完整架構", rows: [root] });
+      pages.push({
+        id: root.node_id,
+        title: root.canonical_name || root.chart1_name || "完整架構",
+        rows: externalRows.length ? [root, ...externalRows] : [root],
+      });
       return;
     }
     firstLevel.forEach((childId) => {
@@ -3124,10 +3138,19 @@ function buildPagedRowSets(rows) {
       pages.push({
         id: childId,
         title: child?.canonical_name || child?.chart1_name || root.canonical_name || "分頁",
-        rows: [root, ...collectSubtree(childId)],
+        rows: externalRows.length
+          ? [root, ...collectSubtree(childId), ...externalRows]
+          : [root, ...collectSubtree(childId)],
       });
     });
   });
+  if (!internalRoots.length && externalRows.length) {
+    pages.push({
+      id: "external_entities_page",
+      title: "集團外主體",
+      rows: externalRows,
+    });
+  }
 
   return pages.length ? pages : [{ title: "完整架構", rows }];
 }
