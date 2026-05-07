@@ -11,10 +11,23 @@ from typing import Any, Protocol
 
 DEFAULT_OCR_PROVIDER = "disabled"
 ALIYUN_QWEN_OCR_MODEL = "qwen-vl-ocr"
+QWEN25_VL_3B_MODEL = "qwen2.5-vl-3b-instruct"
+QWEN25_VL_7B_MODEL = "qwen2.5-vl-7b-instruct"
+INTERNVL2_8B_MODEL = "internvl2-8b"
 ALIYUN_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 ZHIPU_OCR_MODEL = "glm-ocr"
 ZHIPU_LAYOUT_PARSING_URL = "https://open.bigmodel.cn/api/paas/v4/layout_parsing"
-SUPPORTED_PROVIDERS = {"disabled", "paddle_local", "aliyun_ocr", "zhipu_ocr", "baidu_ocr", "tencent_ocr"}
+SUPPORTED_PROVIDERS = {
+    "disabled",
+    "paddle_local",
+    "aliyun_ocr",
+    "zhipu_ocr",
+    "baidu_ocr",
+    "tencent_ocr",
+    "qwen25_vl_3b",
+    "qwen25_vl_7b",
+    "internvl2_8b",
+}
 
 OCR_TEXT_PROMPT = """請對這張圖片做 OCR 文字辨識。
 
@@ -101,6 +114,7 @@ class PaddleLocalOcrProvider:
 
 class AliyunQwenOcrProvider:
     name = "aliyun_ocr"
+    model_name = ALIYUN_QWEN_OCR_MODEL
 
     def recognize(self, image_path: Path) -> dict:
         api_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
@@ -118,7 +132,7 @@ class AliyunQwenOcrProvider:
             base_url=os.environ.get("DASHSCOPE_BASE_URL", ALIYUN_COMPATIBLE_BASE_URL),
         )
         response = client.chat.completions.create(
-            model=os.environ.get("ALIYUN_OCR_MODEL", ALIYUN_QWEN_OCR_MODEL),
+            model=os.environ.get("ALIYUN_OCR_MODEL", self.model_name),
             messages=[{
                 "role": "user",
                 "content": [
@@ -131,9 +145,24 @@ class AliyunQwenOcrProvider:
         raw = (response.choices[0].message.content or "").strip()
         items = _parse_ocr_text_items(raw)
         result = _build_result(self.name, items)
-        result["model"] = os.environ.get("ALIYUN_OCR_MODEL", ALIYUN_QWEN_OCR_MODEL)
+        result["model"] = os.environ.get("ALIYUN_OCR_MODEL", self.model_name)
         result["raw_text"] = raw
         return result
+
+
+class Qwen25Vl3bOcrProvider(AliyunQwenOcrProvider):
+    name = "qwen25_vl_3b"
+    model_name = QWEN25_VL_3B_MODEL
+
+
+class Qwen25Vl7bOcrProvider(AliyunQwenOcrProvider):
+    name = "qwen25_vl_7b"
+    model_name = QWEN25_VL_7B_MODEL
+
+
+class InternVl28bOcrProvider(AliyunQwenOcrProvider):
+    name = "internvl2_8b"
+    model_name = INTERNVL2_8B_MODEL
 
 
 class ZhipuOcrProvider:
@@ -334,6 +363,12 @@ def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
         return PaddleLocalOcrProvider()
     if name == "aliyun_ocr":
         return AliyunQwenOcrProvider()
+    if name == "qwen25_vl_3b":
+        return Qwen25Vl3bOcrProvider()
+    if name == "qwen25_vl_7b":
+        return Qwen25Vl7bOcrProvider()
+    if name == "internvl2_8b":
+        return InternVl28bOcrProvider()
     if name == "zhipu_ocr":
         return ZhipuOcrProvider()
     return PlaceholderCloudOcrProvider(name)
