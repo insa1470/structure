@@ -1158,7 +1158,7 @@ async function openTaskFromCenter(taskId) {
   if (task.status === "processing_chart2") {
     renderWorkspace("processing_chart2", { progress: task.chart2_progress, summary: task.summary });
   } else if (task.status === "chart2_error") {
-    renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+    renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary, diagnostics: task.analysis_diagnostics });
   } else if (task.status === "cancelled" || task.status === "cancel_requested") {
     renderWorkspace("cancelled", { summary: task.summary });
   } else {
@@ -2213,10 +2213,13 @@ function renderWorkspace(phase, opts = {}) {
     const task = opts.task || {};
     const chart2Raw = task.chart2_raw || [];
     const chart2Progress = task.chart2_progress || {};
+    const chart2Quality = task.analysis_diagnostics?.chart2_quality || {};
     const chart1Count = (task.master_rows || []).length;
     const chart2Count = chart2Raw.length;
     const failedChunks = Array.isArray(chart2Progress.failed_chunks) ? chart2Progress.failed_chunks.length : 0;
     const discrepancy = chart1Count > 0 && chart2Count < chart1Count * 0.5;
+    const qualityNotes = Array.isArray(chart2Quality.notes) ? chart2Quality.notes : [];
+    const qualityRisk = chart2Quality.review_required || chart2Quality.level === "low";
     const success = evaluateRecognitionSuccess({ masterRows: task.master_rows || [], chart2Rows: chart2Raw });
 
     const companyListHtml = chart2Raw.length
@@ -2241,6 +2244,7 @@ function renderWorkspace(phase, opts = {}) {
         </div>
       </div>
       ${recognitionSuccessHtml(success)}
+      ${qualityRisk ? `<div class="ws-warn-box">圖二辨識品質偏低：${qualityNotes.join("；") || "建議重新上傳更清晰或裁切後的圖二。"}</div>` : ""}
       ${discrepancy ? `<div class="ws-warn-box">圖二辨識到的公司數量明顯少於圖一，建議確認圖片清晰度後再繼續。</div>` : ""}
       ${failedChunks ? `<div class="ws-warn-box">圖二已完成可用辨識結果；少數分塊未完整抽出細節，仍可先進入配對並在主表補正。</div>` : ""}
       <p class="ws-company-list-label">圖二辨識到的公司（${chart2Count} 筆）</p>
@@ -2272,7 +2276,7 @@ function renderWorkspace(phase, opts = {}) {
         if (updated.status === "chart2_ocr_done") {
           renderWorkspace("chart2_confirm", { task: updated });
         } else if (updated.status === "chart2_error") {
-          renderWorkspace("chart2_error", { taskId: updated.id, error: updated.error, summary: updated.summary });
+          renderWorkspace("chart2_error", { taskId: updated.id, error: updated.error, summary: updated.summary, diagnostics: updated.analysis_diagnostics });
         } else if (updated.status === "cancelled" || updated.status === "cancel_requested") {
           renderWorkspace("cancelled", { summary: updated.summary });
         } else {
@@ -2380,6 +2384,8 @@ function renderWorkspace(phase, opts = {}) {
 
   if (phase === "chart2_error") {
     const s = opts.summary || {};
+    const diagnostics = opts.diagnostics || {};
+    const lastError = diagnostics.last_error || {};
     extraHtml = `
       <div class="ws-summary">
         <div><span class="ws-stat-val">${s.master_count ?? "—"}</span><span class="ws-stat-lbl">主表公司</span></div>
@@ -2387,6 +2393,7 @@ function renderWorkspace(phase, opts = {}) {
         <div><span class="ws-stat-val">—</span><span class="ws-stat-lbl">候選</span></div>
       </div>
       <div class="ws-error-msg">圖二辨識失敗。圖一結構已保存，可先查看主表，或重新上傳圖二補充資訊。</div>
+      ${lastError.code ? `<div class="ws-warn-box">診斷：${lastError.code}。${lastError.message || ""}</div>` : ""}
       <label class="ws-retry-label">
         <span>重新上傳圖二</span>
         <input type="file" id="wsChart2Retry" accept="image/*" />
@@ -2440,7 +2447,7 @@ function renderWorkspace(phase, opts = {}) {
         });
         hydrateTask(task);
         if (task.status === "chart2_error") {
-          renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+          renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary, diagnostics: task.analysis_diagnostics });
         } else if (task.status === "cancelled" || task.status === "cancel_requested") {
           renderWorkspace("cancelled", { summary: task.summary });
         } else {
@@ -2517,7 +2524,7 @@ async function createTaskFromUpload(onStatus) {
 
     hydrateTask(task);
     if (task.status === "chart2_error") {
-      renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary });
+      renderWorkspace("chart2_error", { taskId: task.id, error: task.error, summary: task.summary, diagnostics: task.analysis_diagnostics });
     } else if (task.status === "cancelled" || task.status === "cancel_requested") {
       renderWorkspace("cancelled", { summary: task.summary });
     } else {

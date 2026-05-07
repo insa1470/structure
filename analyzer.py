@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
 import uuid
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -152,7 +153,7 @@ def _encode_image(image_path: Path) -> tuple[str, str]:
             return base64.b64encode(f.read()).decode("utf-8"), mime
 
 
-MAX_RETRIES = 1  # JSON 解析失敗時最多重試次數（失敗就讓用戶重傳，不要讓他等太久）
+MAX_QWEN_ATTEMPTS = max(1, int(os.environ.get("QWEN_MAX_ATTEMPTS", "3")))
 
 
 def _log_info(message: str) -> None:
@@ -163,17 +164,18 @@ def _log_warn(message: str) -> None:
     print(message, flush=True)
 
 def _call_qwen_vl(image_path: Path, prompt: str) -> list[dict]:
-    """呼叫 Qwen-VL，回傳解析後的 list。JSON 解析失敗時自動重試最多 MAX_RETRIES 次。"""
+    """呼叫 Qwen-VL，回傳解析後的 list。暫時性 API 或 JSON 解析失敗時自動重試。"""
     last_err: Exception | None = None
-    for attempt in range(1, MAX_RETRIES + 1):
+    for attempt in range(1, MAX_QWEN_ATTEMPTS + 1):
         try:
             return _call_qwen_vl_once(image_path, prompt)
-        except RuntimeError as e:
+        except Exception as e:
             last_err = e
-            _log_warn(f"[Qwen] attempt {attempt}/{MAX_RETRIES} failed: {e}")
-            if attempt < MAX_RETRIES:
-                import time
-                time.sleep(2)  # 短暫等待後重試
+            _log_warn(f"[Qwen] attempt {attempt}/{MAX_QWEN_ATTEMPTS} failed: {e}")
+            if "模型輸出被截斷" in str(e):
+                break
+            if attempt < MAX_QWEN_ATTEMPTS:
+                time.sleep(min(2 * attempt, 6))
     raise last_err  # type: ignore
 
 
@@ -963,6 +965,57 @@ def analyze_chart2(
     finally:
         if tmp_dir and tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def evaluate_chart2_quality(chart1_count: int, chart2_attrs: list[dict], progress: dict | None = None) -> dict:
+    """Evaluate whether chart2 OCR result is safe enough for user confirmation."""
+    chart2_count = len(chart2_attrs or [])
+    failed_chunks = progress.get("failed_chunks", []) if isinstance(progress, dict) else []
+    uncertain_count = sum(1 for row in chart2_attrs or [] if row.get("uncertain"))
+    notes: list[str] = []
+    score = 100
+
+    if chart2_count == 0:
+        return {
+            "score": 0,
+            "level": "low",
+            "review_required": True,
+            "notes": ["圖二沒有辨識到公司"],
+            "chart2_count": 0,
+            "failed_chunk_count": len(failed_chunks),
+            "uncertain_count": uncertain_count,
+        }
+
+    if chart1_count and chart2_count < chart1_count * 0.45:
+        score -= 35
+        notes.append("圖二公司數明顯少於圖一")
+    elif chart1_count and chart2_count < chart1_count * 0.65:
+        score -= 18
+        notes.append("圖二公司數少於預期")
+
+    if failed_chunks:
+        score -= min(30, 10 + len(failed_chunks) * 6)
+        notes.append(f"{len(failed_chunks)} 個分塊辨識不完整")
+
+    if uncertain_count:
+        uncertain_ratio = uncertain_count / max(chart2_count, 1)
+        if uncertain_ratio > 0.5:
+            score -= 18
+            notes.append("多數圖二資料只抓到公司名")
+        else:
+            score -= 8
+            notes.append("部分圖二資料只抓到公司名")
+
+    score = max(0, min(100, score))
+    return {
+        "score": score,
+        "level": "high" if score >= 80 else "mid" if score >= 60 else "low",
+        "review_required": score < 60,
+        "notes": notes or ["圖二辨識結果可進入確認"],
+        "chart2_count": chart2_count,
+        "failed_chunk_count": len(failed_chunks),
+        "uncertain_count": uncertain_count,
+    }
 
 
 def merge_charts(

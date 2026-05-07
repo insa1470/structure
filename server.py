@@ -22,6 +22,7 @@ MAX_CHART2_CHUNKS = 9
 
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="")
 CORS(app)
+ensure_storage_ready()
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -205,6 +206,23 @@ def make_chart2_progress_saver(task: dict):
         save_task(task)
 
     return save_progress
+
+
+def classify_analysis_error(exc: Exception) -> dict:
+    message = str(exc)
+    if "DASHSCOPE_API_KEY" in message or "API Key" in message:
+        code = "config_missing_api_key"
+    elif "模型輸出被截斷" in message:
+        code = "model_output_truncated"
+    elif "無法解析模型回傳" in message:
+        code = "model_json_parse_failed"
+    elif "所有分塊均辨識失敗" in message:
+        code = "chart2_all_chunks_failed"
+    elif "timeout" in message.lower() or "timed out" in message.lower():
+        code = "provider_timeout"
+    else:
+        code = "analysis_failed"
+    return {"code": code, "message": message[:500], "at": now_iso()}
 
 
 def is_task_cancel_requested(task_id: str) -> bool:
@@ -549,7 +567,9 @@ def analyze():
         "updated_at": now_iso(),
         "analysis_mode": "qwen_vl",
         "source_files": {"chart1": c1_name, "chart2": c2_name},
+        "image_metadata": {"chart1": c1_shape or {}, "chart2": c2_shape or {}},
         "summary": {},
+        "analysis_diagnostics": {},
         "master_rows": [],
         "review_rows": [],
         "candidate_rows": [],
@@ -576,6 +596,10 @@ def analyze():
             task["status"] = "chart1_ready"
             task["analysis_mode"] = "qwen_vl"
             task["summary"] = stage1["summary"]
+            task["analysis_diagnostics"] = {
+                **task.get("analysis_diagnostics", {}),
+                "chart1_quality": stage1.get("summary", {}).get("chart1_quality", {}),
+            }
             task["master_rows"] = stage1["master_rows"]
             task["review_rows"] = []
             task["candidate_rows"] = []
@@ -585,6 +609,10 @@ def analyze():
         except Exception as exc:
             task["status"] = "error"
             task["error"] = f"圖一辨識失敗：{exc}"
+            task["analysis_diagnostics"] = {
+                **task.get("analysis_diagnostics", {}),
+                "last_error": classify_analysis_error(exc),
+            }
             save_task(task)
             return  # 圖一失敗就停在這裡
 
@@ -606,6 +634,8 @@ def analyze():
                 progress_callback=make_chart2_progress_saver(task),
                 should_continue=lambda: not is_task_cancel_requested(task_id),
             )
+            from analyzer import evaluate_chart2_quality
+            chart2_quality = evaluate_chart2_quality(len(task.get("master_rows", [])), chart2_attrs, task.get("chart2_progress", {}))
             task["status"] = "chart2_ocr_done"
             task["chart2_raw"] = chart2_attrs
             task["chart2_progress"] = {
@@ -614,6 +644,10 @@ def analyze():
                 "deduped_count": len(chart2_attrs),
                 "updated_at": now_iso(),
             }
+            task["analysis_diagnostics"] = {
+                **task.get("analysis_diagnostics", {}),
+                "chart2_quality": chart2_quality,
+            }
             task["error"] = ""
         except InterruptedError:
             task["status"] = "cancelled"
@@ -621,6 +655,10 @@ def analyze():
         except Exception as exc:
             task["status"] = "chart2_error"
             task["error"] = f"圖二辨識失敗：{exc}"
+            task["analysis_diagnostics"] = {
+                **task.get("analysis_diagnostics", {}),
+                "last_error": classify_analysis_error(exc),
+            }
         finally:
             save_task(task)
 
@@ -660,6 +698,7 @@ def analyze_chart2_only(task_id: str):
     task["error"] = ""
     task["cancel_requested"] = False
     task["source_files"]["chart2"] = chart2.filename or ""
+    task.setdefault("image_metadata", {})["chart2"] = c2_shape or {}
     task["chart2_progress"] = {
         "status": "queued",
         "current_chunk": 0,
@@ -672,12 +711,13 @@ def analyze_chart2_only(task_id: str):
 
     def run_async():
         try:
-            from analyzer import analyze_chart2
+            from analyzer import analyze_chart2, evaluate_chart2_quality
             chart2_attrs = analyze_chart2(
                 c2_path,
                 progress_callback=make_chart2_progress_saver(task),
                 should_continue=lambda: not is_task_cancel_requested(task_id),
             )
+            chart2_quality = evaluate_chart2_quality(len(task.get("master_rows", [])), chart2_attrs, task.get("chart2_progress", {}))
             task["status"] = "chart2_ocr_done"
             task["chart2_raw"] = chart2_attrs
             task["chart2_progress"] = {
@@ -686,6 +726,10 @@ def analyze_chart2_only(task_id: str):
                 "deduped_count": len(chart2_attrs),
                 "updated_at": now_iso(),
             }
+            task["analysis_diagnostics"] = {
+                **task.get("analysis_diagnostics", {}),
+                "chart2_quality": chart2_quality,
+            }
             task["error"] = ""
         except InterruptedError:
             task["status"] = "cancelled"
@@ -693,6 +737,10 @@ def analyze_chart2_only(task_id: str):
         except Exception as exc:
             task["status"] = "chart2_error"
             task["error"] = f"圖二辨識失敗：{exc}"
+            task["analysis_diagnostics"] = {
+                **task.get("analysis_diagnostics", {}),
+                "last_error": classify_analysis_error(exc),
+            }
         finally:
             save_task(task)
 
@@ -1367,6 +1415,5 @@ def candidate_decision():
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    ensure_storage_ready()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)

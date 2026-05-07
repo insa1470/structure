@@ -3,3 +3,4 @@ flask-cors
 dashscope
 openai
 Pillow
+gunicorn
