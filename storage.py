@@ -77,6 +77,16 @@ class JsonTaskStore:
             except json.JSONDecodeError:
                 continue
 
+    def health_summary(self, limit: int = 10) -> dict:
+        tasks = list(self.iter_tasks())
+        recent = tasks[:limit]
+        return {
+            "ok": True,
+            "store": "json",
+            "task_count": len(tasks),
+            "recent_tasks": [_task_health_item(task) for task in recent],
+        }
+
 
 class PostgresTaskStore:
     """PostgreSQL-backed task storage.
@@ -203,6 +213,45 @@ class PostgresTaskStore:
                 for row in cur.fetchall():
                     yield row[0]
 
+    def health_summary(self, limit: int = 10) -> dict:
+        self.ensure_ready()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM tasks")
+                task_count = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM task_snapshots")
+                snapshot_count = cur.fetchone()[0]
+                cur.execute("""
+                    SELECT task
+                    FROM tasks
+                    ORDER BY updated_at DESC NULLS LAST
+                    LIMIT %s
+                """, (limit,))
+                recent = [row[0] for row in cur.fetchall()]
+                cur.execute("""
+                    SELECT task_id, COUNT(*) AS snapshot_count, MAX(created_at) AS latest_snapshot_at
+                    FROM task_snapshots
+                    GROUP BY task_id
+                    ORDER BY snapshot_count DESC, latest_snapshot_at DESC
+                    LIMIT %s
+                """, (limit,))
+                heavy_snapshots = [
+                    {
+                        "task_id": row[0],
+                        "snapshot_count": row[1],
+                        "latest_snapshot_at": row[2].isoformat() if row[2] else None,
+                    }
+                    for row in cur.fetchall()
+                ]
+        return {
+            "ok": True,
+            "store": "postgres",
+            "task_count": task_count,
+            "snapshot_count": snapshot_count,
+            "recent_tasks": [_task_health_item(task) for task in recent],
+            "largest_snapshot_sets": heavy_snapshots,
+        }
+
 
 class MirroredTaskStore:
     """Primary task store with best-effort mirror writes.
@@ -238,6 +287,21 @@ class MirroredTaskStore:
     def iter_tasks(self) -> Iterable[dict]:
         return self.primary.iter_tasks()
 
+    def health_summary(self, limit: int = 10) -> dict:
+        primary = _safe_health_summary(self.primary, limit)
+        mirror = _safe_health_summary(self.mirror, limit)
+        return {
+            "ok": bool(primary.get("ok")) and bool(mirror.get("ok")),
+            "store": "mirror",
+            "primary": primary,
+            "mirror": mirror,
+            "task_count_delta": (
+                primary.get("task_count", 0) - mirror.get("task_count", 0)
+                if primary.get("ok") and mirror.get("ok")
+                else None
+            ),
+        }
+
 
 def make_task_store():
     store_name = os.environ.get("TASK_STORE", "json").strip().lower()
@@ -251,6 +315,38 @@ def make_task_store():
 
 
 task_store = make_task_store()
+
+
+def _task_health_item(task: dict) -> dict:
+    summary = task.get("summary") or {}
+    return {
+        "id": task.get("id"),
+        "name": task.get("name"),
+        "status": task.get("status"),
+        "updated_at": task.get("updated_at"),
+        "master_count": summary.get("master_count", len(task.get("master_rows", []) or [])),
+        "review_count": summary.get("review_count", len(task.get("review_rows", []) or [])),
+        "candidate_count": summary.get("candidate_count", len(task.get("candidate_rows", []) or [])),
+    }
+
+
+def _safe_health_summary(store, limit: int = 10) -> dict:
+    try:
+        if hasattr(store, "health_summary"):
+            return store.health_summary(limit)
+        tasks = list(store.iter_tasks())
+        return {
+            "ok": True,
+            "store": type(store).__name__,
+            "task_count": len(tasks),
+            "recent_tasks": [_task_health_item(task) for task in tasks[:limit]],
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "store": type(store).__name__,
+            "error": str(exc)[:500],
+        }
 
 
 class JsonOcrTestStore:
@@ -330,3 +426,13 @@ def list_tasks(limit: int = 200) -> list[dict]:
         if len(tasks) >= limit:
             break
     return tasks
+
+
+def storage_health(limit: int = 10) -> dict:
+    return {
+        "configured_store": os.environ.get("TASK_STORE", "json").strip().lower() or "json",
+        "configured_mirror": os.environ.get("TASK_STORE_MIRROR", "").strip().lower() or None,
+        "active_store": type(task_store).__name__,
+        "checked_at": now_iso(),
+        "health": _safe_health_summary(task_store, limit),
+    }

@@ -12,7 +12,7 @@ from tempfile import NamedTemporaryFile
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-from storage import ensure_storage_ready, list_ocr_tests, list_tasks, read_task, save_ocr_test, save_task, task_upload_dir
+from storage import ensure_storage_ready, list_ocr_tests, list_tasks, read_task, save_ocr_test, save_task, storage_health, task_upload_dir
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "webapp"
@@ -331,6 +331,17 @@ def static_files(filename):
 @app.route("/api/health")
 def health():
     return jsonify({"ok": True, "time": now_iso()})
+
+
+@app.route("/api/admin/storage-health")
+def admin_storage_health():
+    if not is_admin_request():
+        return admin_required_response()
+    try:
+        limit = max(1, min(int(request.args.get("limit", "10")), 50))
+    except ValueError:
+        limit = 10
+    return jsonify(storage_health(limit=limit))
 
 
 @app.route("/api/ocr/probe", methods=["POST"])
