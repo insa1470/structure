@@ -2691,11 +2691,9 @@ function renderShareholderPanel() {
   const byId = {};
   state.masterRows.forEach((row) => { byId[row.node_id] = row; });
   elements.shareholderList.innerHTML = state.chartShareholders.map((holder) => {
-    const target = byId[holder.target_node_id];
     return `
       <article class="shareholder-chip">
-        <span><strong>${holder.name}</strong>（${shareholderTypeText(holder.type)}）</span>
-        <span>${holder.share || "—"} → ${target?.canonical_name || target?.chart1_name || "未指定"}</span>
+        <span><strong>${holder.name}</strong></span>
         <button type="button" data-shareholder-delete="${holder.id}" title="移除此股東">×</button>
       </article>
     `;
@@ -2724,15 +2722,9 @@ function renderExternalEntityPanel() {
   const byId = {};
   state.masterRows.forEach((row) => { byId[row.node_id] = row; });
   elements.externalEntityList.innerHTML = state.chartExternalEntities.map((entity) => {
-    const target = entity.target_node_id ? byId[entity.target_node_id] : null;
-    const targetName = target ? (target.canonical_name || target.chart1_name) : "同圖並列";
-    const groupName = entity.group || "集團外架構";
-    const relation = entity.share ? `${entity.share} → ${targetName}` : targetName;
     return `
       <article class="external-chip">
-        <span><strong>${svgEscape(entity.name)}</strong>（${shareholderTypeText(entity.type)}）</span>
-        <span>${svgEscape(groupName)}</span>
-        <span>${svgEscape(relation)}</span>
+        <span><strong>${svgEscape(entity.name)}</strong></span>
         <button type="button" data-external-delete="${entity.id}" title="移除此主體">×</button>
       </article>`;
   }).join("");
@@ -3206,14 +3198,14 @@ function rebalanceLayoutSymmetry(layout) {
     childIdsByParent[source].push(target);
   });
 
-  const visited = new Set();
   const shiftSubtree = (rootId, dx) => {
     if (!dx) return;
     const stack = [rootId];
+    const visited = new Set();
     while (stack.length) {
       const id = stack.pop();
-      if (visited.has(`${id}:${dx}`)) continue;
-      visited.add(`${id}:${dx}`);
+      if (visited.has(id)) continue;
+      visited.add(id);
       const node = nodesById[id];
       if (node) node.x = (node.x || 0) + dx;
       (childIdsByParent[id] || []).forEach((childId) => stack.push(childId));
@@ -3237,6 +3229,28 @@ function rebalanceLayoutSymmetry(layout) {
       if (Math.abs(dx) < 6) return;
       childNodes.forEach((child) => shiftSubtree(child.id, dx));
     });
+
+  // 第二段：防碰撞，確保同層節點不重疊
+  const MIN_GAP = 22;
+  const levelGroups = new Map();
+  (layout.children || []).forEach((node) => {
+    const key = String(node.row?.chart1_level ?? -1);
+    if (!levelGroups.has(key)) levelGroups.set(key, []);
+    levelGroups.get(key).push(node);
+  });
+  levelGroups.forEach((nodes) => {
+    nodes.sort((a, b) => (a.x || 0) - (b.x || 0));
+    for (let i = 1; i < nodes.length; i += 1) {
+      const prev = nodes[i - 1];
+      const curr = nodes[i];
+      const prevRight = (prev.x || 0) + (prev.width || 0);
+      const currLeft = curr.x || 0;
+      const overlap = prevRight + MIN_GAP - currLeft;
+      if (overlap > 0) {
+        shiftSubtree(curr.id, overlap);
+      }
+    }
+  });
 
   const minX = Math.min(...(layout.children || []).map((n) => n.x || 0));
   if (minX < 0) {
