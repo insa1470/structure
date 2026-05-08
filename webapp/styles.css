@@ -2336,6 +2336,30 @@ tr:hover .row-del-btn {
   color: #991b1b;
 }
 
+.elk-node-external-group {
+  cursor: grab;
+}
+
+.chart-panzoom-shell.is-external-dragging .elk-node-external-group {
+  cursor: grabbing;
+}
+
+.external-drag-hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 6px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
@@ -2395,6 +2419,7 @@ tr:hover .row-del-btn {
 .chart-panzoom-shell {
   width: 100%;
   height: 100%;
+  position: relative;
   overflow: auto;
   cursor: grab;
   background: #f8fafc;

@@ -300,6 +300,9 @@ function chartRowsWithShareholders(rows) {
     if (!groupMap.has(groupName)) {
       const groupId = `EXG_${groupName.replace(/\s+/g, "_")}_${groupMap.size + 1}`;
       groupMap.set(groupName, groupId);
+      const placementMode = entity.placement_mode === "fixed" ? "fixed" : "auto";
+      const manualX = Number.isFinite(Number(entity.manual_x)) ? Number(entity.manual_x) : null;
+      const manualY = Number.isFinite(Number(entity.manual_y)) ? Number(entity.manual_y) : null;
       extraRows.push({
         node_id: groupId,
         canonical_name: groupName,
@@ -311,6 +314,10 @@ function chartRowsWithShareholders(rows) {
         chart_note: "集團外主體",
         node_status: "enriched",
         is_external_group: true,
+        external_group_name: groupName,
+        external_placement_mode: placementMode,
+        external_manual_x: manualX,
+        external_manual_y: manualY,
       });
     }
     const groupId = groupMap.get(groupName);
@@ -1135,6 +1142,9 @@ function normalizeExternalEntities(entities) {
   return (entities || []).map((entity) => ({
     ...entity,
     levels: Math.max(2, Math.min(4, Number(entity?.levels) || 2)),
+    placement_mode: entity?.placement_mode === "fixed" ? "fixed" : "auto",
+    manual_x: Number.isFinite(Number(entity?.manual_x)) ? Number(entity.manual_x) : null,
+    manual_y: Number.isFinite(Number(entity?.manual_y)) ? Number(entity.manual_y) : null,
   }));
 }
 
@@ -2743,13 +2753,20 @@ function renderExternalEntityPanel() {
   state.masterRows.forEach((row) => { byId[row.node_id] = row; });
   elements.externalEntityList.innerHTML = state.chartExternalEntities.map((entity) => {
     const levelText = Number(entity.levels) >= 2 ? ` · ${Number(entity.levels)}層` : "";
+    const fixedText = entity.placement_mode === "fixed" ? " · 已固定" : "";
     return `
       <article class="external-chip">
-        <span><strong>${svgEscape(entity.name)}</strong>${levelText}</span>
+        <span><strong>${svgEscape(entity.name)}</strong>${levelText}${fixedText}</span>
+        <button type="button" data-external-auto="${entity.id}" title="恢復自動擺位">↺</button>
         <button type="button" data-external-edit="${entity.id}" title="編輯主體">✎</button>
         <button type="button" data-external-delete="${entity.id}" title="移除此主體">×</button>
       </article>`;
   }).join("");
+  elements.externalEntityList.querySelectorAll("[data-external-auto]").forEach((button) => {
+    button.addEventListener("click", () => {
+      restoreExternalGroupAuto(button.dataset.externalAuto).catch((error) => alert(`恢復自動失敗：${error.message}`));
+    });
+  });
   elements.externalEntityList.querySelectorAll("[data-external-edit]").forEach((button) => {
     button.addEventListener("click", () => {
       const target = state.chartExternalEntities.find((entity) => entity.id === button.dataset.externalEdit);
@@ -2784,6 +2801,9 @@ async function addExternalEntityWithPayload(form) {
       target_node_id: form.target_node_id || "",
       share: String(form.share || "").trim(),
       levels: Math.max(2, Math.min(4, Number(form.levels) || 2)),
+      placement_mode: "auto",
+      manual_x: null,
+      manual_y: null,
       note: "",
     },
   ];
@@ -2802,9 +2822,35 @@ async function updateExternalEntity(id, form) {
       target_node_id: form.target_node_id || "",
       share: String(form.share || "").trim(),
       levels: Math.max(2, Math.min(4, Number(form.levels) || entity.levels || 2)),
+      placement_mode: entity.placement_mode === "fixed" ? "fixed" : "auto",
+      manual_x: Number.isFinite(Number(entity.manual_x)) ? Number(entity.manual_x) : null,
+      manual_y: Number.isFinite(Number(entity.manual_y)) ? Number(entity.manual_y) : null,
     };
   });
   await saveExternalEntities(next);
+}
+
+async function setExternalGroupPlacementByEntity(entityId, placement = {}) {
+  if (!state.taskId || !entityId) return;
+  const source = state.chartExternalEntities.find((entity) => entity.id === entityId);
+  if (!source) return;
+  const groupName = String(source.group || "").trim() || "集團外架構";
+  const mode = placement.mode === "fixed" ? "fixed" : "auto";
+  const next = state.chartExternalEntities.map((entity) => {
+    const entityGroup = String(entity.group || "").trim() || "集團外架構";
+    if (entityGroup !== groupName) return entity;
+    return {
+      ...entity,
+      placement_mode: mode,
+      manual_x: mode === "fixed" && Number.isFinite(Number(placement.manual_x)) ? Number(placement.manual_x) : null,
+      manual_y: mode === "fixed" && Number.isFinite(Number(placement.manual_y)) ? Number(placement.manual_y) : null,
+    };
+  });
+  await saveExternalEntities(next);
+}
+
+async function restoreExternalGroupAuto(entityId) {
+  await setExternalGroupPlacementByEntity(entityId, { mode: "auto" });
 }
 
 async function deleteExternalEntity(id) {
@@ -3414,9 +3460,37 @@ function rebalanceLayoutSymmetry(layout) {
         { x: mainBBox.minX - GAP, y: mainBBox.maxY + GAP, name: "bottom-left" },
         { x: mainBBox.maxX + GAP, y: mainBBox.maxY + GAP, name: "bottom-right" },
       ];
+      const shiftGroup = (group, dx, dy) => {
+        if (!dx && !dy) return;
+        const stack = [group.root.id];
+        const visited = new Set();
+        while (stack.length) {
+          const id = stack.pop();
+          if (visited.has(id)) continue;
+          visited.add(id);
+          const node = nodesById[id];
+          if (node) {
+            node.x = (node.x || 0) + dx;
+            node.y = (node.y || 0) + dy;
+          }
+          (childIdsByParent[id] || []).forEach((childId) => stack.push(childId));
+        }
+      };
 
       const occupied = [mainBBox];
+      externalGroups.forEach((group) => {
+        const mode = group.root?.row?.external_placement_mode;
+        const manualX = Number(group.root?.row?.external_manual_x);
+        const manualY = Number(group.root?.row?.external_manual_y);
+        if (mode !== "fixed" || !Number.isFinite(manualX) || !Number.isFinite(manualY)) return;
+        const dx = manualX - (group.root.x || 0);
+        const dy = manualY - (group.root.y || 0);
+        shiftGroup(group, dx, dy);
+        group.bbox = bboxOfIds(group.ids);
+        occupied.push(group.bbox);
+      });
       externalGroups.forEach((group, index) => {
+        if (group.root?.row?.external_placement_mode === "fixed") return;
         const sourceEdge = (layout.edges || []).find((edge) => edge.sources?.[0] && group.ids.has(edge.sources[0]) && nodesById[edge.targets?.[0]]);
         const targetNode = sourceEdge ? nodesById[sourceEdge.targets[0]] : null;
         const targetCenter = targetNode ? nodeCenter(targetNode) : { x: mainBBox.maxX, y: mainBBox.maxY };
@@ -3451,19 +3525,7 @@ function rebalanceLayoutSymmetry(layout) {
         if (!best) return;
         const dx = best.next.minX - current.minX;
         const dy = best.next.minY - current.minY;
-        const stack = [group.root.id];
-        const visited = new Set();
-        while (stack.length) {
-          const id = stack.pop();
-          if (visited.has(id)) continue;
-          visited.add(id);
-          const node = nodesById[id];
-          if (node) {
-            node.x = (node.x || 0) + dx;
-            node.y = (node.y || 0) + dy;
-          }
-          (childIdsByParent[id] || []).forEach((childId) => stack.push(childId));
-        }
+        shiftGroup(group, dx, dy);
         group.bbox = bboxOfIds(group.ids);
         occupied.push(group.bbox);
       });
@@ -3768,8 +3830,11 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const details = baseDetails.slice(0, detailLimit);
     const nameStart = profile.nodeH <= 96 ? 31 - (nameLines.length - 1) * 8 : 36 - (nameLines.length - 1) * 9;
     const detailStart = profile.nodeH - (details.length > 1 ? 35 : 26);
+    const nodeClasses = ["elk-node"];
+    if (r.is_external_group) nodeClasses.push("elk-node-external-group");
+    const groupAttr = r.is_external_group ? `data-external-group="${svgEscape(String(r.external_group_name || r.canonical_name || ""))}"` : "";
     return `
-      <g class="elk-node" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
+      <g class="${nodeClasses.join(" ")}" data-node-id="${svgEscape(String(node.id || ""))}" data-layout-x="${Number(node.x || 0).toFixed(2)}" data-layout-y="${Number(node.y || 0).toFixed(2)}" ${groupAttr} transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
         <rect width="${node.width}" height="${node.height}" rx="${isShareholder ? 18 : 4}" fill="${fill}" stroke="${stroke}" stroke-width="${isShareholder ? 1.8 : (uncertain ? 2.2 : 1.4)}" ${uncertain || isShareholder ? 'stroke-dasharray="7 4"' : ""} />
         <text x="${node.width / 2}" y="${nameStart}" text-anchor="middle" fill="${nameColor}" font-size="${nameFont}" font-weight="800">
           ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 18}">${svgEscape(line)}</tspan>`).join("")}
@@ -3878,6 +3943,73 @@ function bindChartViewport() {
   applyChartViewport();
 }
 
+function bindExternalGroupDrag() {
+  const shell = document.getElementById("chartPanZoomShell");
+  if (!shell) return;
+
+  shell.querySelectorAll(".elk-node-external-group").forEach((groupNode) => {
+    let dragging = null;
+    groupNode.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.stopPropagation();
+      event.preventDefault();
+      const groupName = String(groupNode.getAttribute("data-external-group") || "").trim();
+      if (!groupName) return;
+      const startLayoutX = Number(groupNode.getAttribute("data-layout-x") || 0);
+      const startLayoutY = Number(groupNode.getAttribute("data-layout-y") || 0);
+      dragging = {
+        groupName,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startLayoutX,
+        startLayoutY,
+        nextX: startLayoutX,
+        nextY: startLayoutY,
+      };
+      groupNode.setPointerCapture(event.pointerId);
+      const hint = document.createElement("div");
+      hint.id = "externalDragHint";
+      hint.className = "external-drag-hint";
+      hint.textContent = `拖曳中：${groupName}（放開後固定位置）`;
+      shell.appendChild(hint);
+      shell.classList.add("is-external-dragging");
+    });
+
+    groupNode.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const dx = (event.clientX - dragging.startClientX) / Math.max(state.chartScale, 0.01);
+      const dy = (event.clientY - dragging.startClientY) / Math.max(state.chartScale, 0.01);
+      dragging.nextX = dragging.startLayoutX + dx;
+      dragging.nextY = dragging.startLayoutY + dy;
+    });
+
+    groupNode.addEventListener("pointerup", async () => {
+      if (!dragging) return;
+      const target = dragging;
+      dragging = null;
+      shell.classList.remove("is-external-dragging");
+      document.getElementById("externalDragHint")?.remove();
+      if (!Number.isFinite(target.nextX) || !Number.isFinite(target.nextY)) return;
+      const groupEntity = state.chartExternalEntities.find((entity) => {
+        const entityGroup = String(entity.group || "").trim() || "集團外架構";
+        return entityGroup === target.groupName;
+      });
+      if (!groupEntity) return;
+      await setExternalGroupPlacementByEntity(groupEntity.id, {
+        mode: "fixed",
+        manual_x: target.nextX,
+        manual_y: target.nextY,
+      }).catch((error) => alert(`固定位置失敗：${error.message}`));
+    });
+
+    groupNode.addEventListener("pointercancel", () => {
+      dragging = null;
+      shell.classList.remove("is-external-dragging");
+      document.getElementById("externalDragHint")?.remove();
+    });
+  });
+}
+
 function syncBranchSelect(pages) {
   if (!elements.chartBranchSelect) return;
   const options = pages.map((page) => ({
@@ -3938,6 +4070,7 @@ async function renderElkChart() {
       if (seq !== _elkRenderSeq) return;
       elements.chartContainer.innerHTML = svgs.length ? renderChartViewport(`<div id="elkPagedChart" class="elk-pages">${svgs.join("")}</div>`) : `<div class="elk-empty">沒有可顯示的公司資料</div>`;
       bindChartViewport();
+      bindExternalGroupDrag();
       return;
     }
 
@@ -3951,6 +4084,7 @@ async function renderElkChart() {
     if (seq !== _elkRenderSeq) return;
     elements.chartContainer.innerHTML = renderChartViewport(renderElkSvg(layout, profile));
     bindChartViewport();
+    bindExternalGroupDrag();
   } catch (error) {
     console.error(error);
     elements.chartContainer.classList.add("chart-container-list");

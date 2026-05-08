@@ -1336,6 +1336,18 @@ def update_chart_external_entities(task_id: str):
         if target_node_id and target_node_id not in valid_targets:
             target_node_id = ""
         group_name = str(row.get("group") or "").strip() or "集團外架構"
+        try:
+            levels = max(2, min(4, int(row.get("levels") or 2)))
+        except (TypeError, ValueError):
+            levels = 2
+        try:
+            manual_x = float(row.get("manual_x")) if row.get("manual_x") not in (None, "") else None
+        except (TypeError, ValueError):
+            manual_x = None
+        try:
+            manual_y = float(row.get("manual_y")) if row.get("manual_y") not in (None, "") else None
+        except (TypeError, ValueError):
+            manual_y = None
         cleaned.append({
             "id": str(row.get("id") or f"external_{idx + 1}").strip(),
             "name": name,
@@ -1343,6 +1355,10 @@ def update_chart_external_entities(task_id: str):
             "group": group_name,
             "share": str(row.get("share") or "").strip(),
             "target_node_id": target_node_id,
+            "levels": levels,
+            "placement_mode": "fixed" if str(row.get("placement_mode") or "").strip() == "fixed" else "auto",
+            "manual_x": manual_x,
+            "manual_y": manual_y,
             "note": str(row.get("note") or "").strip(),
         })
 
