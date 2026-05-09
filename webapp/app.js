@@ -32,6 +32,7 @@ const state = {
   chartScale: 1,
   chartPanX: 0,
   chartPanY: 0,
+  externalLayoutNeedsFit: false,
   printOrientation: "landscape",
   printTitle: "",
   printFitToPage: true,
@@ -302,6 +303,7 @@ function chartRowsWithShareholders(rows) {
       const placementMode = entity.placement_mode === "fixed" ? "fixed" : "auto";
       const manualX = Number.isFinite(Number(entity.manual_x)) ? Number(entity.manual_x) : null;
       const manualY = Number.isFinite(Number(entity.manual_y)) ? Number(entity.manual_y) : null;
+      const externalScale = normalizeExternalScale(entity.external_scale);
       extraRows.push({
         node_id: groupId,
         canonical_name: groupName,
@@ -317,6 +319,7 @@ function chartRowsWithShareholders(rows) {
         external_placement_mode: placementMode,
         external_manual_x: manualX,
         external_manual_y: manualY,
+        external_scale: externalScale,
       });
     }
     const groupId = groupMap.get(groupName);
@@ -343,6 +346,7 @@ function chartRowsWithShareholders(rows) {
         external_group: groupName,
         external_link_target: isLast ? (entity.target_node_id || "") : "",
         external_link_share: isLast ? (entity.share || "") : "",
+        external_scale: normalizeExternalScale(entity.external_scale),
       });
       parentId = nodeId;
     }
@@ -1153,10 +1157,17 @@ function normalizeExternalEntities(entities) {
     levels: Math.max(2, Math.min(4, Number(entity?.levels) || 2)),
     layer_names: normalizeExternalLayerNames(entity),
     layer_shares: normalizeExternalLayerShares(entity),
+    external_scale: normalizeExternalScale(entity?.external_scale),
     placement_mode: entity?.placement_mode === "fixed" ? "fixed" : "auto",
     manual_x: Number.isFinite(Number(entity?.manual_x)) ? Number(entity.manual_x) : null,
     manual_y: Number.isFinite(Number(entity?.manual_y)) ? Number(entity.manual_y) : null,
   }));
+}
+
+function normalizeExternalScale(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 100;
+  return Math.max(70, Math.min(130, Math.round(n)));
 }
 
 function normalizeExternalLayerNames(entity = {}) {
@@ -2818,6 +2829,7 @@ async function saveExternalEntities(nextEntities) {
   const payload = await apiPost(`/api/tasks/${state.taskId}/chart-external-entities`, {
     chart_external_entities: nextEntities,
   });
+  state.externalLayoutNeedsFit = true;
   applyTaskRefresh(payload);
   renderChart();
 }
@@ -2843,6 +2855,7 @@ async function addExternalEntityWithPayload(form) {
       manual_x: null,
       manual_y: null,
       note: "",
+      external_scale: normalizeExternalScale(form.external_scale),
     },
   ];
   await saveExternalEntities(next);
@@ -2876,6 +2889,7 @@ async function updateExternalEntity(id, form) {
       placement_mode: entity.placement_mode === "fixed" ? "fixed" : "auto",
       manual_x: Number.isFinite(Number(entity.manual_x)) ? Number(entity.manual_x) : null,
       manual_y: Number.isFinite(Number(entity.manual_y)) ? Number(entity.manual_y) : null,
+      external_scale: normalizeExternalScale(form.external_scale ?? entity.external_scale),
     };
   });
   await saveExternalEntities(next);
@@ -3046,6 +3060,7 @@ function openExternalEntityModal(existing = null) {
         </select>
       </label>
       <label class="field"><span>群組</span><input id="entityGroupInput" type="text" placeholder="例如：集團外關聯主體 A" value="${svgEscape(existing?.group || "")}" /></label>
+      <label class="field"><span>縮放（%）</span><input id="entityScaleInput" type="number" min="70" max="130" step="5" value="${normalizeExternalScale(existing?.external_scale)}" /></label>
       <div id="externalLayersEditor" class="field"></div>
       <label class="field"><span>關聯對象（可選）</span>
         <select id="entityTargetSelect"><option value="">不指定（僅同圖並列）</option>${targets.map((row) => `<option value="${row.node_id}" ${existing?.target_node_id === row.node_id ? "selected" : ""}>${svgEscape(row.canonical_name || row.chart1_name || "未命名公司")}</option>`).join("")}</select>
@@ -3094,13 +3109,14 @@ function openExternalEntityModal(existing = null) {
     const group = modal.querySelector("#entityGroupInput")?.value.trim() || "集團外架構";
     const target_node_id = modal.querySelector("#entityTargetSelect")?.value || "";
     const share = modal.querySelector("#entityShareInput")?.value.trim() || "";
+    const external_scale = normalizeExternalScale(modal.querySelector("#entityScaleInput")?.value || 100);
     const layer_names = Array.from(modal.querySelectorAll("[data-layer-name]")).map((el) => el.value.trim());
     const layer_shares = Array.from(modal.querySelectorAll("[data-layer-share]")).map((el) => el.value.trim());
     if (!name && !layer_names[0]) return;
     if (existing?.id) {
-      await updateExternalEntity(existing.id, { name, levels, group, target_node_id, share, layer_names, layer_shares });
+      await updateExternalEntity(existing.id, { name, levels, group, target_node_id, share, layer_names, layer_shares, external_scale });
     } else {
-      await addExternalEntityWithPayload({ name: name || layer_names[0], levels, group, target_node_id, share, layer_names, layer_shares });
+      await addExternalEntityWithPayload({ name: name || layer_names[0], levels, group, target_node_id, share, layer_names, layer_shares, external_scale });
     }
     closeEntityModal();
   });
@@ -3390,7 +3406,17 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       const level = Number(r.chart1_level) || 0;
       const adaptiveWidth = Math.max(164, Math.min(profile.maxNodeW, 156 + Math.ceil(name.length / 7) * 16));
       const width = level >= 2 ? Math.min(baseWidth, adaptiveWidth) : Math.max(baseWidth, adaptiveWidth);
-      return { id: r.node_id, width, height: r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH, row: r };
+      const height = r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH;
+      if (r.is_external_entity || r.is_external_group) {
+        const scale = normalizeExternalScale(r.external_scale) / 100;
+        return {
+          id: r.node_id,
+          width: Math.round(width * scale),
+          height: Math.round(height * scale),
+          row: r,
+        };
+      }
+      return { id: r.node_id, width, height, row: r };
     }),
     edges: [
       ...visibleRows
@@ -4060,10 +4086,65 @@ function bindChartViewport() {
 function bindExternalGroupDrag() {
   const shell = document.getElementById("chartPanZoomShell");
   if (!shell) return;
+  const SNAP_DISTANCE = 20;
+  let guideX = shell.querySelector(".external-snap-guide-x");
+  let guideY = shell.querySelector(".external-snap-guide-y");
+  if (!guideX) {
+    guideX = document.createElement("div");
+    guideX.className = "external-snap-guide external-snap-guide-x";
+    shell.appendChild(guideX);
+  }
+  if (!guideY) {
+    guideY = document.createElement("div");
+    guideY.className = "external-snap-guide external-snap-guide-y";
+    shell.appendChild(guideY);
+  }
+  const hideGuides = () => {
+    guideX.classList.remove("is-visible");
+    guideY.classList.remove("is-visible");
+  };
 
   shell.querySelectorAll(".external-group-frame").forEach((groupNode) => {
     let dragging = null;
     let rafId = 0;
+    const snapPoint = (x, y) => {
+      if (!dragging) return { x, y };
+      const profile = getChartProfile();
+      const svg = shell.querySelector(".elk-svg");
+      const centerX = svg ? ((Number(svg.getAttribute("width")) || 0) / 2 - profile.pad) : null;
+      const peers = dragging.peerRoots || [];
+      let nextX = x;
+      let nextY = y;
+      let snappedX = null;
+      let snappedY = null;
+      [centerX, ...peers.map((p) => p.x)].forEach((axisX) => {
+        if (!Number.isFinite(axisX)) return;
+        if (Math.abs(nextX - axisX) <= SNAP_DISTANCE) {
+          nextX = axisX;
+          snappedX = axisX;
+        }
+      });
+      peers.forEach((p) => {
+        if (!Number.isFinite(p.y)) return;
+        if (Math.abs(nextY - p.y) <= SNAP_DISTANCE) {
+          nextY = p.y;
+          snappedY = p.y;
+        }
+      });
+      if (snappedX !== null) {
+        guideX.style.left = `${((snappedX + profile.pad) * state.chartScale + state.chartPanX).toFixed(1)}px`;
+        guideX.classList.add("is-visible");
+      } else {
+        guideX.classList.remove("is-visible");
+      }
+      if (snappedY !== null) {
+        guideY.style.top = `${((snappedY + profile.pad) * state.chartScale + state.chartPanY).toFixed(1)}px`;
+        guideY.classList.add("is-visible");
+      } else {
+        guideY.classList.remove("is-visible");
+      }
+      return { x: nextX, y: nextY };
+    };
     const flushDragTransform = () => {
       rafId = 0;
       if (!dragging) return;
@@ -4087,6 +4168,17 @@ function bindExternalGroupDrag() {
         startLayoutY,
         nextX: startLayoutX,
         nextY: startLayoutY,
+        velocityX: 0,
+        velocityY: 0,
+        lastClientX: event.clientX,
+        lastClientY: event.clientY,
+        lastMoveAt: performance.now(),
+        peerRoots: [...shell.querySelectorAll(".external-group-frame")]
+          .filter((item) => item !== groupNode)
+          .map((item) => ({
+            x: Number(item.getAttribute("data-root-x") || 0),
+            y: Number(item.getAttribute("data-root-y") || 0),
+          })),
       };
       groupNode.setPointerCapture(event.pointerId);
       groupNode.classList.add("is-dragging");
@@ -4100,10 +4192,21 @@ function bindExternalGroupDrag() {
 
     groupNode.addEventListener("pointermove", (event) => {
       if (!dragging) return;
-      const dx = (event.clientX - dragging.startClientX) / Math.max(state.chartScale, 0.01);
-      const dy = (event.clientY - dragging.startClientY) / Math.max(state.chartScale, 0.01);
-      dragging.nextX = dragging.startLayoutX + dx;
-      dragging.nextY = dragging.startLayoutY + dy;
+      const scale = Math.max(state.chartScale, 0.01);
+      const dx = (event.clientX - dragging.startClientX) / scale;
+      const dy = (event.clientY - dragging.startClientY) / scale;
+      const targetX = dragging.startLayoutX + dx;
+      const targetY = dragging.startLayoutY + dy;
+      const snapped = snapPoint(targetX, targetY);
+      dragging.nextX += (snapped.x - dragging.nextX) * 0.45;
+      dragging.nextY += (snapped.y - dragging.nextY) * 0.45;
+      const now = performance.now();
+      const dt = Math.max(8, now - dragging.lastMoveAt);
+      dragging.velocityX = ((event.clientX - dragging.lastClientX) / scale) / dt * 16;
+      dragging.velocityY = ((event.clientY - dragging.lastClientY) / scale) / dt * 16;
+      dragging.lastClientX = event.clientX;
+      dragging.lastClientY = event.clientY;
+      dragging.lastMoveAt = now;
       if (!rafId) rafId = requestAnimationFrame(flushDragTransform);
     });
 
@@ -4111,22 +4214,52 @@ function bindExternalGroupDrag() {
       if (!dragging) return;
       const target = dragging;
       dragging = null;
+      hideGuides();
       shell.classList.remove("is-external-dragging");
       document.getElementById("externalDragHint")?.remove();
       groupNode.classList.remove("is-dragging");
-      groupNode.style.transform = "";
       if (rafId) cancelAnimationFrame(rafId);
       rafId = 0;
-      if (!Number.isFinite(target.nextX) || !Number.isFinite(target.nextY)) return;
+      if (!Number.isFinite(target.nextX) || !Number.isFinite(target.nextY)) {
+        groupNode.style.transform = "";
+        return;
+      }
+      let finalX = target.nextX;
+      let finalY = target.nextY;
+      let vx = target.velocityX;
+      let vy = target.velocityY;
+      await new Promise((resolve) => {
+        const startedAt = performance.now();
+        const step = () => {
+          const elapsed = performance.now() - startedAt;
+          if (elapsed > 240) return resolve();
+          vx *= 0.9;
+          vy *= 0.9;
+          finalX += vx;
+          finalY += vy;
+          const snapped = snapPoint(finalX, finalY);
+          finalX = snapped.x;
+          finalY = snapped.y;
+          const dx = finalX - target.startLayoutX;
+          const dy = finalY - target.startLayoutY;
+          groupNode.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0)`;
+          if (Math.abs(vx) < 0.08 && Math.abs(vy) < 0.08) return resolve();
+          requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      });
+      groupNode.style.transform = "";
+      hideGuides();
       await setExternalGroupPlacementByGroupName(target.groupName, {
         mode: "fixed",
-        manual_x: target.nextX,
-        manual_y: target.nextY,
+        manual_x: finalX,
+        manual_y: finalY,
       }).catch((error) => alert(`固定位置失敗：${error.message}`));
     });
 
     groupNode.addEventListener("pointercancel", () => {
       dragging = null;
+      hideGuides();
       shell.classList.remove("is-external-dragging");
       document.getElementById("externalDragHint")?.remove();
       groupNode.classList.remove("is-dragging");
@@ -4198,6 +4331,10 @@ async function renderElkChart() {
       elements.chartContainer.innerHTML = svgs.length ? renderChartViewport(`<div id="elkPagedChart" class="elk-pages">${svgs.join("")}</div>`) : `<div class="elk-empty">沒有可顯示的公司資料</div>`;
       bindChartViewport();
       bindExternalGroupDrag();
+      if (state.externalLayoutNeedsFit) {
+        fitChartToViewport();
+        state.externalLayoutNeedsFit = false;
+      }
       return;
     }
 
@@ -4212,6 +4349,10 @@ async function renderElkChart() {
     elements.chartContainer.innerHTML = renderChartViewport(renderElkSvg(layout, profile));
     bindChartViewport();
     bindExternalGroupDrag();
+    if (state.externalLayoutNeedsFit) {
+      fitChartToViewport();
+      state.externalLayoutNeedsFit = false;
+    }
   } catch (error) {
     console.error(error);
     elements.chartContainer.classList.add("chart-container-list");

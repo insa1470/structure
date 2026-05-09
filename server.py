@@ -1345,6 +1345,10 @@ def update_chart_external_entities(task_id: str):
             manual_y = float(row.get("manual_y")) if row.get("manual_y") not in (None, "") else None
         except (TypeError, ValueError):
             manual_y = None
+        try:
+            external_scale = max(70, min(130, int(float(row.get("external_scale") or 100))))
+        except (TypeError, ValueError):
+            external_scale = 100
         raw_names = row.get("layer_names")
         if isinstance(raw_names, list):
             layer_names = [str(v or "").strip() for v in raw_names]
@@ -1374,6 +1378,7 @@ def update_chart_external_entities(task_id: str):
             "levels": levels,
             "layer_names": layer_names,
             "layer_shares": layer_shares,
+            "external_scale": external_scale,
             "placement_mode": "fixed" if str(row.get("placement_mode") or "").strip() == "fixed" else "auto",
             "manual_x": manual_x,
             "manual_y": manual_y,

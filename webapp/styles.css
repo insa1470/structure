@@ -2381,6 +2381,32 @@ tr:hover .row-del-btn {
   pointer-events: none;
 }
 
+.external-snap-guide {
+  position: absolute;
+  pointer-events: none;
+  z-index: 18;
+  opacity: 0;
+  transition: opacity 80ms ease;
+}
+
+.external-snap-guide.is-visible {
+  opacity: 1;
+}
+
+.external-snap-guide-x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(99, 102, 241, 0.7);
+}
+
+.external-snap-guide-y {
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(99, 102, 241, 0.7);
+}
+
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
