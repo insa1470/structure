@@ -2338,6 +2338,7 @@ tr:hover .row-del-btn {
 
 .external-group-frame {
   cursor: grab;
+  will-change: transform;
 }
 
 .external-group-frame rect {
@@ -2356,6 +2357,12 @@ tr:hover .row-del-btn {
 
 .chart-panzoom-shell.is-external-dragging .external-group-frame {
   cursor: grabbing;
+}
+
+.external-group-frame.is-dragging rect {
+  stroke: #6366f1;
+  stroke-width: 2;
+  fill: rgba(224, 231, 255, 0.35);
 }
 
 .external-drag-hint {

@@ -325,7 +325,7 @@ function chartRowsWithShareholders(rows) {
     let parentId = groupId;
     for (let step = 1; step < levels - 1; step += 1) {
       const midId = `EXM_${entity.id}_${step}`;
-      const midName = `${name} 上層${step}`;
+      const midName = `${name} 第${step + 1}層`;
       extraRows.push({
         node_id: midId,
         canonical_name: midName,
@@ -333,7 +333,7 @@ function chartRowsWithShareholders(rows) {
         chart1_level: step,
         chart1_parent: parentId,
         actual_controller_share: "",
-        role_label: "集團外中間層",
+        role_label: `集團外第${step + 1}層`,
         chart_note: "",
         node_status: "enriched",
         is_external_entity: true,
@@ -350,7 +350,7 @@ function chartRowsWithShareholders(rows) {
       chart1_level: levels - 1,
       chart1_parent: parentId,
       actual_controller_share: "",
-      role_label: `集團外${shareholderTypeText(entity.type)}`,
+      role_label: `集團外${shareholderTypeText(entity.type)} · 第${levels}層`,
       chart_note: entity.note || "",
       node_status: "enriched",
       is_external_entity: true,
@@ -4028,6 +4028,7 @@ function bindExternalGroupDrag() {
         nextY: startLayoutY,
       };
       groupNode.setPointerCapture(event.pointerId);
+      groupNode.classList.add("is-dragging");
       const hint = document.createElement("div");
       hint.id = "externalDragHint";
       hint.className = "external-drag-hint";
@@ -4042,6 +4043,7 @@ function bindExternalGroupDrag() {
       const dy = (event.clientY - dragging.startClientY) / Math.max(state.chartScale, 0.01);
       dragging.nextX = dragging.startLayoutX + dx;
       dragging.nextY = dragging.startLayoutY + dy;
+      groupNode.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
     });
 
     groupNode.addEventListener("pointerup", async () => {
@@ -4050,6 +4052,8 @@ function bindExternalGroupDrag() {
       dragging = null;
       shell.classList.remove("is-external-dragging");
       document.getElementById("externalDragHint")?.remove();
+      groupNode.classList.remove("is-dragging");
+      groupNode.style.transform = "";
       if (!Number.isFinite(target.nextX) || !Number.isFinite(target.nextY)) return;
       await setExternalGroupPlacementByGroupName(target.groupName, {
         mode: "fixed",
@@ -4062,6 +4066,8 @@ function bindExternalGroupDrag() {
       dragging = null;
       shell.classList.remove("is-external-dragging");
       document.getElementById("externalDragHint")?.remove();
+      groupNode.classList.remove("is-dragging");
+      groupNode.style.transform = "";
     });
   });
 }
