@@ -321,12 +321,34 @@ function chartRowsWithShareholders(rows) {
       });
     }
     const groupId = groupMap.get(groupName);
+    const levels = Math.max(2, Math.min(4, Number(entity.levels) || 2));
+    let parentId = groupId;
+    for (let step = 1; step < levels - 1; step += 1) {
+      const midId = `EXM_${entity.id}_${step}`;
+      const midName = `${name} 上層${step}`;
+      extraRows.push({
+        node_id: midId,
+        canonical_name: midName,
+        chart1_name: midName,
+        chart1_level: step,
+        chart1_parent: parentId,
+        actual_controller_share: "",
+        role_label: "集團外中間層",
+        chart_note: "",
+        node_status: "enriched",
+        is_external_entity: true,
+        is_external_mid: true,
+        external_type: entity.type || "company",
+        external_group: groupName,
+      });
+      parentId = midId;
+    }
     extraRows.push({
       node_id: `EX_${entity.id}`,
       canonical_name: name,
       chart1_name: name,
-      chart1_level: 1,
-      chart1_parent: groupId,
+      chart1_level: levels - 1,
+      chart1_parent: parentId,
       actual_controller_share: "",
       role_label: `集團外${shareholderTypeText(entity.type)}`,
       chart_note: entity.note || "",
