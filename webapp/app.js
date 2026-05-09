@@ -294,8 +294,7 @@ function chartRowsWithShareholders(rows) {
 
   const groupMap = new Map();
   (state.chartExternalEntities || []).forEach((entity) => {
-    const name = String(entity.name || "").trim();
-    if (!name) return;
+    const name = String(entity.name || "").trim() || "集團外主體";
     const groupName = String(entity.group || "集團外架構").trim() || "集團外架構";
     if (!groupMap.has(groupName)) {
       const groupId = `EXG_${groupName.replace(/\s+/g, "_")}_${groupMap.size + 1}`;
@@ -322,43 +321,31 @@ function chartRowsWithShareholders(rows) {
     }
     const groupId = groupMap.get(groupName);
     const levels = Math.max(2, Math.min(4, Number(entity.levels) || 2));
+    const layerNames = normalizeExternalLayerNames(entity);
+    const layerShares = normalizeExternalLayerShares(entity);
     let parentId = groupId;
-    for (let step = 1; step < levels - 1; step += 1) {
-      const midId = `EXM_${entity.id}_${step}`;
-      const midName = `${name} 第${step + 1}層`;
+    for (let i = 0; i < levels; i += 1) {
+      const isLast = i === levels - 1;
+      const nodeId = `EX_${entity.id}_${i + 1}`;
+      const nodeName = String(layerNames[i] || "").trim() || `${name} 第${i + 1}層`;
       extraRows.push({
-        node_id: midId,
-        canonical_name: midName,
-        chart1_name: midName,
-        chart1_level: step,
+        node_id: nodeId,
+        canonical_name: nodeName,
+        chart1_name: nodeName,
+        chart1_level: i + 1,
         chart1_parent: parentId,
-        actual_controller_share: "",
-        role_label: `集團外第${step + 1}層`,
-        chart_note: "",
+        actual_controller_share: i >= 1 ? String(layerShares[i - 1] || "").trim() : "",
+        role_label: `集團外第${i + 1}層`,
+        chart_note: isLast ? (entity.note || "") : "",
         node_status: "enriched",
         is_external_entity: true,
-        is_external_mid: true,
-        external_type: entity.type || "company",
+        is_external_mid: !isLast,
         external_group: groupName,
+        external_link_target: isLast ? (entity.target_node_id || "") : "",
+        external_link_share: isLast ? (entity.share || "") : "",
       });
-      parentId = midId;
+      parentId = nodeId;
     }
-    extraRows.push({
-      node_id: `EX_${entity.id}`,
-      canonical_name: name,
-      chart1_name: name,
-      chart1_level: levels - 1,
-      chart1_parent: parentId,
-      actual_controller_share: "",
-      role_label: `集團外${shareholderTypeText(entity.type)} · 第${levels}層`,
-      chart_note: entity.note || "",
-      node_status: "enriched",
-      is_external_entity: true,
-      external_type: entity.type || "company",
-      external_group: groupName,
-      external_link_target: entity.target_node_id || "",
-      external_link_share: entity.share || "",
-    });
   });
 
   return [...extraRows, ...rows];
@@ -1164,10 +1151,33 @@ function normalizeExternalEntities(entities) {
   return (entities || []).map((entity) => ({
     ...entity,
     levels: Math.max(2, Math.min(4, Number(entity?.levels) || 2)),
+    layer_names: normalizeExternalLayerNames(entity),
+    layer_shares: normalizeExternalLayerShares(entity),
     placement_mode: entity?.placement_mode === "fixed" ? "fixed" : "auto",
     manual_x: Number.isFinite(Number(entity?.manual_x)) ? Number(entity.manual_x) : null,
     manual_y: Number.isFinite(Number(entity?.manual_y)) ? Number(entity.manual_y) : null,
   }));
+}
+
+function normalizeExternalLayerNames(entity = {}) {
+  const levels = Math.max(2, Math.min(4, Number(entity?.levels) || 2));
+  const seed = Array.isArray(entity.layer_names) ? entity.layer_names.map((v) => String(v || "").trim()) : [];
+  while (seed.length < levels) seed.push("");
+  seed.length = levels;
+  if (!seed[0]) seed[0] = String(entity.name || "").trim() || "最上層";
+  for (let i = 1; i < levels; i += 1) {
+    if (!seed[i]) seed[i] = `${seed[i - 1]} 第${i + 1}層`;
+  }
+  return seed;
+}
+
+function normalizeExternalLayerShares(entity = {}) {
+  const levels = Math.max(2, Math.min(4, Number(entity?.levels) || 2));
+  const expected = Math.max(0, levels - 1);
+  const seed = Array.isArray(entity.layer_shares) ? entity.layer_shares.map((v) => String(v || "").trim()) : [];
+  while (seed.length < expected) seed.push("");
+  seed.length = expected;
+  return seed;
 }
 
 function snapshotTaskState() {
@@ -2774,11 +2784,13 @@ function renderExternalEntityPanel() {
   const byId = {};
   state.masterRows.forEach((row) => { byId[row.node_id] = row; });
   elements.externalEntityList.innerHTML = state.chartExternalEntities.map((entity) => {
+    const names = normalizeExternalLayerNames(entity);
+    const displayName = String(entity.name || "").trim() || names[0] || "集團外主體";
     const levelText = Number(entity.levels) >= 2 ? ` · ${Number(entity.levels)}層` : "";
     const fixedText = entity.placement_mode === "fixed" ? " · 已固定" : "";
     return `
       <article class="external-chip">
-        <span><strong>${svgEscape(entity.name)}</strong>${levelText}${fixedText}</span>
+        <span><strong>${svgEscape(displayName)}</strong>${levelText}${fixedText}</span>
         <button type="button" data-external-auto="${entity.id}" title="恢復自動擺位">↺</button>
         <button type="button" data-external-edit="${entity.id}" title="編輯主體">✎</button>
         <button type="button" data-external-delete="${entity.id}" title="移除此主體">×</button>
@@ -2813,16 +2825,20 @@ async function saveExternalEntities(nextEntities) {
 async function addExternalEntityWithPayload(form) {
   const name = String(form?.name || "").trim();
   if (!name) return;
+  const levels = Math.max(2, Math.min(4, Number(form.levels) || 2));
+  const layerNames = normalizeExternalLayerNames({ name, levels, layer_names: form.layer_names || [] });
+  const layerShares = normalizeExternalLayerShares({ levels, layer_shares: form.layer_shares || [] });
   const next = [
     ...state.chartExternalEntities,
     {
       id: makeShareholderId(),
       name,
-      type: form.type || "company",
       group: String(form.group || "").trim() || "集團外架構",
       target_node_id: form.target_node_id || "",
       share: String(form.share || "").trim(),
-      levels: Math.max(2, Math.min(4, Number(form.levels) || 2)),
+      levels,
+      layer_names: layerNames,
+      layer_shares: layerShares,
       placement_mode: "auto",
       manual_x: null,
       manual_y: null,
@@ -2836,14 +2852,27 @@ async function updateExternalEntity(id, form) {
   if (!state.taskId || !id) return;
   const next = state.chartExternalEntities.map((entity) => {
     if (entity.id !== id) return entity;
+    const levels = Math.max(2, Math.min(4, Number(form.levels) || entity.levels || 2));
+    const layerNames = normalizeExternalLayerNames({
+      ...entity,
+      levels,
+      layer_names: form.layer_names || entity.layer_names || [],
+      name: String(form.name || "").trim() || entity.name,
+    });
+    const layerShares = normalizeExternalLayerShares({
+      ...entity,
+      levels,
+      layer_shares: form.layer_shares || entity.layer_shares || [],
+    });
     return {
       ...entity,
       name: String(form.name || "").trim() || entity.name,
-      type: form.type || entity.type || "company",
       group: String(form.group || "").trim() || "集團外架構",
       target_node_id: form.target_node_id || "",
       share: String(form.share || "").trim(),
-      levels: Math.max(2, Math.min(4, Number(form.levels) || entity.levels || 2)),
+      levels,
+      layer_names: layerNames,
+      layer_shares: layerShares,
       placement_mode: entity.placement_mode === "fixed" ? "fixed" : "auto",
       manual_x: Number.isFinite(Number(entity.manual_x)) ? Number(entity.manual_x) : null,
       manual_y: Number.isFinite(Number(entity.manual_y)) ? Number(entity.manual_y) : null,
@@ -2998,6 +3027,9 @@ function openShareholderModal(existing = null) {
 function openExternalEntityModal(existing = null) {
   if (!state.taskId) return;
   const targets = getTopLevelCompanyRows();
+  const baseLevels = Math.max(2, Math.min(4, Number(existing?.levels) || 2));
+  const baseNames = normalizeExternalLayerNames(existing || { levels: baseLevels, name: existing?.name || "" });
+  const baseShares = normalizeExternalLayerShares(existing || { levels: baseLevels });
   closeEntityModal();
   const modal = document.createElement("div");
   modal.id = "entityEditModal";
@@ -3005,25 +3037,20 @@ function openExternalEntityModal(existing = null) {
   modal.innerHTML = `
     <div class="entity-modal" role="dialog" aria-modal="true" aria-labelledby="entityModalTitle">
       <h3 id="entityModalTitle">${existing ? "編輯集團外主體" : "新增集團外主體"}</h3>
-      <label class="field"><span>名稱</span><input id="entityNameInput" type="text" placeholder="公司或個人名稱" value="${svgEscape(existing?.name || "")}" /></label>
-      <label class="field"><span>類型</span>
-        <select id="entityTypeSelect">
-          <option value="company" ${existing?.type !== "person" ? "selected" : ""}>公司</option>
-          <option value="person" ${existing?.type === "person" ? "selected" : ""}>個人</option>
-        </select>
-      </label>
+      <label class="field"><span>顯示名稱</span><input id="entityNameInput" type="text" placeholder="例如：集團外主體A" value="${svgEscape(existing?.name || "")}" /></label>
       <label class="field"><span>層級</span>
         <select id="entityLevelsSelect">
-          <option value="2" ${(Number(existing?.levels) || 2) === 2 ? "selected" : ""}>2 層</option>
-          <option value="3" ${(Number(existing?.levels) || 2) === 3 ? "selected" : ""}>3 層</option>
-          <option value="4" ${(Number(existing?.levels) || 2) === 4 ? "selected" : ""}>4 層</option>
+          <option value="2" ${baseLevels === 2 ? "selected" : ""}>2 層</option>
+          <option value="3" ${baseLevels === 3 ? "selected" : ""}>3 層</option>
+          <option value="4" ${baseLevels === 4 ? "selected" : ""}>4 層</option>
         </select>
       </label>
       <label class="field"><span>群組</span><input id="entityGroupInput" type="text" placeholder="例如：集團外關聯主體 A" value="${svgEscape(existing?.group || "")}" /></label>
+      <div id="externalLayersEditor" class="field"></div>
       <label class="field"><span>關聯對象（可選）</span>
         <select id="entityTargetSelect"><option value="">不指定（僅同圖並列）</option>${targets.map((row) => `<option value="${row.node_id}" ${existing?.target_node_id === row.node_id ? "selected" : ""}>${svgEscape(row.canonical_name || row.chart1_name || "未命名公司")}</option>`).join("")}</select>
       </label>
-      <label class="field"><span>關聯持股（可選）</span><input id="entityShareInput" type="text" placeholder="例如：35%" value="${svgEscape(existing?.share || "")}" /></label>
+      <label class="field"><span>最末層→關聯對象持股（可選）</span><input id="entityShareInput" type="text" placeholder="例如：35%" value="${svgEscape(existing?.share || "")}" /></label>
       <div class="detail-actions">
         <button class="ghost-btn" id="entityCancelBtn" type="button">取消</button>
         <button class="primary-btn" id="entitySubmitBtn" type="button">儲存</button>
@@ -3032,22 +3059,48 @@ function openExternalEntityModal(existing = null) {
   document.body.appendChild(modal);
   const nameInput = modal.querySelector("#entityNameInput");
   nameInput?.focus();
+  const layersEditor = modal.querySelector("#externalLayersEditor");
+  let liveNames = [...baseNames];
+  let liveShares = [...baseShares];
+  const renderLayersEditor = () => {
+    if (!layersEditor) return;
+    liveNames = Array.from(modal.querySelectorAll("[data-layer-name]")).map((el) => el.value.trim()).concat(liveNames).slice(0, 4);
+    liveShares = Array.from(modal.querySelectorAll("[data-layer-share]")).map((el) => el.value.trim()).concat(liveShares).slice(0, 3);
+    const levels = Math.max(2, Math.min(4, Number(modal.querySelector("#entityLevelsSelect")?.value || "2")));
+    layersEditor.innerHTML = `
+      <span>層級內容</span>
+      ${Array.from({ length: levels }).map((_, idx) => `
+        <label class="field">
+          <span>${idx === 0 ? "最上層" : `第${idx + 1}層`}</span>
+          <input data-layer-name="${idx}" type="text" value="${svgEscape(liveNames[idx] || "")}" placeholder="輸入名稱" />
+        </label>
+        ${idx < levels - 1 ? `
+        <label class="field">
+          <span>${idx === 0 ? "最上層→第二層持股比率" : `第${idx + 1}層→第${idx + 2}層持股比率`}</span>
+          <input data-layer-share="${idx}" type="text" value="${svgEscape(liveShares[idx] || "")}" placeholder="例如：100%" />
+        </label>` : ""}
+      `).join("")}
+    `;
+  };
+  renderLayersEditor();
+  modal.querySelector("#entityLevelsSelect")?.addEventListener("change", renderLayersEditor);
   modal.querySelector("#entityCancelBtn")?.addEventListener("click", closeEntityModal);
   modal.addEventListener("click", (event) => {
     if (event.target === modal) closeEntityModal();
   });
   modal.querySelector("#entitySubmitBtn")?.addEventListener("click", async () => {
     const name = modal.querySelector("#entityNameInput")?.value.trim() || "";
-    const type = modal.querySelector("#entityTypeSelect")?.value || "company";
     const levels = Number(modal.querySelector("#entityLevelsSelect")?.value || "2");
     const group = modal.querySelector("#entityGroupInput")?.value.trim() || "集團外架構";
     const target_node_id = modal.querySelector("#entityTargetSelect")?.value || "";
     const share = modal.querySelector("#entityShareInput")?.value.trim() || "";
-    if (!name) return;
+    const layer_names = Array.from(modal.querySelectorAll("[data-layer-name]")).map((el) => el.value.trim());
+    const layer_shares = Array.from(modal.querySelectorAll("[data-layer-share]")).map((el) => el.value.trim());
+    if (!name && !layer_names[0]) return;
     if (existing?.id) {
-      await updateExternalEntity(existing.id, { name, type, levels, group, target_node_id, share });
+      await updateExternalEntity(existing.id, { name, levels, group, target_node_id, share, layer_names, layer_shares });
     } else {
-      await addExternalEntityWithPayload({ name, type, levels, group, target_node_id, share });
+      await addExternalEntityWithPayload({ name: name || layer_names[0], levels, group, target_node_id, share, layer_names, layer_shares });
     }
     closeEntityModal();
   });
@@ -4010,6 +4063,14 @@ function bindExternalGroupDrag() {
 
   shell.querySelectorAll(".external-group-frame").forEach((groupNode) => {
     let dragging = null;
+    let rafId = 0;
+    const flushDragTransform = () => {
+      rafId = 0;
+      if (!dragging) return;
+      const dx = dragging.nextX - dragging.startLayoutX;
+      const dy = dragging.nextY - dragging.startLayoutY;
+      groupNode.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0)`;
+    };
     groupNode.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
       event.stopPropagation();
@@ -4043,7 +4104,7 @@ function bindExternalGroupDrag() {
       const dy = (event.clientY - dragging.startClientY) / Math.max(state.chartScale, 0.01);
       dragging.nextX = dragging.startLayoutX + dx;
       dragging.nextY = dragging.startLayoutY + dy;
-      groupNode.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
+      if (!rafId) rafId = requestAnimationFrame(flushDragTransform);
     });
 
     groupNode.addEventListener("pointerup", async () => {
@@ -4054,6 +4115,8 @@ function bindExternalGroupDrag() {
       document.getElementById("externalDragHint")?.remove();
       groupNode.classList.remove("is-dragging");
       groupNode.style.transform = "";
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
       if (!Number.isFinite(target.nextX) || !Number.isFinite(target.nextY)) return;
       await setExternalGroupPlacementByGroupName(target.groupName, {
         mode: "fixed",
@@ -4068,6 +4131,8 @@ function bindExternalGroupDrag() {
       document.getElementById("externalDragHint")?.remove();
       groupNode.classList.remove("is-dragging");
       groupNode.style.transform = "";
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
     });
   });
 }

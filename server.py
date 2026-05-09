@@ -1329,9 +1329,6 @@ def update_chart_external_entities(task_id: str):
         name = str(row.get("name") or "").strip()
         if not name:
             continue
-        entity_type = str(row.get("type") or "company").strip()
-        if entity_type not in {"company", "person"}:
-            entity_type = "company"
         target_node_id = str(row.get("target_node_id") or "").strip()
         if target_node_id and target_node_id not in valid_targets:
             target_node_id = ""
@@ -1348,14 +1345,35 @@ def update_chart_external_entities(task_id: str):
             manual_y = float(row.get("manual_y")) if row.get("manual_y") not in (None, "") else None
         except (TypeError, ValueError):
             manual_y = None
+        raw_names = row.get("layer_names")
+        if isinstance(raw_names, list):
+            layer_names = [str(v or "").strip() for v in raw_names]
+        else:
+            layer_names = []
+        while len(layer_names) < levels:
+            layer_names.append("")
+        layer_names = layer_names[:levels]
+        if not layer_names[0]:
+            layer_names[0] = name
+        for i in range(1, levels):
+            if not layer_names[i]:
+                layer_names[i] = f"{layer_names[i - 1]} 第{i + 1}層"
+        raw_shares = row.get("layer_shares")
+        if isinstance(raw_shares, list):
+            layer_shares = [str(v or "").strip() for v in raw_shares[: max(0, levels - 1)]]
+        else:
+            layer_shares = []
+        while len(layer_shares) < max(0, levels - 1):
+            layer_shares.append("")
         cleaned.append({
             "id": str(row.get("id") or f"external_{idx + 1}").strip(),
             "name": name,
-            "type": entity_type,
             "group": group_name,
             "share": str(row.get("share") or "").strip(),
             "target_node_id": target_node_id,
             "levels": levels,
+            "layer_names": layer_names,
+            "layer_shares": layer_shares,
             "placement_mode": "fixed" if str(row.get("placement_mode") or "").strip() == "fixed" else "auto",
             "manual_x": manual_x,
             "manual_y": manual_y,
