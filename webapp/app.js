@@ -3575,19 +3575,13 @@ function buildPagedRowSets(rows) {
 
   if (!state.showGroupRoot) {
     internalRoots.forEach((root) => {
+      const baseRows = collectSubtree(root.node_id);
       pages.push({
         id: root.node_id,
         title: root.canonical_name || root.chart1_name || "分頁",
-        rows: collectSubtree(root.node_id),
+        rows: externalRows.length ? [...baseRows, ...externalRows] : baseRows,
       });
     });
-    if (externalRows.length) {
-      pages.push({
-        id: "external_entities_page",
-        title: "集團外主體",
-        rows: externalRows,
-      });
-    }
     return pages.length ? pages : [{ title: "完整架構", rows }];
   }
 
