@@ -2871,6 +2871,24 @@ async function setExternalGroupPlacementByEntity(entityId, placement = {}) {
   await saveExternalEntities(next);
 }
 
+async function setExternalGroupPlacementByGroupName(groupName, placement = {}) {
+  if (!state.taskId) return;
+  const key = String(groupName || "").trim();
+  if (!key) return;
+  const mode = placement.mode === "fixed" ? "fixed" : "auto";
+  const next = state.chartExternalEntities.map((entity) => {
+    const entityGroup = String(entity.group || "").trim() || "集團外架構";
+    if (entityGroup !== key) return entity;
+    return {
+      ...entity,
+      placement_mode: mode,
+      manual_x: mode === "fixed" && Number.isFinite(Number(placement.manual_x)) ? Number(placement.manual_x) : null,
+      manual_y: mode === "fixed" && Number.isFinite(Number(placement.manual_y)) ? Number(placement.manual_y) : null,
+    };
+  });
+  await saveExternalEntities(next);
+}
+
 async function restoreExternalGroupAuto(entityId) {
   await setExternalGroupPlacementByEntity(entityId, { mode: "auto" });
 }
@@ -3797,6 +3815,32 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
   ` : "";
 
   const edgeSvg = `<g transform="translate(${pad}, ${pad})">${renderBranchEdges(layout, profile)}</g>`;
+  const externalFrameSvg = (() => {
+    const groups = new Map();
+    nodes.forEach((node) => {
+      const row = node.row || {};
+      const groupName = String(row.external_group || row.external_group_name || "").trim();
+      if (!groupName) return;
+      if (!groups.has(groupName)) groups.set(groupName, []);
+      groups.get(groupName).push(node);
+    });
+    const frames = [];
+    groups.forEach((groupNodes, groupName) => {
+      if (!groupNodes.length) return;
+      const minX = Math.min(...groupNodes.map((n) => (n.x || 0))) - 22;
+      const minY = Math.min(...groupNodes.map((n) => (n.y || 0))) - 34;
+      const maxX = Math.max(...groupNodes.map((n) => (n.x || 0) + (n.width || 0))) + 22;
+      const maxY = Math.max(...groupNodes.map((n) => (n.y || 0) + (n.height || 0))) + 22;
+      const rootNode = groupNodes.find((n) => n.row?.is_external_group) || groupNodes[0];
+      frames.push(`
+        <g class="external-group-frame" data-external-group="${svgEscape(groupName)}" data-root-x="${Number(rootNode.x || 0).toFixed(2)}" data-root-y="${Number(rootNode.y || 0).toFixed(2)}">
+          <rect x="${minX.toFixed(1)}" y="${minY.toFixed(1)}" width="${Math.max(120, maxX - minX).toFixed(1)}" height="${Math.max(80, maxY - minY).toFixed(1)}" rx="10" />
+          <text x="${(minX + 10).toFixed(1)}" y="${(minY + 18).toFixed(1)}">${svgEscape(groupName)}</text>
+        </g>
+      `);
+    });
+    return `<g transform="translate(${pad}, ${pad})">${frames.join("")}</g>`;
+  })();
 
   const nodeSvg = nodes.map((node) => {
     const r = node.row || {};
@@ -3871,6 +3915,7 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       </defs>
       <rect width="100%" height="100%" fill="#f8fafc"></rect>
       ${titleSvg}
+      ${externalFrameSvg}
       ${edgeSvg}
       ${nodeSvg}
     </svg>`;
@@ -3963,7 +4008,7 @@ function bindExternalGroupDrag() {
   const shell = document.getElementById("chartPanZoomShell");
   if (!shell) return;
 
-  shell.querySelectorAll(".elk-node-external-group").forEach((groupNode) => {
+  shell.querySelectorAll(".external-group-frame").forEach((groupNode) => {
     let dragging = null;
     groupNode.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
@@ -3971,8 +4016,8 @@ function bindExternalGroupDrag() {
       event.preventDefault();
       const groupName = String(groupNode.getAttribute("data-external-group") || "").trim();
       if (!groupName) return;
-      const startLayoutX = Number(groupNode.getAttribute("data-layout-x") || 0);
-      const startLayoutY = Number(groupNode.getAttribute("data-layout-y") || 0);
+      const startLayoutX = Number(groupNode.getAttribute("data-root-x") || 0);
+      const startLayoutY = Number(groupNode.getAttribute("data-root-y") || 0);
       dragging = {
         groupName,
         startClientX: event.clientX,
@@ -4006,12 +4051,7 @@ function bindExternalGroupDrag() {
       shell.classList.remove("is-external-dragging");
       document.getElementById("externalDragHint")?.remove();
       if (!Number.isFinite(target.nextX) || !Number.isFinite(target.nextY)) return;
-      const groupEntity = state.chartExternalEntities.find((entity) => {
-        const entityGroup = String(entity.group || "").trim() || "集團外架構";
-        return entityGroup === target.groupName;
-      });
-      if (!groupEntity) return;
-      await setExternalGroupPlacementByEntity(groupEntity.id, {
+      await setExternalGroupPlacementByGroupName(target.groupName, {
         mode: "fixed",
         manual_x: target.nextX,
         manual_y: target.nextY,

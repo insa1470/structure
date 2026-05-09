@@ -2336,11 +2336,25 @@ tr:hover .row-del-btn {
   color: #991b1b;
 }
 
-.elk-node-external-group {
+.external-group-frame {
   cursor: grab;
 }
 
-.chart-panzoom-shell.is-external-dragging .elk-node-external-group {
+.external-group-frame rect {
+  fill: rgba(248, 250, 252, 0.35);
+  stroke: #94a3b8;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 5;
+}
+
+.external-group-frame text {
+  fill: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  dominant-baseline: middle;
+}
+
+.chart-panzoom-shell.is-external-dragging .external-group-frame {
   cursor: grabbing;
 }
 
