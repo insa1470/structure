@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,6 +61,13 @@ class JsonTaskStore:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_name, path)
+
+    def delete_task(self, task_id: str) -> bool:
+        task_dir = self.data_dir / task_id
+        if not task_dir.exists():
+            return False
+        shutil.rmtree(task_dir, ignore_errors=True)
+        return True
 
     def ensure_ready(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +213,15 @@ class PostgresTaskStore:
                 )
             conn.commit()
 
+    def delete_task(self, task_id: str) -> bool:
+        self.ensure_ready()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+                deleted = cur.rowcount > 0
+            conn.commit()
+        return deleted
+
     def iter_tasks(self) -> Iterable[dict]:
         self.ensure_ready()
         with self._connect() as conn:
@@ -276,6 +293,14 @@ class MirroredTaskStore:
             self.mirror.save_task(copy.deepcopy(task))
         except Exception as exc:
             print(f"[Storage] mirror save failed for task {task.get('id', '')}: {exc}", flush=True)
+
+    def delete_task(self, task_id: str) -> bool:
+        deleted = self.primary.delete_task(task_id)
+        try:
+            self.mirror.delete_task(task_id)
+        except Exception as exc:
+            print(f"[Storage] mirror delete failed for task {task_id}: {exc}", flush=True)
+        return deleted
 
     def ensure_ready(self) -> None:
         self.primary.ensure_ready()
@@ -426,6 +451,10 @@ def list_tasks(limit: int = 200) -> list[dict]:
         if len(tasks) >= limit:
             break
     return tasks
+
+
+def delete_task(task_id: str) -> bool:
+    return task_store.delete_task(task_id)
 
 
 def storage_health(limit: int = 10) -> dict:

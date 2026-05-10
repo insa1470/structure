@@ -12,7 +12,7 @@ from tempfile import NamedTemporaryFile
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-from storage import ensure_storage_ready, list_ocr_tests, list_tasks, read_task, save_ocr_test, save_task, storage_health, task_upload_dir
+from storage import delete_task as delete_task_record, ensure_storage_ready, list_ocr_tests, list_tasks, read_task, save_ocr_test, save_task, storage_health, task_upload_dir
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "webapp"
@@ -529,6 +529,16 @@ def clone_task(task_id: str):
     new_task["error"] = ""
     save_task(new_task)
     return jsonify({"ok": True, "task": new_task}), 201
+
+
+@app.route("/api/tasks/<task_id>", methods=["DELETE"])
+def delete_task(task_id: str):
+    if not task_id:
+        return jsonify({"error": "task_id_required"}), 400
+    deleted = delete_task_record(task_id)
+    if not deleted:
+        return jsonify({"error": "task_not_found"}), 404
+    return jsonify({"ok": True, "deleted_task_id": task_id})
 
 
 @app.route("/api/tasks/analyze", methods=["POST"])

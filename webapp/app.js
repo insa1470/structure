@@ -1300,6 +1300,7 @@ async function loadTaskCenter() {
         <td>
           <button class="ghost-btn task-open-btn" data-task-id="${task.id}">開啟</button>
           <button class="ghost-btn task-clone-btn" data-task-id="${task.id}">複製</button>
+          <button class="ghost-btn task-delete-btn" data-task-id="${task.id}">刪除</button>
         </td>
       </tr>
     `).join("");
@@ -1309,9 +1310,24 @@ async function loadTaskCenter() {
     elements.taskCenterBody.querySelectorAll(".task-clone-btn").forEach((btn) => {
       btn.addEventListener("click", () => cloneTaskFromCenter(btn.dataset.taskId));
     });
+    elements.taskCenterBody.querySelectorAll(".task-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", () => deleteTaskFromCenter(btn.dataset.taskId));
+    });
   } catch (err) {
     elements.taskCenterBody.innerHTML = `<tr><td colspan="7">讀取失敗：${err.message}</td></tr>`;
   }
+}
+
+async function deleteTaskFromCenter(taskId) {
+  if (!taskId) return;
+  if (!window.confirm(`確定刪除任務 ${taskId}？此操作無法復原。`)) return;
+  const response = await fetch(`${API_BASE}/api/tasks/${taskId}`, { method: "DELETE" });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    alert(payload.message || `刪除失敗（${response.status}）`);
+    return;
+  }
+  await loadTaskCenter();
 }
 
 async function openTaskFromCenter(taskId) {
