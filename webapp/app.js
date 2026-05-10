@@ -3040,7 +3040,6 @@ function openShareholderModal(existing = null) {
 
 function openExternalEntityModal(existing = null) {
   if (!state.taskId) return;
-  const targets = getTopLevelCompanyRows();
   const baseLevels = Math.max(2, Math.min(4, Number(existing?.levels) || 2));
   const baseNames = normalizeExternalLayerNames(existing || { levels: baseLevels, name: existing?.name || "" });
   const baseShares = normalizeExternalLayerShares(existing || { levels: baseLevels });
@@ -3051,7 +3050,6 @@ function openExternalEntityModal(existing = null) {
   modal.innerHTML = `
     <div class="entity-modal" role="dialog" aria-modal="true" aria-labelledby="entityModalTitle">
       <h3 id="entityModalTitle">${existing ? "編輯集團外主體" : "新增集團外主體"}</h3>
-      <label class="field"><span>顯示名稱</span><input id="entityNameInput" type="text" placeholder="例如：集團外主體A" value="${svgEscape(existing?.name || "")}" /></label>
       <label class="field"><span>層級</span>
         <select id="entityLevelsSelect">
           <option value="2" ${baseLevels === 2 ? "selected" : ""}>2 層</option>
@@ -3059,21 +3057,16 @@ function openExternalEntityModal(existing = null) {
           <option value="4" ${baseLevels === 4 ? "selected" : ""}>4 層</option>
         </select>
       </label>
-      <label class="field"><span>群組</span><input id="entityGroupInput" type="text" placeholder="例如：集團外關聯主體 A" value="${svgEscape(existing?.group || "")}" /></label>
       <label class="field"><span>縮放（%）</span><input id="entityScaleInput" type="number" min="70" max="130" step="5" value="${normalizeExternalScale(existing?.external_scale)}" /></label>
       <div id="externalLayersEditor" class="field"></div>
-      <label class="field"><span>關聯對象（可選）</span>
-        <select id="entityTargetSelect"><option value="">不指定（僅同圖並列）</option>${targets.map((row) => `<option value="${row.node_id}" ${existing?.target_node_id === row.node_id ? "selected" : ""}>${svgEscape(row.canonical_name || row.chart1_name || "未命名公司")}</option>`).join("")}</select>
-      </label>
-      <label class="field"><span>最末層→關聯對象持股（可選）</span><input id="entityShareInput" type="text" placeholder="例如：35%" value="${svgEscape(existing?.share || "")}" /></label>
       <div class="detail-actions">
         <button class="ghost-btn" id="entityCancelBtn" type="button">取消</button>
         <button class="primary-btn" id="entitySubmitBtn" type="button">儲存</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
-  const nameInput = modal.querySelector("#entityNameInput");
-  nameInput?.focus();
+  const levelsSelect = modal.querySelector("#entityLevelsSelect");
+  levelsSelect?.focus();
   const layersEditor = modal.querySelector("#externalLayersEditor");
   let liveNames = [...baseNames];
   let liveShares = [...baseShares];
@@ -3104,19 +3097,19 @@ function openExternalEntityModal(existing = null) {
     if (event.target === modal) closeEntityModal();
   });
   modal.querySelector("#entitySubmitBtn")?.addEventListener("click", async () => {
-    const name = modal.querySelector("#entityNameInput")?.value.trim() || "";
     const levels = Number(modal.querySelector("#entityLevelsSelect")?.value || "2");
-    const group = modal.querySelector("#entityGroupInput")?.value.trim() || "集團外架構";
-    const target_node_id = modal.querySelector("#entityTargetSelect")?.value || "";
-    const share = modal.querySelector("#entityShareInput")?.value.trim() || "";
     const external_scale = normalizeExternalScale(modal.querySelector("#entityScaleInput")?.value || 100);
     const layer_names = Array.from(modal.querySelectorAll("[data-layer-name]")).map((el) => el.value.trim());
     const layer_shares = Array.from(modal.querySelectorAll("[data-layer-share]")).map((el) => el.value.trim());
-    if (!name && !layer_names[0]) return;
+    if (!layer_names[0]) return;
+    const name = layer_names[0];
+    const group = String(existing?.group || "集團外架構").trim() || "集團外架構";
+    const target_node_id = existing?.target_node_id || "";
+    const share = existing?.share || "";
     if (existing?.id) {
       await updateExternalEntity(existing.id, { name, levels, group, target_node_id, share, layer_names, layer_shares, external_scale });
     } else {
-      await addExternalEntityWithPayload({ name: name || layer_names[0], levels, group, target_node_id, share, layer_names, layer_shares, external_scale });
+      await addExternalEntityWithPayload({ name, levels, group, target_node_id, share, layer_names, layer_shares, external_scale });
     }
     closeEntityModal();
   });
@@ -3814,6 +3807,10 @@ function ratioPercentText(value) {
 }
 
 function renderBranchEdges(layout, profile) {
+  const drawPolyline = (points, { arrow = false } = {}) => `
+    <polyline points="${points}" fill="none" stroke="#f8fafc" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" />
+    <polyline points="${points}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ${arrow ? 'marker-end="url(#elkArrow)"' : ""} />
+  `;
   const nodesById = {};
   (layout.children || []).forEach((node) => {
     nodesById[node.id] = node;
@@ -3853,7 +3850,7 @@ function renderBranchEdges(layout, profile) {
       const labelX = (parentX + item.x) / 2;
       return `
         <g class="elk-edge elk-edge-branch">
-          <polyline points="${parentX.toFixed(1)},${parentBottom.toFixed(1)} ${parentX.toFixed(1)},${midY.toFixed(1)} ${item.x.toFixed(1)},${midY.toFixed(1)} ${item.x.toFixed(1)},${item.top.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
+          ${drawPolyline(`${parentX.toFixed(1)},${parentBottom.toFixed(1)} ${parentX.toFixed(1)},${midY.toFixed(1)} ${item.x.toFixed(1)},${midY.toFixed(1)} ${item.x.toFixed(1)},${item.top.toFixed(1)}`, { arrow: true })}
           ${item.edge.ratio ? renderEdgeRatioLabel(labelX, midY - 12, item.edge.ratio, profile) : ""}
         </g>`;
     }
@@ -3866,21 +3863,46 @@ function renderBranchEdges(layout, profile) {
     const busStartX = Math.min(minX, parentX);
     const busEndX = Math.max(maxX, parentX);
 
-    const drops = children.map((item) => `
-      <polyline points="${item.x.toFixed(1)},${busY.toFixed(1)} ${item.x.toFixed(1)},${item.top.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
-      ${item.edge.ratio ? renderEdgeRatioLabel(item.x, item.top - 15, item.edge.ratio, profile) : ""}
-    `).join("");
+    const laneGap = 18;
+    const centerNudge = 14;
+    const lanes = children.map((item) => ({ ...item, laneX: item.x }));
+    lanes.sort((a, b) => a.laneX - b.laneX);
+    for (let i = 1; i < lanes.length; i += 1) {
+      if (lanes[i].laneX - lanes[i - 1].laneX < laneGap) {
+        lanes[i].laneX = lanes[i - 1].laneX + laneGap;
+      }
+    }
+    const centerHits = lanes.filter((lane) => Math.abs(lane.laneX - parentX) < 8);
+    if (centerHits.length) {
+      centerHits.forEach((lane, idx) => {
+        lane.laneX += (idx % 2 === 0 ? -1 : 1) * centerNudge;
+      });
+    }
+    const drops = lanes.map((item) => {
+      const laneX = item.laneX;
+      const elbowY = item.top - 18;
+      const points = Math.abs(laneX - item.x) < 1
+        ? `${laneX.toFixed(1)},${busY.toFixed(1)} ${laneX.toFixed(1)},${item.top.toFixed(1)}`
+        : `${laneX.toFixed(1)},${busY.toFixed(1)} ${laneX.toFixed(1)},${elbowY.toFixed(1)} ${item.x.toFixed(1)},${elbowY.toFixed(1)} ${item.x.toFixed(1)},${item.top.toFixed(1)}`;
+      return `
+      ${drawPolyline(points, { arrow: true })}
+      ${item.edge.ratio ? renderEdgeRatioLabel(item.x, item.top - 15, item.edge.ratio, profile) : ""}`;
+    }).join("");
 
     return `
       <g class="elk-edge elk-edge-branch">
-        <polyline points="${parentX.toFixed(1)},${parentBottom.toFixed(1)} ${parentX.toFixed(1)},${busY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
-        <polyline points="${busStartX.toFixed(1)},${busY.toFixed(1)} ${busEndX.toFixed(1)},${busY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
+        ${drawPolyline(`${parentX.toFixed(1)},${parentBottom.toFixed(1)} ${parentX.toFixed(1)},${busY.toFixed(1)}`)}
+        ${drawPolyline(`${busStartX.toFixed(1)},${busY.toFixed(1)} ${busEndX.toFixed(1)},${busY.toFixed(1)}`)}
         ${drops}
       </g>`;
   }).join("");
 }
 
 function renderRightBranchGroup(parent, childEdges, profile) {
+  const drawPolyline = (points, { arrow = false } = {}) => `
+    <polyline points="${points}" fill="none" stroke="#f8fafc" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round" />
+    <polyline points="${points}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ${arrow ? 'marker-end="url(#elkArrow)"' : ""} />
+  `;
   const parentRight = (parent.x || 0) + parent.width;
   const parentY = (parent.y || 0) + parent.height / 2;
   const children = childEdges
@@ -3898,7 +3920,7 @@ function renderRightBranchGroup(parent, childEdges, profile) {
     const labelY = (parentY + item.y) / 2;
     return `
       <g class="elk-edge elk-edge-branch">
-        <polyline points="${parentRight.toFixed(1)},${parentY.toFixed(1)} ${midX.toFixed(1)},${parentY.toFixed(1)} ${midX.toFixed(1)},${item.y.toFixed(1)} ${item.left.toFixed(1)},${item.y.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
+        ${drawPolyline(`${parentRight.toFixed(1)},${parentY.toFixed(1)} ${midX.toFixed(1)},${parentY.toFixed(1)} ${midX.toFixed(1)},${item.y.toFixed(1)} ${item.left.toFixed(1)},${item.y.toFixed(1)}`, { arrow: true })}
         ${item.edge.ratio ? renderEdgeRatioLabel(midX + 18, labelY, item.edge.ratio, profile) : ""}
       </g>`;
   }
@@ -3911,14 +3933,14 @@ function renderRightBranchGroup(parent, childEdges, profile) {
   const busStartY = Math.min(minY, parentY);
   const busEndY = Math.max(maxY, parentY);
   const branches = children.map((item) => `
-    <polyline points="${busX.toFixed(1)},${item.y.toFixed(1)} ${item.left.toFixed(1)},${item.y.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#elkArrow)" />
+    ${drawPolyline(`${busX.toFixed(1)},${item.y.toFixed(1)} ${item.left.toFixed(1)},${item.y.toFixed(1)}`, { arrow: true })}
     ${item.edge.ratio ? renderEdgeRatioLabel(item.left - 36, item.y - 14, item.edge.ratio, profile) : ""}
   `).join("");
 
   return `
     <g class="elk-edge elk-edge-branch">
-      <polyline points="${parentRight.toFixed(1)},${parentY.toFixed(1)} ${busX.toFixed(1)},${parentY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
-      <polyline points="${busX.toFixed(1)},${busStartY.toFixed(1)} ${busX.toFixed(1)},${busEndY.toFixed(1)}" fill="none" stroke="#94a3b8" stroke-width="1.8" />
+      ${drawPolyline(`${parentRight.toFixed(1)},${parentY.toFixed(1)} ${busX.toFixed(1)},${parentY.toFixed(1)}`)}
+      ${drawPolyline(`${busX.toFixed(1)},${busStartY.toFixed(1)} ${busX.toFixed(1)},${busEndY.toFixed(1)}`)}
       ${branches}
     </g>`;
 }
@@ -3943,6 +3965,9 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
   const titleSvg = title ? `
     <text x="${pad}" y="${pad - 14}" fill="#1e293b" font-size="16" font-weight="800">${svgEscape(title)}</text>
   ` : "";
+  const watermarkSvg = `
+    <text x="${(width - 14).toFixed(1)}" y="${(height - 12).toFixed(1)}" fill="#94a3b8" font-size="11" font-weight="600" text-anchor="end">本圖由AI助手生成</text>
+  `;
 
   const edgeSvg = `<g transform="translate(${pad}, ${pad})">${renderBranchEdges(layout, profile)}</g>`;
   const externalFrameSvg = (() => {
@@ -4048,6 +4073,7 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       ${externalFrameSvg}
       ${edgeSvg}
       ${nodeSvg}
+      ${watermarkSvg}
     </svg>`;
 }
 
