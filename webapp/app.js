@@ -3337,17 +3337,20 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       const ratio = ratioPercentText(child.actual_controller_share || "");
       const primary = ratio ? `${name}（${ratio}）` : name;
       let secondary = "";
+      let tertiary = "";
       if (state.chartDensity !== "compact") {
-        const bits = [];
-        if (child.legal_representative) bits.push(`法代：${child.legal_representative}`);
-        if (child.established_date) bits.push(`成立：${child.established_date}`);
+        const line2 = [];
+        if (child.legal_representative) line2.push(`法代：${child.legal_representative}`);
+        if (child.established_date) line2.push(`成立：${child.established_date}`);
+        secondary = line2.join(" ｜ ");
         if (state.chartDensity === "full") {
-          if (child.registered_capital) bits.push(`資本：${formatCapital(child.registered_capital)}`);
-          if (child.role_label) bits.push(`定位：${child.role_label}`);
+          const line3 = [];
+          if (child.registered_capital) line3.push(`資本：${formatCapital(child.registered_capital)}`);
+          if (child.role_label) line3.push(`定位：${child.role_label}`);
+          tertiary = line3.join(" ｜ ");
         }
-        secondary = bits.join(" ｜ ");
       }
-      return { primary, secondary };
+      return { primary, secondary, tertiary };
     });
     columnNodes.push({
       node_id: columnId,
@@ -3403,10 +3406,18 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       if (r.is_hybrid_column) {
         const itemCount = (r.hybrid_items || []).length;
         const secondaryCount = (r.hybrid_items || []).filter((item) => typeof item === "object" && item?.secondary).length;
+        const tertiaryCount = (r.hybrid_items || []).filter((item) => typeof item === "object" && item?.tertiary).length;
         const cappedCount = Math.min(itemCount, 22);
         const perItemH = 22;
         const perSecondaryH = 17;
-        const height = Math.max(130, 72 + cappedCount * perItemH + Math.min(secondaryCount, 22) * perSecondaryH);
+        const perTertiaryH = 17;
+        const height = Math.max(
+          130,
+          72
+            + cappedCount * perItemH
+            + Math.min(secondaryCount, 22) * perSecondaryH
+            + Math.min(tertiaryCount, 22) * perTertiaryH
+        );
         const width = Math.min(420, Math.max(250, profile.nodeW + 70));
         return { id: r.node_id, width, height, row: r };
       }
@@ -4026,13 +4037,16 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       const renderItem = itemLines.map((item) => {
         const primaryText = typeof item === "string" ? item : String(item?.primary || "");
         const secondaryText = typeof item === "string" ? "" : String(item?.secondary || "");
+        const tertiaryText = typeof item === "string" ? "" : String(item?.tertiary || "");
         const primary = svgEscape(primaryText);
         const secondary = svgEscape(secondaryText);
+        const tertiary = svgEscape(tertiaryText);
         const part = `
           <tspan x="14" dy="${dyCursor}">• ${primary}</tspan>
           ${secondary ? `<tspan x="28" dy="16" class="hybrid-subline">· ${secondary}</tspan>` : ""}
+          ${tertiary ? `<tspan x="28" dy="16" class="hybrid-subline">· ${tertiary}</tspan>` : ""}
         `;
-        dyCursor = secondary ? 22 : 20;
+        dyCursor = tertiary ? 24 : (secondary ? 22 : 20);
         return part;
       }).join("");
       return `
