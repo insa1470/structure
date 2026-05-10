@@ -1281,12 +1281,12 @@ async function loadTaskCenter() {
   if (!elements.taskCenterBody) return;
   const q = encodeURIComponent((elements.taskSearchInput?.value || "").trim());
   const status = encodeURIComponent((elements.taskStatusSelect?.value || "").trim());
-  elements.taskCenterBody.innerHTML = `<tr><td colspan="6">讀取中…</td></tr>`;
+  elements.taskCenterBody.innerHTML = `<tr><td colspan="7">讀取中…</td></tr>`;
   try {
     const payload = await apiGet(`/api/tasks?q=${q}&status=${status}&limit=200`);
     const rows = payload.tasks || [];
     if (!rows.length) {
-      elements.taskCenterBody.innerHTML = `<tr><td colspan="6">找不到任務</td></tr>`;
+      elements.taskCenterBody.innerHTML = `<tr><td colspan="7">找不到任務</td></tr>`;
       return;
     }
     elements.taskCenterBody.innerHTML = rows.map((task) => `
@@ -1295,6 +1295,7 @@ async function loadTaskCenter() {
         <td>${task.name || "未命名"}</td>
         <td>${task.status || "-"}</td>
         <td>${Math.max((task.master_count || 0) - 1, 0)}</td>
+        <td>${(task.created_at || "").replace("T", " ").slice(0, 19) || "-"}</td>
         <td>${(task.updated_at || "").replace("T", " ").slice(0, 19)}</td>
         <td>
           <button class="ghost-btn task-open-btn" data-task-id="${task.id}">開啟</button>
@@ -1309,7 +1310,7 @@ async function loadTaskCenter() {
       btn.addEventListener("click", () => cloneTaskFromCenter(btn.dataset.taskId));
     });
   } catch (err) {
-    elements.taskCenterBody.innerHTML = `<tr><td colspan="6">讀取失敗：${err.message}</td></tr>`;
+    elements.taskCenterBody.innerHTML = `<tr><td colspan="7">讀取失敗：${err.message}</td></tr>`;
   }
 }
 
