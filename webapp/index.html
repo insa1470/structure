@@ -338,6 +338,7 @@
                 <button id="saveDraftBtn" class="ghost-btn" type="button">暫存</button>
                 <button id="restoreDraftBtn" class="ghost-btn" type="button">還原草稿</button>
                 <button id="addCompanyBtn" class="ghost-btn" type="button">＋ 新增公司</button>
+                <button id="bulkAddBtn" class="ghost-btn" type="button">＋ 批量新增</button>
               </div>
             </div>
             <p id="draftStatusText" class="topbar-status">尚未暫存</p>
@@ -378,6 +379,16 @@
               <div class="add-company-actions">
                 <button id="cancelAddCompanyBtn" class="ghost-btn" type="button">取消</button>
                 <button id="saveAddCompanyBtn" class="primary-btn" type="button">加入主表</button>
+              </div>
+            </div>
+            <div id="bulkAddPanel" class="add-company-panel">
+              <label class="field">
+                <span>批量輸入（每行一筆：公司名稱, 上層公司名稱, 持股比例）</span>
+                <textarea id="bulkAddInput" rows="7" placeholder="子公司A, 母公司, 100%&#10;子公司B, 母公司, 80%&#10;孫公司B1, 子公司B, 100%"></textarea>
+              </label>
+              <div class="add-company-actions">
+                <button id="cancelBulkAddBtn" class="ghost-btn" type="button">取消</button>
+                <button id="saveBulkAddBtn" class="primary-btn" type="button">加入主表</button>
               </div>
             </div>
             <div class="table-wrap">

@@ -1297,6 +1297,81 @@ def add_row(task_id: str):
     })
 
 
+@app.route("/api/tasks/<task_id>/bulk-add-rows", methods=["POST"])
+def bulk_add_rows(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    payload = request.get_json(silent=True) or {}
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "items_required", "message": "請提供至少一筆公司資料。"}), 400
+
+    rows = task.setdefault("master_rows", [])
+    root_row = next((row for row in rows if parse_level_value(row.get("chart1_level")) == 0), None)
+    by_name: dict[str, str] = {}
+    for row in rows:
+        name = str(row.get("canonical_name") or row.get("chart1_name") or "").strip().lower()
+        if name and name not in by_name:
+            by_name[name] = str(row.get("node_id") or "")
+
+    added_node_ids = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("canonical_name") or "").strip()
+        if not name:
+            continue
+        parent_name = str(item.get("parent_name") or "").strip().lower()
+        parent_id = by_name.get(parent_name, "")
+        parent_row = next((row for row in rows if str(row.get("node_id")) == parent_id), None)
+        if not parent_row and root_row:
+            parent_row = root_row
+            parent_id = str(root_row.get("node_id") or "")
+
+        parent_level = parse_level_value(parent_row.get("chart1_level")) if parent_row else None
+        level = (parent_level + 1) if parent_level is not None else 0
+        sibling_count = sum(1 for row in rows if (row.get("chart1_parent") or "") == parent_id)
+        new_row = {
+            "node_id": f"M{uuid.uuid4().hex[:6].upper()}",
+            "chart1_name": name,
+            "canonical_name": name,
+            "chart1_level": level,
+            "chart1_parent": parent_id,
+            "chart1_parent_name": parent_row.get("canonical_name", "") or parent_row.get("chart1_name", "") if parent_row else "",
+            "sort_index": sibling_count + 1,
+            "matched_chart2_name": "",
+            "legal_representative": "",
+            "established_date": "",
+            "registered_capital": "",
+            "actual_controller_share": str(item.get("actual_controller_share") or "").strip(),
+            "subsidiary_level_label": level_label(level),
+            "company_status": "",
+            "role_label": "",
+            "chart_note": "",
+            "match_status": "manual",
+            "node_status": "manual_added",
+            "review_flag": "manual_added",
+            "review_note": "人工新增",
+        }
+        rows.append(new_row)
+        by_name[name.lower()] = new_row["node_id"]
+        added_node_ids.append(new_row["node_id"])
+
+    rebuild_task_state(task)
+    save_task(task)
+    return jsonify({
+        "ok": True,
+        "added_count": len(added_node_ids),
+        "added_node_ids": added_node_ids,
+        "master_rows": task["master_rows"],
+        "review_rows": task["review_rows"],
+        "candidate_rows": task["candidate_rows"],
+        "summary": task["summary"],
+        "graph": task["graph"],
+    })
+
+
 @app.route("/api/tasks/<task_id>/delete-row", methods=["POST"])
 def delete_row(task_id: str):
     task = read_task(task_id)

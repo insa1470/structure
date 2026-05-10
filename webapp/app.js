@@ -105,12 +105,17 @@ const elements = {
   taskSearchBtn: document.getElementById("taskSearchBtn"),
   taskCenterBody: document.getElementById("taskCenterBody"),
   addCompanyBtn: document.getElementById("addCompanyBtn"),
+  bulkAddBtn: document.getElementById("bulkAddBtn"),
   addCompanyPanel: document.getElementById("addCompanyPanel"),
+  bulkAddPanel: document.getElementById("bulkAddPanel"),
   addCompanyName: document.getElementById("addCompanyName"),
   addCompanyParent: document.getElementById("addCompanyParent"),
   addCompanyShare: document.getElementById("addCompanyShare"),
+  bulkAddInput: document.getElementById("bulkAddInput"),
   cancelAddCompanyBtn: document.getElementById("cancelAddCompanyBtn"),
   saveAddCompanyBtn: document.getElementById("saveAddCompanyBtn"),
+  cancelBulkAddBtn: document.getElementById("cancelBulkAddBtn"),
+  saveBulkAddBtn: document.getElementById("saveBulkAddBtn"),
   ocrProviderSelect: document.getElementById("ocrProviderSelect"),
   ocrTestInput: document.getElementById("ocrTestInput"),
   ocrTestMeta: document.getElementById("ocrTestMeta"),
@@ -2025,11 +2030,22 @@ function renderAddCompanyParentOptions() {
 function setAddCompanyPanel(open) {
   if (!elements.addCompanyPanel) return;
   elements.addCompanyPanel.classList.toggle("active", open);
+  if (open && elements.bulkAddPanel) elements.bulkAddPanel.classList.remove("active");
   if (open) {
     renderAddCompanyParentOptions();
     elements.addCompanyName.value = "";
     elements.addCompanyShare.value = "";
     elements.addCompanyName.focus();
+  }
+}
+
+function setBulkAddPanel(open) {
+  if (!elements.bulkAddPanel) return;
+  elements.bulkAddPanel.classList.toggle("active", open);
+  if (open && elements.addCompanyPanel) elements.addCompanyPanel.classList.remove("active");
+  if (open) {
+    elements.bulkAddInput.value = "";
+    elements.bulkAddInput.focus();
   }
 }
 
@@ -2060,6 +2076,47 @@ async function addCompanyToResults() {
   } finally {
     elements.saveAddCompanyBtn.disabled = false;
     elements.saveAddCompanyBtn.textContent = originalText;
+  }
+}
+
+function parseBulkAddLines(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.map((line, index) => {
+    const parts = line.split(/[，,]/).map((part) => part.trim());
+    if (!parts[0]) {
+      throw new Error(`第 ${index + 1} 行缺少公司名稱`);
+    }
+    return {
+      canonical_name: parts[0],
+      parent_name: parts[1] || "",
+      actual_controller_share: parts[2] || "",
+    };
+  });
+}
+
+async function bulkAddCompaniesToResults() {
+  if (!state.taskId) return;
+  const items = parseBulkAddLines(elements.bulkAddInput?.value || "");
+  if (!items.length) {
+    elements.bulkAddInput?.focus();
+    throw new Error("請先輸入至少一行公司資料");
+  }
+  const originalText = elements.saveBulkAddBtn.textContent;
+  elements.saveBulkAddBtn.disabled = true;
+  elements.saveBulkAddBtn.textContent = "加入中...";
+  try {
+    const before = snapshotTaskState();
+    const result = await apiPost(`/api/tasks/${state.taskId}/bulk-add-rows`, { items });
+    applyTaskRefresh(result);
+    pushUndoSnapshot(before);
+    setBulkAddPanel(false);
+    setView("results");
+  } finally {
+    elements.saveBulkAddBtn.disabled = false;
+    elements.saveBulkAddBtn.textContent = originalText;
   }
 }
 
@@ -2195,6 +2252,7 @@ function renderResults() {
 
   elements.resultTableTitle.textContent = `${getGroupName()}共 ${companyCount} 間公司`;
   if (elements.addCompanyBtn) elements.addCompanyBtn.disabled = !state.taskId;
+  if (elements.bulkAddBtn) elements.bulkAddBtn.disabled = !state.taskId;
   renderAddCompanyParentOptions();
 
   // ── 動態層級欄數 ────────────────────────────────────────────
@@ -5429,8 +5487,13 @@ function bindEvents() {
     restoreDraftSnapshot().catch((error) => alert(`還原草稿失敗：${error.message}`));
   });
   elements.addCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(true));
+  elements.bulkAddBtn?.addEventListener("click", () => setBulkAddPanel(true));
   elements.cancelAddCompanyBtn?.addEventListener("click", () => setAddCompanyPanel(false));
   elements.saveAddCompanyBtn?.addEventListener("click", addCompanyToResults);
+  elements.cancelBulkAddBtn?.addEventListener("click", () => setBulkAddPanel(false));
+  elements.saveBulkAddBtn?.addEventListener("click", () => {
+    bulkAddCompaniesToResults().catch((error) => alert(`批量新增失敗：${error.message}`));
+  });
   elements.addCompanyName?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
