@@ -849,6 +849,51 @@ body.toolbar-collapsed .main.chart-mode .chart-header {
   margin-top: 16px;
 }
 
+.upload-mode-switch {
+  display: inline-flex;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--slate-soft);
+}
+
+.upload-mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.upload-mode-btn.active {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.manual-create-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.manual-create-panel.hidden {
+  display: none;
+}
+
+.manual-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .dropzone {
   display: grid;
   gap: 6px;

@@ -10,6 +10,7 @@ const state = {
   imageChecks: { chart1: null, chart2: null },
   started: false,
   loading: false,
+  uploadMode: "ocr",
   masterRows: [],
   reviewRows: [],
   candidateRows: [],
@@ -66,6 +67,10 @@ const elements = {
   chart1Preview: document.getElementById("chart1Preview"),
   chart2Preview: document.getElementById("chart2Preview"),
   taskNameInput: document.getElementById("taskNameInput"),
+  uploadModeButtons: [...document.querySelectorAll(".upload-mode-btn")],
+  manualCreatePanel: document.getElementById("manualCreatePanel"),
+  manualRootNameInput: document.getElementById("manualRootNameInput"),
+  createManualTaskBtn: document.getElementById("createManualTaskBtn"),
   imagePrecheck: document.getElementById("imagePrecheck"),
   taskStatusLine: document.getElementById("taskStatusLine"),
   startAnalysisBtn: document.getElementById("startAnalysisBtn"),
@@ -421,8 +426,37 @@ function loadChartViewPrefs() {
 }
 
 function enableStartIfReady() {
+  if (state.uploadMode !== "ocr") {
+    elements.startAnalysisBtn.disabled = true;
+    return;
+  }
   const blockers = getUploadBlockers();
   elements.startAnalysisBtn.disabled = !(state.chart1File && state.chart2File) || state.loading || blockers.length > 0;
+}
+
+function applyUploadModeUI() {
+  const isOcr = state.uploadMode === "ocr";
+  elements.uploadModeButtons.forEach((btn) => {
+    const active = btn.dataset.uploadMode === state.uploadMode;
+    btn.classList.toggle("active", active);
+  });
+  document.querySelectorAll(".drop-grid, .image-precheck, .upload-tips").forEach((el) => {
+    if (!el) return;
+    el.style.display = isOcr ? "" : "none";
+  });
+  if (elements.startAnalysisBtn) {
+    elements.startAnalysisBtn.style.display = isOcr ? "" : "none";
+  }
+  if (elements.manualCreatePanel) {
+    elements.manualCreatePanel.classList.toggle("hidden", isOcr);
+  }
+  enableStartIfReady();
+}
+
+function setUploadMode(mode) {
+  state.uploadMode = mode === "manual" ? "manual" : "ocr";
+  document.getElementById("uploadError")?.remove();
+  applyUploadModeUI();
 }
 
 function enableOcrTestIfReady() {
@@ -2718,6 +2752,23 @@ async function createTaskFromUpload(onStatus) {
     renderWorkspace("error", { error: err.message });
     throw err;
   }
+}
+
+async function createManualTask() {
+  const taskName = elements.taskNameInput.value.trim();
+  if (!taskName) {
+    throw new Error("請先填寫集團名稱。");
+  }
+  const rootName = (elements.manualRootNameInput?.value || "").trim();
+  renderWorkspace("uploading");
+  const result = await apiPost("/api/tasks/create-manual", {
+    task_name: taskName,
+    root_company_name: rootName,
+  });
+  const task = result.task || result;
+  hydrateTask(task);
+  renderWorkspace("ready", { summary: task.summary || {} });
+  setView("results");
 }
 
 let _analysisStart = 0;
@@ -5291,6 +5342,9 @@ function bindEvents() {
     state.taskName = event.target.value.trim();
     if (state.taskName) document.getElementById("uploadError")?.remove();
   });
+  elements.uploadModeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => setUploadMode(btn.dataset.uploadMode || "ocr"));
+  });
   elements.startAnalysisBtn.addEventListener("click", async () => {
     const originalText = elements.startAnalysisBtn.textContent;
     document.getElementById("uploadError")?.remove();
@@ -5319,6 +5373,25 @@ function bindEvents() {
     } finally {
       state.loading = false;
       elements.startAnalysisBtn.textContent = originalText;
+      enableStartIfReady();
+    }
+  });
+  elements.createManualTaskBtn?.addEventListener("click", async () => {
+    const originalText = elements.createManualTaskBtn.textContent;
+    document.getElementById("uploadError")?.remove();
+    try {
+      state.loading = true;
+      elements.createManualTaskBtn.textContent = "建立中…";
+      await createManualTask();
+    } catch (error) {
+      const errDiv = document.createElement("div");
+      errDiv.id = "uploadError";
+      errDiv.className = "upload-error-msg";
+      errDiv.innerHTML = `<strong>建立失敗</strong>：${error.message}`;
+      elements.manualCreatePanel?.appendChild(errDiv);
+    } finally {
+      state.loading = false;
+      elements.createManualTaskBtn.textContent = originalText;
       enableStartIfReady();
     }
   });
@@ -5472,6 +5545,7 @@ applyChartIntent(state.chartIntent);
 bindEvents();
 loadChartViewPrefs();
 applyWorkspaceModeUI();
+applyUploadModeUI();
 updateTaskBadge();
 setAdminUnlocked(false);
 renderActivityPanel();

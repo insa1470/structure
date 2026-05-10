@@ -691,6 +691,71 @@ def analyze():
     return jsonify({"id": task_id, "status": "processing"}), 202
 
 
+@app.route("/api/tasks/create-manual", methods=["POST"])
+def create_manual_task():
+    payload = request.get_json(silent=True) or {}
+    task_name = str(payload.get("task_name") or "").strip()
+    if not task_name:
+        return jsonify({"error": "task_name_required", "message": "請先填寫集團名稱。"}), 400
+
+    root_name = str(payload.get("root_company_name") or "").strip()
+    task_id = uuid.uuid4().hex[:12]
+    now = now_iso()
+
+    master_rows = []
+    if root_name:
+        master_rows.append({
+            "node_id": f"M{uuid.uuid4().hex[:6].upper()}",
+            "chart1_name": root_name,
+            "canonical_name": root_name,
+            "chart1_level": 0,
+            "chart1_parent": "",
+            "chart1_parent_name": "",
+            "sort_index": 1,
+            "matched_chart2_name": "",
+            "legal_representative": "",
+            "established_date": "",
+            "registered_capital": "",
+            "actual_controller_share": "",
+            "subsidiary_level_label": level_label(0),
+            "company_status": "",
+            "role_label": "",
+            "chart_note": "",
+            "match_status": "manual",
+            "node_status": "manual_added",
+            "review_flag": "manual_added",
+            "review_note": "人工新增",
+        })
+
+    task = {
+        "id": task_id,
+        "name": task_name,
+        "status": "ready",
+        "created_at": now,
+        "updated_at": now,
+        "analysis_mode": "manual",
+        "source_files": {},
+        "image_metadata": {},
+        "summary": {},
+        "analysis_diagnostics": {"manual_mode": True},
+        "master_rows": master_rows,
+        "review_rows": [],
+        "candidate_rows": [],
+        "review_decisions": {},
+        "candidate_decisions": {},
+        "graph": {},
+        "chart2_progress": {},
+        "error": "",
+        "cancel_requested": False,
+        "chart_shareholders": [],
+        "chart_external_entities": [],
+        "chart_print_settings": {},
+    }
+    rebuild_task_state(task)
+    save_task(task)
+    return jsonify({"ok": True, "task": task}), 201
+
+
 @app.route("/api/tasks/<task_id>/analyze-chart2", methods=["POST"])
 def analyze_chart2_only(task_id: str):
     """單獨重新上傳圖二，保留現有圖一骨架與用戶調整。"""
