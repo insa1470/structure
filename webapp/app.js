@@ -4635,7 +4635,21 @@ function renderListTree() {
           ${r.attrs ? `<span class="lt-attrs">${r.attrs}</span>` : ""}
         </div>
       `).join("")}
+      <div class="list-tree-watermark">本圖由AI助手生成</div>
     </div>`;
+
+  const listInner = document.getElementById("listTreeInner");
+  if (listInner) {
+    const vw = container.clientWidth - 24;
+    const vh = container.clientHeight - 24;
+    const rawW = listInner.scrollWidth;
+    const rawH = listInner.scrollHeight;
+    const fitScale = Math.min(vw / Math.max(rawW, 1), vh / Math.max(rawH, 1), 1);
+    const shouldFitOnePage = state.chartIntent === "print_single";
+    const scale = shouldFitOnePage ? Math.max(0.62, fitScale) : 1;
+    listInner.style.transformOrigin = "top left";
+    listInner.style.transform = `scale(${scale.toFixed(3)})`;
+  }
 }
 
 // ── ECharts 視覺圖（≤20 家） ─────────────────────────────────
@@ -4913,6 +4927,7 @@ function openPrintSettings() {
         <div id="printPreviewFrame" class="print-preview-frame">
           <div id="printPreviewViewport" class="print-preview-viewport"></div>
         </div>
+        <p id="printPreviewHint" class="print-preview-hint"></p>
       </div>
     </div>
     <aside class="print-settings-panel" role="dialog" aria-modal="true" aria-labelledby="printSettingsTitle">
@@ -5019,6 +5034,7 @@ function openPrintSettings() {
   const spacingSelect = modal.querySelector("#printSpacingSelect");
   const forceOnePageInput = modal.querySelector("#printForceOnePageInput");
   const previewViewport = modal.querySelector("#printPreviewViewport");
+  const previewHint = modal.querySelector("#printPreviewHint");
   const renderPrintPreview = () => {
     if (!previewViewport) return;
     const title = (modal.querySelector("#printTitleInput")?.value || "").trim() || getChartTitle();
@@ -5028,6 +5044,7 @@ function openPrintSettings() {
     const sourceList = document.querySelector("#chartContainer #listTreeInner");
     if (sourceSvg) {
       previewViewport.innerHTML = sourceSvg.outerHTML;
+      if (previewHint) previewHint.textContent = "";
       const previewSvg = previewViewport.querySelector("svg");
       if (!previewSvg) return;
       previewSvg.removeAttribute("id");
@@ -5046,10 +5063,29 @@ function openPrintSettings() {
       return;
     }
     if (sourceList) {
-      previewViewport.innerHTML = `<div class="print-preview-list">${sourceList.innerHTML}</div>`;
+      previewViewport.innerHTML = `<div id="printPreviewList" class="print-preview-list">${sourceList.innerHTML}<div class="list-tree-watermark">本圖由AI助手生成</div></div>`;
+      const wrapper = previewViewport.querySelector("#printPreviewList");
+      if (wrapper) {
+        const fitToPage = Boolean(fitInput?.checked || forceOnePageInput?.checked);
+        const manualScale = clampNumber(Number(scaleInput?.value || 100), 70, 130) / 100;
+        const vw = previewViewport.clientWidth || 700;
+        const vh = previewViewport.clientHeight || 440;
+        const rawW = wrapper.scrollWidth || vw;
+        const rawH = wrapper.scrollHeight || vh;
+        const baseScale = Math.min(vw / rawW, vh / rawH, 1);
+        const scale = fitToPage ? Math.max(0.4, baseScale * manualScale) : Math.min(1.2, baseScale * manualScale);
+        wrapper.style.transform = `scale(${scale.toFixed(3)})`;
+        wrapper.style.transformOrigin = "top left";
+        wrapper.style.width = `${rawW}px`;
+        wrapper.style.height = `${rawH}px`;
+        const projectedH = rawH * scale;
+        const isOnePage = projectedH <= vh + 1;
+        if (previewHint) previewHint.textContent = isOnePage ? "預覽：可放入一頁" : "預覽：超過一頁，請調整縮放或字距";
+      }
       return;
     }
     previewViewport.innerHTML = `<div class="print-preview-empty">目前沒有可預覽圖面</div>`;
+    if (previewHint) previewHint.textContent = "";
   };
   const applyPrintPreset = (preset) => {
     if (!fitInput || !scaleInput || !marginSelect || !fontSizeSelect || !spacingSelect || !forceOnePageInput) return;
