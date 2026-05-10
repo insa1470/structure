@@ -699,25 +699,25 @@ def create_manual_task():
         return jsonify({"error": "task_name_required", "message": "請先填寫集團名稱。"}), 400
 
     root_name = str(payload.get("root_company_name") or "").strip()
+    template_key = str(payload.get("template_key") or "blank").strip() or "blank"
     task_id = uuid.uuid4().hex[:12]
     now = now_iso()
 
-    master_rows = []
-    if root_name:
-        master_rows.append({
+    def _manual_row(name: str, level: int, parent_id: str = "", parent_name: str = "", sort_index: int = 1):
+        return {
             "node_id": f"M{uuid.uuid4().hex[:6].upper()}",
-            "chart1_name": root_name,
-            "canonical_name": root_name,
-            "chart1_level": 0,
-            "chart1_parent": "",
-            "chart1_parent_name": "",
-            "sort_index": 1,
+            "chart1_name": name,
+            "canonical_name": name,
+            "chart1_level": level,
+            "chart1_parent": parent_id,
+            "chart1_parent_name": parent_name,
+            "sort_index": sort_index,
             "matched_chart2_name": "",
             "legal_representative": "",
             "established_date": "",
             "registered_capital": "",
             "actual_controller_share": "",
-            "subsidiary_level_label": level_label(0),
+            "subsidiary_level_label": level_label(level),
             "company_status": "",
             "role_label": "",
             "chart_note": "",
@@ -725,7 +725,31 @@ def create_manual_task():
             "node_status": "manual_added",
             "review_flag": "manual_added",
             "review_note": "人工新增",
-        })
+        }
+
+    seed_name = root_name or "母公司"
+    master_rows = []
+    if template_key == "blank":
+        if root_name:
+            master_rows.append(_manual_row(root_name, 0))
+    elif template_key == "starter2":
+        root = _manual_row(seed_name, 0)
+        master_rows.append(root)
+        master_rows.append(_manual_row("子公司 A", 1, root["node_id"], seed_name, 1))
+        master_rows.append(_manual_row("子公司 B", 1, root["node_id"], seed_name, 2))
+    elif template_key == "starter3":
+        root = _manual_row(seed_name, 0)
+        master_rows.append(root)
+        child_a = _manual_row("子公司 A", 1, root["node_id"], seed_name, 1)
+        child_b = _manual_row("子公司 B", 1, root["node_id"], seed_name, 2)
+        master_rows.extend([child_a, child_b])
+        master_rows.append(_manual_row("孫公司 A1", 2, child_a["node_id"], child_a["canonical_name"], 1))
+        master_rows.append(_manual_row("孫公司 A2", 2, child_a["node_id"], child_a["canonical_name"], 2))
+        master_rows.append(_manual_row("孫公司 B1", 2, child_b["node_id"], child_b["canonical_name"], 1))
+        master_rows.append(_manual_row("孫公司 B2", 2, child_b["node_id"], child_b["canonical_name"], 2))
+    else:
+        if root_name:
+            master_rows.append(_manual_row(root_name, 0))
 
     task = {
         "id": task_id,

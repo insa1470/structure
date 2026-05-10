@@ -94,8 +94,16 @@
                   <span>第一間公司名稱（可選）</span>
                   <input id="manualRootNameInput" type="text" placeholder="例如：華峰華錦有限公司" />
                 </label>
+                <label class="field">
+                  <span>起手模板</span>
+                  <select id="manualTemplateSelect">
+                    <option value="blank">空白（只建任務）</option>
+                    <option value="starter2">2 層（母公司 + 2 子公司）</option>
+                    <option value="starter3">3 層（母公司 + 2 子 + 各 2 孫）</option>
+                  </select>
+                </label>
                 <div class="cta-row">
-                  <button id="createManualTaskBtn" class="primary-btn">建立空白任務</button>
+                  <button id="createManualTaskBtn" class="primary-btn">建立任務</button>
                 </div>
                 <p class="manual-note">建立後會直接進入結果主表，可從零開始新增、編輯與排版。</p>
               </div>

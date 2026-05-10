@@ -70,6 +70,7 @@ const elements = {
   uploadModeButtons: [...document.querySelectorAll(".upload-mode-btn")],
   manualCreatePanel: document.getElementById("manualCreatePanel"),
   manualRootNameInput: document.getElementById("manualRootNameInput"),
+  manualTemplateSelect: document.getElementById("manualTemplateSelect"),
   createManualTaskBtn: document.getElementById("createManualTaskBtn"),
   imagePrecheck: document.getElementById("imagePrecheck"),
   taskStatusLine: document.getElementById("taskStatusLine"),
@@ -2760,10 +2761,12 @@ async function createManualTask() {
     throw new Error("請先填寫集團名稱。");
   }
   const rootName = (elements.manualRootNameInput?.value || "").trim();
+  const templateKey = (elements.manualTemplateSelect?.value || "blank").trim();
   renderWorkspace("uploading");
   const result = await apiPost("/api/tasks/create-manual", {
     task_name: taskName,
     root_company_name: rootName,
+    template_key: templateKey,
   });
   const task = result.task || result;
   hydrateTask(task);
