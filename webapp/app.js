@@ -3332,10 +3332,22 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
     const sortedLeaves = leafChildren.sort((a, b) => (a.sort_index || 0) - (b.sort_index || 0));
     sortedLeaves.forEach((child) => collapsedChildIds.add(child.node_id));
     const columnId = `COL_${parentId}`;
-    const itemTexts = sortedLeaves.map((child) => {
+    const itemRows = sortedLeaves.map((child) => {
       const name = child.canonical_name || child.chart1_name || "—";
       const ratio = ratioPercentText(child.actual_controller_share || "");
-      return ratio ? `${name}（${ratio}）` : name;
+      const primary = ratio ? `${name}（${ratio}）` : name;
+      let secondary = "";
+      if (state.chartDensity !== "compact") {
+        const bits = [];
+        if (child.legal_representative) bits.push(`法代：${child.legal_representative}`);
+        if (child.established_date) bits.push(`成立：${child.established_date}`);
+        if (state.chartDensity === "full") {
+          if (child.registered_capital) bits.push(`資本：${formatCapital(child.registered_capital)}`);
+          if (child.role_label) bits.push(`定位：${child.role_label}`);
+        }
+        secondary = bits.join(" ｜ ");
+      }
+      return { primary, secondary };
     });
     columnNodes.push({
       node_id: columnId,
@@ -3347,7 +3359,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       chart_note: "",
       node_status: "enriched",
       is_hybrid_column: true,
-      hybrid_items: itemTexts,
+      hybrid_items: itemRows,
       hybrid_count: sortedLeaves.length,
     });
   });
@@ -3390,8 +3402,11 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       const name = r.canonical_name || r.chart1_name || "—";
       if (r.is_hybrid_column) {
         const itemCount = (r.hybrid_items || []).length;
+        const secondaryCount = (r.hybrid_items || []).filter((item) => typeof item === "object" && item?.secondary).length;
         const cappedCount = Math.min(itemCount, 22);
-        const height = Math.max(130, 72 + cappedCount * 22);
+        const perItemH = 22;
+        const perSecondaryH = 17;
+        const height = Math.max(130, 72 + cappedCount * perItemH + Math.min(secondaryCount, 22) * perSecondaryH);
         const width = Math.min(420, Math.max(250, profile.nodeW + 70));
         return { id: r.node_id, width, height, row: r };
       }
@@ -4007,13 +4022,26 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       const extraCount = Math.max(0, (r.hybrid_items || []).length - itemLines.length);
       const header = svgEscape(`${r.role_label || ""}`);
       const lineStartY = 48;
+      let dyCursor = 16;
+      const renderItem = itemLines.map((item) => {
+        const primaryText = typeof item === "string" ? item : String(item?.primary || "");
+        const secondaryText = typeof item === "string" ? "" : String(item?.secondary || "");
+        const primary = svgEscape(primaryText);
+        const secondary = svgEscape(secondaryText);
+        const part = `
+          <tspan x="14" dy="${dyCursor}">• ${primary}</tspan>
+          ${secondary ? `<tspan x="28" dy="16" class="hybrid-subline">· ${secondary}</tspan>` : ""}
+        `;
+        dyCursor = secondary ? 22 : 20;
+        return part;
+      }).join("");
       return `
       <g class="elk-node elk-node-hybrid-column" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
         <rect width="${node.width}" height="${node.height}" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.6" stroke-dasharray="5 4" />
         <text x="${node.width / 2}" y="28" text-anchor="middle" fill="#0f172a" font-size="${Math.max(12, nameFont - 0.5)}" font-weight="800">下層公司清單</text>
         <text x="${node.width / 2}" y="44" text-anchor="middle" fill="#475569" font-size="${Math.max(10, detailFont)}" font-weight="700">${header}</text>
         <text x="14" y="${lineStartY}" fill="#334155" font-size="${Math.max(10, detailFont)}" font-weight="600">
-          ${itemLines.map((line, i) => `<tspan x="14" dy="${i === 0 ? 16 : 20}">• ${svgEscape(line)}</tspan>`).join("")}
+          ${renderItem}
           ${extraCount > 0 ? `<tspan x="14" dy="20">• 其餘 ${extraCount} 家...</tspan>` : ""}
         </text>
       </g>`;
