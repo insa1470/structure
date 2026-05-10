@@ -3443,6 +3443,14 @@ function rebalanceLayoutSymmetry(layout) {
     const source = edge.sources?.[0];
     const target = edge.targets?.[0];
     if (!source || !target || !nodesById[source] || !nodesById[target]) return;
+    const sourceRow = nodesById[source]?.row || {};
+    const targetRow = nodesById[target]?.row || {};
+    const isExternalToMainLink = Boolean(
+      sourceRow.is_external_entity &&
+      !targetRow.is_external_entity &&
+      !targetRow.is_external_group
+    );
+    if (isExternalToMainLink) return;
     if (!childIdsByParent[source]) childIdsByParent[source] = [];
     childIdsByParent[source].push(target);
     if (!incomingSourcesByTarget[target]) incomingSourcesByTarget[target] = [];
@@ -3535,6 +3543,49 @@ function rebalanceLayoutSymmetry(layout) {
         shiftSubtree(curr.id, overlap);
       }
     }
+  });
+
+  // 集團外主體：群組內鏈條固定為由上到下垂直主幹
+  const externalVerticalGroups = new Map();
+  (layout.children || []).forEach((node) => {
+    const row = node?.row || {};
+    const groupName = String(row.external_group || row.external_group_name || "").trim();
+    if (!groupName) return;
+    if (!externalVerticalGroups.has(groupName)) externalVerticalGroups.set(groupName, []);
+    externalVerticalGroups.get(groupName).push(node);
+  });
+  externalVerticalGroups.forEach((nodes) => {
+    if (nodes.length < 2) return;
+    const chain = nodes
+      .filter((node) => node?.row?.is_external_group || node?.row?.is_external_entity)
+      .sort((a, b) => (Number(a.row?.chart1_level) || 0) - (Number(b.row?.chart1_level) || 0));
+    if (chain.length < 2) return;
+    const anchorX = (chain[0].x || 0) + (chain[0].width || 0) / 2;
+    const verticalGap = 34;
+    let cursorY = chain[0].y || 0;
+    chain.forEach((node, idx) => {
+      const desiredCenterX = anchorX;
+      const currentCenterX = (node.x || 0) + (node.width || 0) / 2;
+      const dx = desiredCenterX - currentCenterX;
+      if (Math.abs(dx) > 0.5) shiftSubtree(node.id, dx);
+      if (idx > 0) {
+        const minY = cursorY + (chain[idx - 1].height || 0) + verticalGap;
+        if ((node.y || 0) < minY) {
+          const dy = minY - (node.y || 0);
+          const stack = [node.id];
+          const visited = new Set();
+          while (stack.length) {
+            const id = stack.pop();
+            if (visited.has(id)) continue;
+            visited.add(id);
+            const targetNode = nodesById[id];
+            if (targetNode) targetNode.y = (targetNode.y || 0) + dy;
+            (childIdsByParent[id] || []).forEach((childId) => stack.push(childId));
+          }
+        }
+      }
+      cursorY = node.y || 0;
+    });
   });
 
   // 集團外主體子圖：自動放在主幹圖空白角落（非固定左上）
