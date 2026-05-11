@@ -304,40 +304,17 @@ function chartRowsWithShareholders(rows) {
     });
   });
 
-  const groupMap = new Map();
   (state.chartExternalEntities || []).forEach((entity) => {
     const name = String(entity.name || "").trim() || "集團外主體";
     const groupName = String(entity.group || "集團外架構").trim() || "集團外架構";
-    if (!groupMap.has(groupName)) {
-      const groupId = `EXG_${groupName.replace(/\s+/g, "_")}_${groupMap.size + 1}`;
-      groupMap.set(groupName, groupId);
-      const placementMode = entity.placement_mode === "fixed" ? "fixed" : "auto";
-      const manualX = Number.isFinite(Number(entity.manual_x)) ? Number(entity.manual_x) : null;
-      const manualY = Number.isFinite(Number(entity.manual_y)) ? Number(entity.manual_y) : null;
-      const externalScale = normalizeExternalScale(entity.external_scale);
-      extraRows.push({
-        node_id: groupId,
-        canonical_name: groupName,
-        chart1_name: groupName,
-        chart1_level: 0,
-        chart1_parent: "",
-        actual_controller_share: "",
-        role_label: "外部群組",
-        chart_note: "集團外主體",
-        node_status: "enriched",
-        is_external_group: true,
-        external_group_name: groupName,
-        external_placement_mode: placementMode,
-        external_manual_x: manualX,
-        external_manual_y: manualY,
-        external_scale: externalScale,
-      });
-    }
-    const groupId = groupMap.get(groupName);
     const levels = Math.max(2, Math.min(4, Number(entity.levels) || 2));
     const layerNames = normalizeExternalLayerNames(entity);
     const layerShares = normalizeExternalLayerShares(entity);
-    let parentId = groupId;
+    const placementMode = entity.placement_mode === "fixed" ? "fixed" : "auto";
+    const manualX = Number.isFinite(Number(entity.manual_x)) ? Number(entity.manual_x) : null;
+    const manualY = Number.isFinite(Number(entity.manual_y)) ? Number(entity.manual_y) : null;
+    const externalScale = normalizeExternalScale(entity.external_scale);
+    let parentId = "";
     for (let i = 0; i < levels; i += 1) {
       const isLast = i === levels - 1;
       const nodeId = `EX_${entity.id}_${i + 1}`;
@@ -349,15 +326,19 @@ function chartRowsWithShareholders(rows) {
         chart1_level: i + 1,
         chart1_parent: parentId,
         actual_controller_share: i >= 1 ? String(layerShares[i - 1] || "").trim() : "",
-        role_label: `集團外第${i + 1}層`,
+        role_label: "",
         chart_note: isLast ? (entity.note || "") : "",
         node_status: "enriched",
         is_external_entity: true,
         is_external_mid: !isLast,
         external_group: groupName,
+        external_group_name: groupName,
+        external_placement_mode: i === 0 ? placementMode : "",
+        external_manual_x: i === 0 ? manualX : null,
+        external_manual_y: i === 0 ? manualY : null,
         external_link_target: isLast ? (entity.target_node_id || "") : "",
         external_link_share: isLast ? (entity.share || "") : "",
-        external_scale: normalizeExternalScale(entity.external_scale),
+        external_scale: externalScale,
       });
       parentId = nodeId;
     }
@@ -3552,10 +3533,18 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       }
       const baseWidth = r.is_chart_shareholder ? Math.max(190, profile.nodeW - 34) : profile.nodeW;
       const level = Number(r.chart1_level) || 0;
-      const adaptiveWidth = Math.max(164, Math.min(profile.maxNodeW, 156 + Math.ceil(name.length / 7) * 16));
+      const isExternalNode = Boolean(r.is_external_entity || r.is_external_group);
+      const adaptiveWidth = isExternalNode
+        ? Math.max(180, Math.min(360, 180 + Math.ceil(name.length / 8) * 20))
+        : Math.max(164, Math.min(profile.maxNodeW, 156 + Math.ceil(name.length / 7) * 16));
       const width = level >= 2 ? Math.min(baseWidth, adaptiveWidth) : Math.max(baseWidth, adaptiveWidth);
-      const height = r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH;
-      if (r.is_external_entity || r.is_external_group) {
+      let height = r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH;
+      if (isExternalNode) {
+        const maxCharsPerLine = Math.max(8, Math.floor((width - 28) / 13));
+        const nameLinesCount = Math.max(1, Math.ceil(String(name || "").length / maxCharsPerLine));
+        const noteText = String(r.chart_note || "").trim();
+        const noteLinesCount = noteText ? Math.max(1, Math.ceil(noteText.length / maxCharsPerLine)) : 0;
+        height = Math.max(height, 34 + nameLinesCount * 18 + noteLinesCount * 15 + 18);
         const scale = normalizeExternalScale(r.external_scale) / 100;
         return {
           id: r.node_id,
@@ -3877,7 +3866,11 @@ function buildPagedRowSets(rows) {
   });
 
   const roots = rows.filter((row) => !row.chart1_parent || !byId[row.chart1_parent]);
-  const externalRootIds = new Set(roots.filter((row) => row.is_external_group).map((row) => row.node_id));
+  const externalRootIds = new Set(
+    roots
+      .filter((row) => row.is_external_group || (row.is_external_entity && !row.chart1_parent))
+      .map((row) => row.node_id)
+  );
   const internalRoots = roots.filter((row) => !externalRootIds.has(row.node_id));
   if (!roots.length) return [{ title: "完整架構", rows }];
 
@@ -4138,14 +4131,13 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     groups.forEach((groupNodes, groupName) => {
       if (!groupNodes.length) return;
       const minX = Math.min(...groupNodes.map((n) => (n.x || 0))) - 22;
-      const minY = Math.min(...groupNodes.map((n) => (n.y || 0))) - 34;
+      const minY = Math.min(...groupNodes.map((n) => (n.y || 0))) - 16;
       const maxX = Math.max(...groupNodes.map((n) => (n.x || 0) + (n.width || 0))) + 22;
       const maxY = Math.max(...groupNodes.map((n) => (n.y || 0) + (n.height || 0))) + 22;
       const rootNode = groupNodes.find((n) => n.row?.is_external_group) || groupNodes[0];
       frames.push(`
         <g class="external-group-frame" data-external-group="${svgEscape(groupName)}" data-root-x="${Number(rootNode.x || 0).toFixed(2)}" data-root-y="${Number(rootNode.y || 0).toFixed(2)}">
           <rect x="${minX.toFixed(1)}" y="${minY.toFixed(1)}" width="${Math.max(120, maxX - minX).toFixed(1)}" height="${Math.max(80, maxY - minY).toFixed(1)}" rx="10" />
-          <text x="${(minX + 10).toFixed(1)}" y="${(minY + 18).toFixed(1)}">${svgEscape(groupName)}</text>
         </g>
       `);
     });
@@ -4198,7 +4190,8 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const stroke = isShareholder ? "#64748b" : (isMono ? (uncertain ? "#f59e0b" : "#334155") : (uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)"));
     const nameColor = isShareholder || isMono ? "#0f172a" : "#ffffff";
     const detailColor = isShareholder || isMono ? "#334155" : "rgba(255,255,255,0.92)";
-    const nameMaxLines = (Number(r.chart1_level) || 0) >= 2 ? 2 : profile.nameLines;
+    const isExternalNode = Boolean(r.is_external_entity || r.is_external_group);
+    const nameMaxLines = isExternalNode ? 99 : ((Number(r.chart1_level) || 0) >= 2 ? 2 : profile.nameLines);
     const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", profile.nameLen, nameMaxLines);
     const repCap = [
       r.legal_representative ? `法代：${r.legal_representative}` : "",
@@ -4208,10 +4201,12 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       isShareholder ? `上層股東：${shareholderTypeText(r.shareholder_type)}` : "",
       repCap,
       r.established_date ? `成立：${r.established_date}` : "",
-      r.role_label ? `定位：${r.role_label}` : "",
+      (!isExternalNode && r.role_label) ? `定位：${r.role_label}` : "",
       r.chart_note ? `備註：${r.chart_note}` : "",
     ].filter(Boolean);
-    const baseLimit = state.chartDensity === "compact" ? 1 : state.chartDensity === "full" ? Math.max(4, profile.detailLines + 1) : profile.detailLines;
+    const baseLimit = isExternalNode
+      ? 6
+      : (state.chartDensity === "compact" ? 1 : state.chartDensity === "full" ? Math.max(4, profile.detailLines + 1) : profile.detailLines);
     const detailLimit = fontScale > 1.1 ? Math.max(1, baseLimit - 1) : baseLimit;
     const details = baseDetails.slice(0, detailLimit);
     const nameStart = profile.nodeH <= 96 ? 31 - (nameLines.length - 1) * 8 : 36 - (nameLines.length - 1) * 9;
