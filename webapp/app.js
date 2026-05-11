@@ -4158,7 +4158,7 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       const rootNode = groupNodes.find((n) => n.row?.is_external_group) || groupNodes[0];
       frames.push(`
         <g class="external-group-frame" data-external-group="${svgEscape(groupName)}" data-root-x="${Number(rootNode.x || 0).toFixed(2)}" data-root-y="${Number(rootNode.y || 0).toFixed(2)}">
-          <rect x="${minX.toFixed(1)}" y="${minY.toFixed(1)}" width="${Math.max(120, maxX - minX).toFixed(1)}" height="${Math.max(80, maxY - minY).toFixed(1)}" rx="10" />
+          <rect x="${minX.toFixed(1)}" y="${minY.toFixed(1)}" width="${Math.max(120, maxX - minX).toFixed(1)}" height="${Math.max(80, maxY - minY).toFixed(1)}" rx="10" fill="rgba(248,250,252,0.35)" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 5" />
         </g>
       `);
     });
