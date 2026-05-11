@@ -3309,14 +3309,14 @@ function wrapName(name, maxLen = 12) {
   return lines.join("\n");
 }
 
-function wrapTextLines(text, maxLen = 12, maxLines = 3) {
+function wrapTextLines(text, maxLen = 12, maxLines = 3, { ellipsis = true } = {}) {
   const value = String(text || "").trim();
   if (!value) return [];
   const lines = [];
   for (let i = 0; i < value.length && lines.length < maxLines; i += maxLen) {
     lines.push(value.slice(i, i + maxLen));
   }
-  if (value.length > maxLen * maxLines) {
+  if (ellipsis && value.length > maxLen * maxLines) {
     lines[lines.length - 1] = `${lines[lines.length - 1].slice(0, -1)}...`;
   }
   return lines;
@@ -3409,6 +3409,20 @@ function getChartTitle() {
 
 function getPrintTitle() {
   return (state.printTitle || getChartTitle()).trim();
+}
+
+function buildNodeDetailLines(row, { isExternalNode = false } = {}) {
+  const repCap = [
+    row.legal_representative ? `法代：${row.legal_representative}` : "",
+    row.registered_capital ? `資本：${formatCapital(row.registered_capital)}` : "",
+  ].filter(Boolean).join("  ");
+  return [
+    row.is_chart_shareholder ? `上層股東：${shareholderTypeText(row.shareholder_type)}` : "",
+    repCap,
+    row.established_date ? `成立：${row.established_date}` : "",
+    (!isExternalNode && row.role_label) ? `定位：${row.role_label}` : "",
+    row.chart_note ? `備註：${row.chart_note}` : "",
+  ].filter(Boolean);
 }
 
 function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
@@ -3534,17 +3548,24 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       const baseWidth = r.is_chart_shareholder ? Math.max(190, profile.nodeW - 34) : profile.nodeW;
       const level = Number(r.chart1_level) || 0;
       const isExternalNode = Boolean(r.is_external_entity || r.is_external_group);
+      const fontScale = Math.max(0.85, Math.min(1.2, Number(state.chartFontScale || 100) / 100));
+      const detailsRaw = buildNodeDetailLines(r, { isExternalNode });
+      const detailLimit = isExternalNode
+        ? 12
+        : (state.chartDensity === "compact" ? 1 : state.chartDensity === "full" ? Math.max(4, profile.detailLines + 1) : profile.detailLines);
+      const details = detailsRaw.slice(0, detailLimit);
       const adaptiveWidth = isExternalNode
-        ? Math.max(180, Math.min(360, 180 + Math.ceil(name.length / 8) * 20))
-        : Math.max(164, Math.min(profile.maxNodeW, 156 + Math.ceil(name.length / 7) * 16));
+        ? Math.max(200, Math.min(420, 180 + Math.ceil(name.length / 7) * 24))
+        : Math.max(180, Math.min(Math.max(profile.maxNodeW, 420), 160 + Math.ceil(name.length / 7) * 18));
       const width = level >= 2 ? Math.min(baseWidth, adaptiveWidth) : Math.max(baseWidth, adaptiveWidth);
-      let height = r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH;
+      const charsPerLine = Math.max(8, Math.floor((width - 26) / (fontScale > 1.05 ? 11 : 12)));
+      const nameLines = wrapTextLines(name, charsPerLine, 99, { ellipsis: false });
+      const detailLineCount = details.reduce((sum, text) => sum + wrapTextLines(text, charsPerLine, 99, { ellipsis: false }).length, 0);
+      const nameBlockH = Math.max(1, nameLines.length) * 18;
+      const detailBlockH = detailLineCount * 15;
+      const computedH = 22 + nameBlockH + (detailLineCount ? 10 : 0) + detailBlockH + 16;
+      let height = Math.max(r.is_chart_shareholder ? Math.max(72, profile.nodeH - 18) : profile.nodeH, computedH);
       if (isExternalNode) {
-        const maxCharsPerLine = Math.max(8, Math.floor((width - 28) / 13));
-        const nameLinesCount = Math.max(1, Math.ceil(String(name || "").length / maxCharsPerLine));
-        const noteText = String(r.chart_note || "").trim();
-        const noteLinesCount = noteText ? Math.max(1, Math.ceil(noteText.length / maxCharsPerLine)) : 0;
-        height = Math.max(height, 34 + nameLinesCount * 18 + noteLinesCount * 15 + 18);
         const scale = normalizeExternalScale(r.external_scale) / 100;
         return {
           id: r.node_id,
@@ -4186,31 +4207,23 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const isMono = state.chartStyle === "mono";
     const isShareholder = Boolean(r.is_chart_shareholder);
     const uncertain = r.node_status !== "enriched";
-    const fill = isShareholder ? "#f8fafc" : (isMono ? "#ffffff" : color);
-    const stroke = isShareholder ? "#64748b" : (isMono ? (uncertain ? "#f59e0b" : "#334155") : (uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)"));
-    const nameColor = isShareholder || isMono ? "#0f172a" : "#ffffff";
-    const detailColor = isShareholder || isMono ? "#334155" : "rgba(255,255,255,0.92)";
     const isExternalNode = Boolean(r.is_external_entity || r.is_external_group);
-    const nameMaxLines = isExternalNode ? 99 : ((Number(r.chart1_level) || 0) >= 2 ? 2 : profile.nameLines);
-    const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", profile.nameLen, nameMaxLines);
-    const repCap = [
-      r.legal_representative ? `法代：${r.legal_representative}` : "",
-      r.registered_capital ? `資本：${formatCapital(r.registered_capital)}` : "",
-    ].filter(Boolean).join("  ");
-    const baseDetails = [
-      isShareholder ? `上層股東：${shareholderTypeText(r.shareholder_type)}` : "",
-      repCap,
-      r.established_date ? `成立：${r.established_date}` : "",
-      (!isExternalNode && r.role_label) ? `定位：${r.role_label}` : "",
-      r.chart_note ? `備註：${r.chart_note}` : "",
-    ].filter(Boolean);
-    const baseLimit = isExternalNode
-      ? 6
+    const fill = (isShareholder || isExternalNode) ? "#f8fafc" : (isMono ? "#ffffff" : color);
+    const stroke = (isShareholder || isExternalNode)
+      ? "#64748b"
+      : (isMono ? (uncertain ? "#f59e0b" : "#334155") : (uncertain ? "#fbbf24" : "rgba(255,255,255,0.35)"));
+    const nameColor = (isShareholder || isMono || isExternalNode) ? "#0f172a" : "#ffffff";
+    const detailColor = (isShareholder || isMono || isExternalNode) ? "#334155" : "rgba(255,255,255,0.92)";
+    const charsPerLine = Math.max(8, Math.floor((node.width - 26) / (fontScale > 1.05 ? 11 : 12)));
+    const nameLines = wrapTextLines(r.canonical_name || r.chart1_name || "—", charsPerLine, 99, { ellipsis: false });
+    const detailsRaw = buildNodeDetailLines(r, { isExternalNode });
+    const detailLimit = isExternalNode
+      ? 12
       : (state.chartDensity === "compact" ? 1 : state.chartDensity === "full" ? Math.max(4, profile.detailLines + 1) : profile.detailLines);
-    const detailLimit = fontScale > 1.1 ? Math.max(1, baseLimit - 1) : baseLimit;
-    const details = baseDetails.slice(0, detailLimit);
-    const nameStart = profile.nodeH <= 96 ? 31 - (nameLines.length - 1) * 8 : 36 - (nameLines.length - 1) * 9;
-    const detailStart = profile.nodeH - (details.length > 1 ? 35 : 26);
+    const details = detailsRaw.slice(0, detailLimit);
+    const detailWrapped = details.flatMap((line) => wrapTextLines(line, charsPerLine, 99, { ellipsis: false }));
+    const nameStart = 28;
+    const detailStart = nameStart + Math.max(1, nameLines.length) * 18 + 8;
     const nodeClasses = ["elk-node"];
     if (r.is_external_group) nodeClasses.push("elk-node-external-group");
     const groupAttr = r.is_external_group ? `data-external-group="${svgEscape(String(r.external_group_name || r.canonical_name || ""))}"` : "";
@@ -4221,7 +4234,7 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
           ${nameLines.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 18}">${svgEscape(line)}</tspan>`).join("")}
         </text>
         <text x="${node.width / 2}" y="${detailStart}" text-anchor="middle" fill="${detailColor}" font-size="${detailFont}" font-weight="600">
-          ${details.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 15}">${svgEscape(line)}</tspan>`).join("")}
+          ${detailWrapped.map((line, i) => `<tspan x="${node.width / 2}" dy="${i === 0 ? 0 : 15}">${svgEscape(line)}</tspan>`).join("")}
         </text>
         ${uncertain ? `<text x="${node.width - 14}" y="20" text-anchor="middle" fill="#f59e0b" font-size="15" font-weight="900">!</text>` : ""}
       </g>`;
