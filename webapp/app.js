@@ -178,7 +178,7 @@ const CHART_VIEW_PREFS_KEY = "equity-chart-view-prefs";
 const MAX_CHART1_MB = 3;
 const MAX_CHART1_LONG_EDGE = 9000;
 const MAX_CHART2_CHUNKS = 9;
-const HYBRID_COLUMN_THRESHOLD = 8;
+const HYBRID_COLUMN_THRESHOLD = 3;
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -4171,35 +4171,97 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     const nameFont = Math.max(10, profile.nameFont * fontScale);
     const detailFont = Math.max(8.5, profile.detailFont * fontScale);
     if (r.is_hybrid_column) {
+      // 頂部色帶顏色對應上層節點層級色
+      const parentLevel = Math.max(0, (Number(r.chart1_level) || 1) - 1);
+      const accentColor = LEVEL_COLORS[Math.min(parentLevel, LEVEL_COLORS.length - 1)];
+      const isMono = state.chartStyle === "mono";
+      const headerBg = isMono ? "#334155" : accentColor;
+
       const itemLines = (r.hybrid_items || []).slice(0, 22);
       const extraCount = Math.max(0, (r.hybrid_items || []).length - itemLines.length);
-      const header = svgEscape(`${r.role_label || ""}`);
-      const lineStartY = 48;
-      let dyCursor = 16;
-      const renderItem = itemLines.map((item) => {
-        const primaryText = typeof item === "string" ? item : String(item?.primary || "");
-        const secondaryText = typeof item === "string" ? "" : String(item?.secondary || "");
-        const tertiaryText = typeof item === "string" ? "" : String(item?.tertiary || "");
-        const primary = svgEscape(primaryText);
-        const secondary = svgEscape(secondaryText);
-        const tertiary = svgEscape(tertiaryText);
-        const part = `
-          <tspan x="14" dy="${dyCursor}">• ${primary}</tspan>
-          ${secondary ? `<tspan x="28" dy="16" class="hybrid-subline">· ${secondary}</tspan>` : ""}
-          ${tertiary ? `<tspan x="28" dy="16" class="hybrid-subline">· ${tertiary}</tspan>` : ""}
-        `;
-        dyCursor = tertiary ? 24 : (secondary ? 22 : 20);
-        return part;
+      const count = r.hybrid_count || itemLines.length;
+
+      const fontScale = Math.max(0.85, Math.min(1.2, Number(state.chartFontScale || 100) / 100));
+      const nameFont  = Math.max(10, profile.nameFont * fontScale);
+      const detailFont = Math.max(8.5, profile.detailFont * fontScale);
+
+      // 固定行高
+      const lineH    = state.chartDensity === "compact" ? 18 : state.chartDensity === "full" ? 20 : 19;
+      const subLineH = 15;
+
+      // 每筆公司佔幾行高度
+      const rowHeights = itemLines.map((item) => {
+        const hasSub = typeof item === "object" && item?.secondary;
+        const hasTer = typeof item === "object" && item?.tertiary;
+        return lineH + (hasSub ? subLineH : 0) + (hasTer ? subLineH : 0);
+      });
+      const totalItemH = rowHeights.reduce((a, b) => a + b, 0);
+
+      const HEADER_H = 44;
+      const PAD_TOP  = 10;
+      const PAD_BOT  = 12;
+      const frameH   = HEADER_H + PAD_TOP + totalItemH + (extraCount > 0 ? lineH : 0) + PAD_BOT;
+      const frameW   = node.width;
+      const innerX   = 14;
+      const innerW   = frameW - innerX * 2;
+
+      let cursorY = HEADER_H + PAD_TOP;
+      const itemsSvg = itemLines.map((item, idx) => {
+        const primaryText   = typeof item === "string" ? item : String(item?.primary   || "");
+        const secondaryText = typeof item === "string" ? "" :   String(item?.secondary || "");
+        const tertiaryText  = typeof item === "string" ? "" :   String(item?.tertiary  || "");
+
+        const maxNameW = Math.max(10, Math.floor(innerW / (detailFont * 0.65)));
+        const nameParts = [];
+        for (let i = 0; i < primaryText.length; i += maxNameW) {
+          nameParts.push(primaryText.slice(i, i + maxNameW));
+        }
+        const nameLinesSvg = nameParts.map((part, li) =>
+          `<tspan x="${innerX}" dy="${li === 0 ? 0 : 13}">${svgEscape(part)}</tspan>`
+        ).join("");
+
+        const y0 = cursorY;
+        cursorY += rowHeights[idx];
+
+        // 斑馬紋底色
+        const zebra = idx % 2 === 1
+          ? `<rect x="0" y="${(y0 - 2).toFixed(1)}" width="${frameW}" height="${rowHeights[idx].toFixed(1)}" fill="rgba(0,0,0,0.025)" />`
+          : "";
+
+        return `
+          ${zebra}
+          <text x="${innerX}" y="${y0.toFixed(1)}"
+            fill="#1e293b" font-size="${detailFont}" font-weight="700"
+            dominant-baseline="hanging">${nameLinesSvg}</text>
+          ${secondaryText ? `<text x="${innerX + 8}" y="${(y0 + lineH - 2).toFixed(1)}"
+            fill="#64748b" font-size="${Math.max(8, detailFont - 1)}" font-weight="500"
+            dominant-baseline="hanging">${svgEscape(secondaryText)}</text>` : ""}
+          ${tertiaryText ? `<text x="${innerX + 8}" y="${(y0 + lineH + subLineH - 2).toFixed(1)}"
+            fill="#94a3b8" font-size="${Math.max(7.5, detailFont - 1.5)}" font-weight="500"
+            dominant-baseline="hanging">${svgEscape(tertiaryText)}</text>` : ""}`;
       }).join("");
+
+      const extraSvg = extraCount > 0
+        ? `<text x="${innerX}" y="${cursorY.toFixed(1)}"
+            fill="#94a3b8" font-size="${Math.max(8.5, detailFont - 0.5)}" font-weight="600"
+            dominant-baseline="hanging">… 另 ${extraCount} 家</text>`
+        : "";
+
       return `
       <g class="elk-node elk-node-hybrid-column" transform="translate(${(node.x || 0) + pad}, ${(node.y || 0) + pad})">
-        <rect width="${node.width}" height="${node.height}" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.6" stroke-dasharray="5 4" />
-        <text x="${node.width / 2}" y="28" text-anchor="middle" fill="#0f172a" font-size="${Math.max(12, nameFont - 0.5)}" font-weight="800">下層公司清單</text>
-        <text x="${node.width / 2}" y="44" text-anchor="middle" fill="#475569" font-size="${Math.max(10, detailFont)}" font-weight="700">${header}</text>
-        <text x="14" y="${lineStartY}" fill="#334155" font-size="${Math.max(10, detailFont)}" font-weight="600">
-          ${renderItem}
-          ${extraCount > 0 ? `<tspan x="14" dy="20">• 其餘 ${extraCount} 家...</tspan>` : ""}
-        </text>
+        <rect width="${frameW}" height="${frameH}" rx="6" fill="#ffffff" stroke="${headerBg}" stroke-width="1.8" />
+        <clipPath id="hdr_clip_${svgEscape(String(r.node_id))}">
+          <rect width="${frameW}" height="${HEADER_H}" rx="6" />
+        </clipPath>
+        <rect width="${frameW}" height="${HEADER_H}" fill="${headerBg}" clip-path="url(#hdr_clip_${svgEscape(String(r.node_id))})" />
+        <text x="${frameW / 2}" y="17" text-anchor="middle" dominant-baseline="middle"
+          fill="#ffffff" font-size="${Math.max(11, nameFont - 0.5)}" font-weight="800">下層子公司</text>
+        <text x="${frameW / 2}" y="34" text-anchor="middle" dominant-baseline="middle"
+          fill="rgba(255,255,255,0.82)" font-size="${Math.max(9, detailFont)}" font-weight="600">共 ${count} 家</text>
+        <line x1="0" y1="${HEADER_H}" x2="${frameW}" y2="${HEADER_H}"
+          stroke="${headerBg}" stroke-width="0.8" stroke-opacity="0.35" />
+        ${itemsSvg}
+        ${extraSvg}
       </g>`;
     }
     const level = Number(r.chart1_level) || 0;
@@ -5341,15 +5403,47 @@ function preparePrintLayout() {
   const maxHeightMm = maxHeightMmBase + (marginHeightByProfile[state.printMargin] || 0);
   const manualScale = clampNumber(Number(state.printScale || 100), 70, 130) / 100;
   container.querySelectorAll(".elk-svg").forEach((svg) => {
-    const width = Number(svg.getAttribute("width")) || svg.viewBox?.baseVal?.width || 1;
-    const height = Number(svg.getAttribute("height")) || svg.viewBox?.baseVal?.height || 1;
-    const fitEnabled = state.printForceOnePage || state.printFitToPage;
-    const autoScale = fitEnabled ? Math.min(maxWidthMm / width, maxHeightMm / height, 1) : Math.min(maxWidthMm / width, 1);
-    const scale = Math.min(1.4, autoScale * manualScale);
-    const printWidth = Math.max(60, Math.min(maxWidthMm, width * scale));
-    svg.style.setProperty("--print-svg-width", `${printWidth.toFixed(2)}mm`);
-    svg.style.setProperty("--print-svg-height", "auto");
+    const svgW = Number(svg.getAttribute("width"))  || svg.viewBox?.baseVal?.width  || 1;
+    const svgH = Number(svg.getAttribute("height")) || svg.viewBox?.baseVal?.height || 1;
+
+    // 計算剛好塞入版面的縮放比（寬高都考慮）
+    const fitScaleW = maxWidthMm  / svgW;
+    const fitScaleH = maxHeightMm / svgH;
+    const fitScale  = Math.min(fitScaleW, fitScaleH, 1);
+
+    // 強制一頁或自動縮放：寬高都鎖；否則只限寬度
+    const autoScale = (state.printForceOnePage || state.printFitToPage)
+      ? fitScale
+      : Math.min(fitScaleW, 1);
+
+    const finalScale  = clampNumber(autoScale * manualScale, 0.3, 1.4);
+    const printWidth  = Math.max(60, svgW  * finalScale);
+    const printHeight = Math.max(40, svgH  * finalScale);
+
+    svg.style.setProperty("--print-svg-width",  `${printWidth.toFixed(2)}mm`);
+    svg.style.setProperty("--print-svg-height", `${printHeight.toFixed(2)}mm`);
+    svg.style.width    = `${printWidth.toFixed(2)}mm`;
+    svg.style.height   = `${printHeight.toFixed(2)}mm`;
+    svg.style.maxWidth = "100%";
+    svg.style.display  = "block";
+    svg.style.margin   = "0 auto";
   });
+
+  // 條列式樹狀也一起處理
+  const listInner = container.querySelector("#listTreeInner");
+  if (listInner) {
+    const rawW = listInner.scrollWidth || 1;
+    const rawH = listInner.scrollHeight || 1;
+    const fitScale  = Math.min(maxWidthMm / rawW, maxHeightMm / rawH, 1);
+    const autoScale = (state.printForceOnePage || state.printFitToPage)
+      ? fitScale
+      : Math.min(maxWidthMm / rawW, 1);
+    const finalScale = clampNumber(autoScale * manualScale, 0.3, 1.2);
+    listInner.style.transformOrigin = "top left";
+    listInner.style.transform = `scale(${finalScale.toFixed(4)})`;
+    listInner.style.width  = `${rawW}px`;
+    listInner.style.height = `${rawH}px`;
+  }
 }
 
 function bindEvents() {
