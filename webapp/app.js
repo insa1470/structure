@@ -3476,16 +3476,12 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       }
       return { primary, secondary, tertiary };
     });
-    // sort_index 設為極大值，確保 ELK 排在同層最右側
-    const siblingRows = (childrenByParent[parentId] || []).filter((r) => !collapsedChildIds.has(r.node_id));
-    const maxSiblingSort = siblingRows.reduce((m, r) => Math.max(m, Number(r.sort_index || 0)), 0);
     columnNodes.push({
       node_id: columnId,
       canonical_name: "下層公司清單",
       chart1_name: "下層公司清單",
       chart1_level: parentLevel + 1,
       chart1_parent: parentId,
-      sort_index: maxSiblingSort + 9999,
       role_label: `共 ${sortedLeaves.length} 家`,
       chart_note: "",
       node_status: "enriched",
@@ -3493,18 +3489,6 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       hybrid_items: itemRows,
       hybrid_count: sortedLeaves.length,
     });
-  });
-
-  // 同層清單框統一高度：取同層最高的那個
-  const columnHeightByLevel = {};
-  columnNodes.forEach((col) => {
-    const lv = col.chart1_level;
-    const itemCount = (col.hybrid_items || []).length;
-    const secondaryCount = (col.hybrid_items || []).filter((item) => typeof item === "object" && item?.secondary).length;
-    const tertiaryCount = (col.hybrid_items || []).filter((item) => typeof item === "object" && item?.tertiary).length;
-    const cappedCount = Math.min(itemCount, 22);
-    const h = Math.max(130, 72 + cappedCount * 22 + Math.min(secondaryCount, 22) * 17 + Math.min(tertiaryCount, 22) * 17);
-    columnHeightByLevel[lv] = Math.max(columnHeightByLevel[lv] || 0, h);
   });
 
   const visibleRows = [
@@ -3551,16 +3535,13 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
         const perItemH = 22;
         const perSecondaryH = 17;
         const perTertiaryH = 17;
-        const naturalH = Math.max(
+        const height = Math.max(
           130,
           72
             + cappedCount * perItemH
             + Math.min(secondaryCount, 22) * perSecondaryH
             + Math.min(tertiaryCount, 22) * perTertiaryH
         );
-        // 同層清單框統一高度
-        const lv = Number(r.chart1_level) || 0;
-        const height = columnHeightByLevel[lv] || naturalH;
         const width = Math.min(420, Math.max(250, profile.nodeW + 70));
         return { id: r.node_id, width, height, row: r };
       }
