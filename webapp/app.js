@@ -3491,9 +3491,10 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
     });
   });
 
-  // graphRows 不含清單框，給 ELK 用；visibleRows 含清單框，給 edges 用
-  const graphRows = validRows.filter((row) => !collapsedChildIds.has(row.node_id));
-  const visibleRows = [...graphRows, ...columnNodes];
+  const visibleRows = [
+    ...validRows.filter((row) => !collapsedChildIds.has(row.node_id)),
+    ...columnNodes,
+  ];
   const visibleIds = new Set(visibleRows.map((r) => r.node_id));
   const ids = visibleIds;
   const shareholderEdges = validRows
@@ -3513,7 +3514,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       ratio: r.external_link_share || "",
     }));
 
-  const elkGraph = {
+  return {
     id: graphId,
     layoutOptions: {
       "elk.algorithm": "layered",
@@ -3524,7 +3525,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
     },
-    children: graphRows.map((r) => {
+    children: visibleRows.map((r) => {
       const name = r.canonical_name || r.chart1_name || "—";
       if (r.is_hybrid_column) {
         const itemCount = (r.hybrid_items || []).length;
@@ -3576,7 +3577,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       return { id: r.node_id, width, height, row: r };
     }),
     edges: [
-      ...graphRows
+      ...visibleRows
       .filter((r) => r.chart1_parent && ids.has(r.chart1_parent))
       .map((r) => ({
         id: `edge_${r.chart1_parent}_${r.node_id}`,
@@ -3588,8 +3589,6 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       ...externalRelationEdges,
     ],
   };
-  elkGraph._columnNodes = columnNodes;
-  return elkGraph;
 }
 
 function rebalanceLayoutSymmetry(layout) {
@@ -4166,99 +4165,6 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
     return `<g transform="translate(${pad}, ${pad})">${frames.join("")}</g>`;
   })();
 
-  // ── 後置清單框：ELK 排版完後，依父節點位置手動定位 ──
-  const nodesById = {};
-  nodes.forEach((n) => { nodesById[n.id] = n; });
-
-  const hybridColumnSvg = (opts._columnNodes || []).map((col) => {
-    const parentNode = nodesById[col.chart1_parent];
-    if (!parentNode) return "";
-
-    const r = col;
-    const fontScale = Math.max(0.85, Math.min(1.2, Number(state.chartFontScale || 100) / 100));
-    const nameFont   = Math.max(10, profile.nameFont * fontScale);
-    const detailFont = Math.max(8.5, profile.detailFont * fontScale);
-    const parentLevel = Math.max(0, (Number(r.chart1_level) || 1) - 1);
-    const accentColor = LEVEL_COLORS[Math.min(parentLevel, LEVEL_COLORS.length - 1)];
-    const isMono   = state.chartStyle === "mono";
-    const headerBg = isMono ? "#334155" : accentColor;
-    const lineH    = state.chartDensity === "compact" ? 18 : state.chartDensity === "full" ? 20 : 19;
-    const subLineH = 15;
-    const itemLines  = (r.hybrid_items || []).slice(0, 22);
-    const extraCount = Math.max(0, (r.hybrid_items || []).length - itemLines.length);
-    const count = r.hybrid_count || itemLines.length;
-    const rowHeights = itemLines.map((item) => {
-      const hasSub = typeof item === "object" && item?.secondary;
-      const hasTer = typeof item === "object" && item?.tertiary;
-      return lineH + (hasSub ? subLineH : 0) + (hasTer ? subLineH : 0);
-    });
-    const totalItemH = rowHeights.reduce((a, b) => a + b, 0);
-    const HEADER_H = 44; const PAD_TOP = 10; const PAD_BOT = 12;
-    const frameH = HEADER_H + PAD_TOP + totalItemH + (extraCount > 0 ? lineH : 0) + PAD_BOT;
-    const frameW = Math.min(420, Math.max(250, profile.nodeW + 70));
-    const innerX = 14;
-    const innerW = frameW - innerX * 2;
-
-    // SVG 座標：節點實際位置是 node.x + pad, node.y + pad
-    // 清單框放在父節點正下方，水平置中
-    const GAP_Y = Math.round((profile.layerSpacing || 72) * 0.6);
-    const svgParentX = (parentNode.x || 0) + pad;
-    const svgParentY = (parentNode.y || 0) + pad;
-    const svgParentBottom = svgParentY + parentNode.height;
-    const colX = svgParentX + (parentNode.width - frameW) / 2;
-    const colY = svgParentBottom + GAP_Y;
-
-    // 連線從父節點底部中心到清單框頂部中心
-    const lx = svgParentX + parentNode.width / 2;
-    const midY = svgParentBottom + GAP_Y / 2;
-    const cx  = colX + frameW / 2;
-    const connSvg = `
-      <polyline points="${lx.toFixed(1)},${svgParentBottom.toFixed(1)} ${lx.toFixed(1)},${midY.toFixed(1)} ${cx.toFixed(1)},${midY.toFixed(1)} ${cx.toFixed(1)},${colY.toFixed(1)}"
-        fill="none" stroke="#f8fafc" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
-      <polyline points="${lx.toFixed(1)},${svgParentBottom.toFixed(1)} ${lx.toFixed(1)},${midY.toFixed(1)} ${cx.toFixed(1)},${midY.toFixed(1)} ${cx.toFixed(1)},${colY.toFixed(1)}"
-        fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#elkArrow)"/>`;
-
-    let cursorY = HEADER_H + PAD_TOP;
-    const itemsSvg = itemLines.map((item, idx) => {
-      const primaryText   = typeof item === "string" ? item : String(item?.primary   || "");
-      const secondaryText = typeof item === "string" ? "" :   String(item?.secondary || "");
-      const tertiaryText  = typeof item === "string" ? "" :   String(item?.tertiary  || "");
-      const maxNameW = Math.max(10, Math.floor(innerW / (detailFont * 0.65)));
-      const nameParts = [];
-      for (let i = 0; i < primaryText.length; i += maxNameW) nameParts.push(primaryText.slice(i, i + maxNameW));
-      const nameLinesSvg = nameParts.map((part, li) =>
-        `<tspan x="${innerX}" dy="${li === 0 ? 0 : 13}">${svgEscape(part)}</tspan>`
-      ).join("");
-      const y0 = cursorY;
-      cursorY += rowHeights[idx];
-      const zebra = idx % 2 === 1
-        ? `<rect x="0" y="${(y0-2).toFixed(1)}" width="${frameW}" height="${rowHeights[idx].toFixed(1)}" fill="rgba(0,0,0,0.025)"/>`
-        : "";
-      return `${zebra}
-        <text x="${innerX}" y="${y0.toFixed(1)}" fill="#1e293b" font-size="${detailFont}" font-weight="700" dominant-baseline="hanging">${nameLinesSvg}</text>
-        ${secondaryText ? `<text x="${innerX+8}" y="${(y0+lineH-2).toFixed(1)}" fill="#64748b" font-size="${Math.max(8,detailFont-1)}" font-weight="500" dominant-baseline="hanging">${svgEscape(secondaryText)}</text>` : ""}
-        ${tertiaryText ? `<text x="${innerX+8}" y="${(y0+lineH+subLineH-2).toFixed(1)}" fill="#94a3b8" font-size="${Math.max(7.5,detailFont-1.5)}" font-weight="500" dominant-baseline="hanging">${svgEscape(tertiaryText)}</text>` : ""}`;
-    }).join("");
-    const extraSvg = extraCount > 0
-      ? `<text x="${innerX}" y="${cursorY.toFixed(1)}" fill="#94a3b8" font-size="${Math.max(8.5,detailFont-0.5)}" font-weight="600" dominant-baseline="hanging">… 另 ${extraCount} 家</text>`
-      : "";
-
-    return `
-      ${connSvg}
-      <g class="elk-node elk-node-hybrid-column" transform="translate(${colX.toFixed(1)}, ${colY.toFixed(1)})">
-        <rect width="${frameW}" height="${frameH}" rx="6" fill="#ffffff" stroke="${headerBg}" stroke-width="1.8"/>
-        <clipPath id="hdr_clip_${svgEscape(String(r.node_id))}">
-          <rect width="${frameW}" height="${HEADER_H}" rx="6"/>
-        </clipPath>
-        <rect width="${frameW}" height="${HEADER_H}" fill="${headerBg}" clip-path="url(#hdr_clip_${svgEscape(String(r.node_id))})"/>
-        <text x="${frameW/2}" y="17" text-anchor="middle" dominant-baseline="middle" fill="#ffffff" font-size="${Math.max(11,nameFont-0.5)}" font-weight="800">下層子公司</text>
-        <text x="${frameW/2}" y="34" text-anchor="middle" dominant-baseline="middle" fill="rgba(255,255,255,0.82)" font-size="${Math.max(9,detailFont)}" font-weight="600">共 ${count} 家</text>
-        <line x1="0" y1="${HEADER_H}" x2="${frameW}" y2="${HEADER_H}" stroke="${headerBg}" stroke-width="0.8" stroke-opacity="0.35"/>
-        ${itemsSvg}
-        ${extraSvg}
-      </g>`;
-  }).join("");
-
   const nodeSvg = nodes.map((node) => {
     const r = node.row || {};
     const fontScale = Math.max(0.85, Math.min(1.2, Number(state.chartFontScale || 100) / 100));
@@ -4408,7 +4314,6 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       ${externalFrameSvg}
       ${edgeSvg}
       ${nodeSvg}
-      ${hybridColumnSvg}
       ${watermarkSvg}
     </svg>`;
 }
@@ -4736,7 +4641,7 @@ async function renderElkChart() {
         svgs.push(`
           <article class="elk-page">
             <div class="elk-page-title">${svgEscape(pageTitle)}</div>
-            ${renderElkSvg(layout, profile, { id: `elkChartSvg_${i + 1}`, _columnNodes: graph._columnNodes || [] })}
+            ${renderElkSvg(layout, profile, { id: `elkChartSvg_${i + 1}` })}
           </article>
         `);
       }
@@ -4759,7 +4664,7 @@ async function renderElkChart() {
     }
     const layout = rebalanceLayoutSymmetry(await elk.layout(graph));
     if (seq !== _elkRenderSeq) return;
-    elements.chartContainer.innerHTML = renderChartViewport(renderElkSvg(layout, profile, { _columnNodes: graph._columnNodes || [] }));
+    elements.chartContainer.innerHTML = renderChartViewport(renderElkSvg(layout, profile));
     bindChartViewport();
     bindExternalGroupDrag();
     if (state.externalLayoutNeedsFit) {
