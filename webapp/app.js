@@ -3523,7 +3523,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
     },
-    children: graphRows.map((r) => {
+    children: visibleRows.map((r) => {
       const name = r.canonical_name || r.chart1_name || "—";
       if (r.is_hybrid_column) {
         const itemCount = (r.hybrid_items || []).length;
@@ -3575,7 +3575,7 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
       return { id: r.node_id, width, height, row: r };
     }),
     edges: [
-      ...graphRows
+      ...visibleRows
       .filter((r) => r.chart1_parent && ids.has(r.chart1_parent))
       .map((r) => ({
         id: `edge_${r.chart1_parent}_${r.node_id}`,
@@ -4720,7 +4720,7 @@ async function renderElkChart() {
         svgs.push(`
           <article class="elk-page">
             <div class="elk-page-title">${svgEscape(pageTitle)}</div>
-            ${renderElkSvg(layout, profile, { id: `elkChartSvg_${i + 1}`, _columnNodes: graph._columnNodes || [] })}
+            ${renderElkSvg(layout, profile, { id: `elkChartSvg_${i + 1}`, _columnNodes: [] })}
           </article>
         `);
       }
@@ -4743,7 +4743,7 @@ async function renderElkChart() {
     }
     const layout = rebalanceLayoutSymmetry(await elk.layout(graph));
     if (seq !== _elkRenderSeq) return;
-    elements.chartContainer.innerHTML = renderChartViewport(renderElkSvg(layout, profile, { _columnNodes: graph._columnNodes || [] }));
+    elements.chartContainer.innerHTML = renderChartViewport(renderElkSvg(layout, profile, { _columnNodes: [] }));
     bindChartViewport();
     bindExternalGroupDrag();
     if (state.externalLayoutNeedsFit) {
