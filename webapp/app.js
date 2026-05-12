@@ -3558,11 +3558,12 @@ function buildElkGraph(rows, profile = getChartProfile(), graphId = "root") {
             + Math.min(secondaryCount, 22) * perSecondaryH
             + Math.min(tertiaryCount, 22) * perTertiaryH
         );
-        // 同層清單框統一高度
-        const lv = Number(r.chart1_level) || 0;
-        const height = columnHeightByLevel[lv] || naturalH;
         const width = Math.min(420, Math.max(250, profile.nodeW + 70));
-        return { id: r.node_id, width, height, row: r };
+        // 方向二：回報假高度給 ELK，讓清單框不影響同層節點間距
+        // 真實高度存在 row._realHeight，渲染時使用
+        r._realHeight = naturalH;
+        const elkHeight = Math.max(profile.nodeH, naturalH > profile.nodeH ? profile.nodeH * 1.1 : naturalH);
+        return { id: r.node_id, width, height: elkHeight, row: r };
       }
       const baseWidth = r.is_chart_shareholder ? Math.max(190, profile.nodeW - 34) : profile.nodeW;
       const level = Number(r.chart1_level) || 0;
@@ -4219,7 +4220,8 @@ function renderElkSvg(layout, profile = getChartProfile(), opts = {}) {
       const HEADER_H = 44;
       const PAD_TOP  = 10;
       const PAD_BOT  = 12;
-      const frameH   = HEADER_H + PAD_TOP + totalItemH + (extraCount > 0 ? lineH : 0) + PAD_BOT;
+      // 使用真實高度渲染，不受 ELK 假高度影響
+      const frameH   = r._realHeight || (HEADER_H + PAD_TOP + totalItemH + (extraCount > 0 ? lineH : 0) + PAD_BOT);
       const frameW   = node.width;
       const innerX   = 14;
       const innerW   = frameW - innerX * 2;
