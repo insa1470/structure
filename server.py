@@ -9,13 +9,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 
 from storage import delete_task as delete_task_record, ensure_storage_ready, list_ocr_tests, list_tasks, read_task, save_ocr_test, save_task, storage_health, task_upload_dir
+from meeting_exports import generate_meeting_html, generate_meeting_pptx
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "webapp"
+EXPORT_DIR = BASE_DIR / "outputs" / "meeting_exports"
 MAX_CHART1_MB = 3
 MAX_CHART1_LONG_EDGE = 9000
 MAX_CHART2_CHUNKS = 9
@@ -423,6 +425,37 @@ def get_task(task_id: str):
     if not task:
         return jsonify({"error": "task_not_found"}), 404
     return jsonify(task)
+
+
+@app.route("/api/tasks/<task_id>/meeting-html")
+def export_meeting_html(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    if not task.get("master_rows"):
+        return jsonify({"error": "empty_task", "message": "任務尚無可輸出的主表資料。"}), 400
+    filename = sanitize_filename(f"{task.get('name') or task_id}_股權架構會議頁.html")
+    output_path = EXPORT_DIR / task_id / filename
+    generate_meeting_html(task, output_path)
+    return send_file(output_path, mimetype="text/html; charset=utf-8", as_attachment=True, download_name=filename)
+
+
+@app.route("/api/tasks/<task_id>/meeting-pptx")
+def export_meeting_pptx(task_id: str):
+    task = read_task(task_id)
+    if not task:
+        return jsonify({"error": "task_not_found"}), 404
+    if not task.get("master_rows"):
+        return jsonify({"error": "empty_task", "message": "任務尚無可輸出的主表資料。"}), 400
+    filename = sanitize_filename(f"{task.get('name') or task_id}_股權架構會議版.pptx")
+    output_path = EXPORT_DIR / task_id / filename
+    generate_meeting_pptx(task, output_path)
+    return send_file(
+        output_path,
+        mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 @app.route("/api/tasks/<task_id>/save-draft", methods=["POST"])

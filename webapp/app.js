@@ -149,6 +149,8 @@ const elements = {
   chartLayoutBadge: document.getElementById("chartLayoutBadge"),
   chartAdvancedPanel: document.getElementById("chartAdvancedPanel"),
   chartLegend: document.getElementById("chartLegend"),
+  exportMeetingHtmlBtn: document.getElementById("exportMeetingHtmlBtn"),
+  exportMeetingPptBtn: document.getElementById("exportMeetingPptBtn"),
   exportPngBtn: document.getElementById("exportPngBtn"),
   exportHtmlBtn: document.getElementById("exportHtmlBtn"),
   printChartBtn: document.getElementById("printChartBtn"),
@@ -5192,6 +5194,15 @@ c.setOption(${option});window.addEventListener('resize',()=>c.resize());<\/scrip
   }
 }
 
+function exportMeetingArtifact(kind) {
+  if (!state.taskId) {
+    alert("請先開啟一個任務。");
+    return;
+  }
+  const endpoint = kind === "ppt" ? "meeting-pptx" : "meeting-html";
+  window.location.href = `${API_BASE}/api/tasks/${encodeURIComponent(state.taskId)}/${endpoint}`;
+}
+
 function openPrintSettings() {
   document.getElementById("printSettingsModal")?.remove();
   const modal = document.createElement("div");
@@ -5783,6 +5794,8 @@ function bindEvents() {
     confirmAllReviewRows().catch((err) => alert(`全部確認失敗：${err.message}`));
   });
   elements.exportBtn.addEventListener("click", exportWorkbook);
+  elements.exportMeetingHtmlBtn?.addEventListener("click", () => exportMeetingArtifact("html"));
+  elements.exportMeetingPptBtn?.addEventListener("click", () => exportMeetingArtifact("ppt"));
   elements.exportPngBtn.addEventListener("click", exportPNG);
   elements.exportHtmlBtn.addEventListener("click", exportHTML);
   elements.printChartBtn.addEventListener("click", openPrintSettings);
