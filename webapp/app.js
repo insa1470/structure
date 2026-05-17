@@ -149,10 +149,9 @@ const elements = {
   chartLayoutBadge: document.getElementById("chartLayoutBadge"),
   chartAdvancedPanel: document.getElementById("chartAdvancedPanel"),
   chartLegend: document.getElementById("chartLegend"),
-  exportMeetingHtmlBtn: document.getElementById("exportMeetingHtmlBtn"),
+  exportHtmlMenuBtn: document.getElementById("exportHtmlMenuBtn"),
   exportMeetingPptBtn: document.getElementById("exportMeetingPptBtn"),
   exportPngBtn: document.getElementById("exportPngBtn"),
-  exportHtmlBtn: document.getElementById("exportHtmlBtn"),
   printChartBtn: document.getElementById("printChartBtn"),
   toggleToolbarBtn: document.getElementById("toggleToolbarBtn"),
   openShareholderModalBtn: document.getElementById("openShareholderModalBtn"),
@@ -5037,7 +5036,7 @@ function renderChart() {
   document.getElementById("chart")?.classList.toggle("chart-style-color", state.chartStyle === "color");
 
   elements.exportPngBtn.style.display  = isList ? "none" : "";
-  elements.exportHtmlBtn.style.display = "";
+  elements.exportHtmlMenuBtn.style.display = "";
 
   if (isList) {
     if (_chart) { _chart.dispose(); _chart = null; }
@@ -5201,6 +5200,36 @@ function exportMeetingArtifact(kind) {
   }
   const endpoint = kind === "ppt" ? "meeting-pptx" : "meeting-html";
   window.location.href = `${API_BASE}/api/tasks/${encodeURIComponent(state.taskId)}/${endpoint}`;
+}
+
+function openHtmlExportMenu() {
+  document.getElementById("htmlExportModal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "htmlExportModal";
+  modal.className = "entity-modal-backdrop";
+  modal.innerHTML = `
+    <div class="entity-modal" role="dialog" aria-modal="true" aria-labelledby="htmlExportTitle">
+      <h3 id="htmlExportTitle">選擇 HTML 下載方式</h3>
+      <p class="muted">會議 HTML 適合正式閱讀、搜尋、篩選與列印；目前畫面適合保存你現在看到的圖面快照。</p>
+      <div class="modal-actions">
+        <button id="downloadMeetingHtmlChoice" class="primary-btn" type="button">下載會議 HTML</button>
+        <button id="downloadCurrentHtmlChoice" class="ghost-btn" type="button">下載目前畫面</button>
+        <button id="cancelHtmlExportChoice" class="ghost-btn" type="button">取消</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.querySelector("#downloadMeetingHtmlChoice")?.addEventListener("click", () => {
+    modal.remove();
+    exportMeetingArtifact("html");
+  });
+  modal.querySelector("#downloadCurrentHtmlChoice")?.addEventListener("click", () => {
+    modal.remove();
+    exportHTML();
+  });
+  modal.querySelector("#cancelHtmlExportChoice")?.addEventListener("click", () => modal.remove());
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) modal.remove();
+  });
 }
 
 function openPrintSettings() {
@@ -5794,10 +5823,9 @@ function bindEvents() {
     confirmAllReviewRows().catch((err) => alert(`全部確認失敗：${err.message}`));
   });
   elements.exportBtn.addEventListener("click", exportWorkbook);
-  elements.exportMeetingHtmlBtn?.addEventListener("click", () => exportMeetingArtifact("html"));
+  elements.exportHtmlMenuBtn?.addEventListener("click", openHtmlExportMenu);
   elements.exportMeetingPptBtn?.addEventListener("click", () => exportMeetingArtifact("ppt"));
   elements.exportPngBtn.addEventListener("click", exportPNG);
-  elements.exportHtmlBtn.addEventListener("click", exportHTML);
   elements.printChartBtn.addEventListener("click", openPrintSettings);
 }
 
