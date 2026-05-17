@@ -4454,8 +4454,14 @@ function fitChartToViewport() {
   const svg = document.querySelector(".elk-svg");
   if (!shell || !svg) return;
   const width = Number(svg.getAttribute("width")) || svg.viewBox?.baseVal?.width || svg.scrollWidth || 1;
-  const available = Math.max(shell.clientWidth - 48, 320);
-  resetChartViewport(Math.min(1.25, available / width));
+  const height = Number(svg.getAttribute("height")) || svg.viewBox?.baseVal?.height || svg.scrollHeight || 1;
+  const availableWidth = Math.max(shell.clientWidth - 48, 320);
+  const availableHeight = Math.max(shell.clientHeight - 48, 280);
+  const scale = Math.min(1.25, availableWidth / width, availableHeight / height);
+  state.chartScale = clampNumber(scale, CHART_ZOOM_MIN, CHART_ZOOM_MAX);
+  state.chartPanX = Math.max((shell.clientWidth - width * state.chartScale) / 2, 0);
+  state.chartPanY = Math.max((shell.clientHeight - height * state.chartScale) / 2, 0);
+  applyChartViewport();
 }
 
 function bindChartViewport() {

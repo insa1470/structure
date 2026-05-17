@@ -511,7 +511,15 @@ textarea {
 }
 
 .main.chart-mode {
-  padding-top: 14px;
+  height: 100vh;
+  overflow: hidden;
+  padding: 14px 18px;
+}
+
+.main.chart-mode #chart.active {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 28px);
 }
 
 .main.chart-mode .topbar {
@@ -2585,8 +2593,9 @@ tr:hover .row-del-btn {
 }
 
 .main.chart-mode .chart-container {
-  height: calc(100vh - 170px);
-  min-height: 620px;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
 }
 
 .chart-container-elk {
