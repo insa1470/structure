@@ -39,7 +39,7 @@ body {{
   color: #172033;
   font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", Arial, sans-serif;
 }}
-.meeting-page {{ max-width: 1440px; margin: 0 auto; padding: 24px; }}
+.meeting-page {{ max-width: 1500px; margin: 0 auto; padding: 24px; }}
 .topbar {{ display: flex; justify-content: space-between; gap: 16px; align-items: baseline; margin-bottom: 14px; }}
 h1 {{ font-size: 28px; margin: 0; letter-spacing: 0; }}
 .meta {{ color: #64748b; font-size: 13px; white-space: nowrap; }}
@@ -79,12 +79,63 @@ h1 {{ font-size: 28px; margin: 0; letter-spacing: 0; }}
   cursor: pointer;
 }}
 .toolbar button:hover {{ border-color: #64748b; }}
-.grid {{ display: grid; grid-template-columns: minmax(680px, 1.35fr) minmax(360px, .75fr); gap: 16px; align-items: start; }}
 .panel {{ background: #fff; border: 1px solid #d8e0ea; border-radius: 6px; padding: 14px; }}
 .panel h2 {{ margin: 0 0 10px; font-size: 15px; }}
-.chart-panel {{ overflow: auto; }}
-.hierarchy-panel {{ margin-top: 16px; }}
-.hierarchy {{ font-size: 14px; line-height: 1.85; overflow-x: auto; padding-bottom: 8px; }}
+.meeting-stage {{ position: relative; min-height: calc(100vh - 146px); }}
+.chart-panel {{
+  min-height: calc(100vh - 170px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}}
+.chart-shell {{
+  flex: 1;
+  min-height: 560px;
+  display: grid;
+  place-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px;
+}}
+.chart-panel svg {{ width: min(100%, 1380px); height: auto; }}
+.chart-panel svg [data-node-id].is-selected rect {{ stroke: #f59e0b; stroke-width: 4; }}
+.detail-drawer {{
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 30;
+  width: clamp(320px, 28vw, 420px);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, .98);
+  border-left: 1px solid #cbd5e1;
+  box-shadow: -18px 0 36px rgba(15, 23, 42, .16);
+  transform: translateX(100%);
+  transition: transform 180ms ease;
+}}
+body.drawer-open .detail-drawer {{ transform: translateX(0); }}
+.drawer-head {{
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}}
+.drawer-head h2 {{ margin: 0; font-size: 16px; }}
+.drawer-close {{
+  width: 34px;
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}}
+.drawer-body {{ overflow: auto; padding: 12px 10px 18px; }}
+.hierarchy {{ font-size: 13px; line-height: 1.78; overflow-x: auto; padding-bottom: 8px; }}
 .h-row {{
   display: flex;
   align-items: baseline;
@@ -93,10 +144,13 @@ h1 {{ font-size: 28px; margin: 0; letter-spacing: 0; }}
   padding: 3px 8px;
   border-radius: 4px;
   white-space: nowrap;
+  cursor: pointer;
 }}
 .h-row:nth-child(even) {{ background: #f8fafc; }}
+.h-row:hover {{ background: #eaf2ff; }}
 .h-row.is-hidden {{ display: none; }}
 .h-row.is-match {{ background: #fff7d6; outline: 1px solid #f5c542; }}
+.h-row.is-selected {{ background: #ffedd5; outline: 2px solid #f59e0b; }}
 .h-prefix {{ color: #94a3b8; font-family: "Courier New", Courier, monospace; white-space: pre; }}
 .h-name {{ font-weight: 800; }}
 .h-warn {{ color: #d97706; font-size: 12px; font-weight: 800; }}
@@ -112,8 +166,7 @@ tr.is-match {{ background: #fff7d6; }}
 @media print {{
   body {{ background: #fff; }}
   .meeting-page {{ max-width: none; padding: 0; }}
-  .toolbar {{ display: none; }}
-  .grid {{ grid-template-columns: 1fr; }}
+  .toolbar, .detail-drawer {{ display: none; }}
   .panel {{ break-inside: avoid; }}
   .hierarchy {{ font-size: 11px; line-height: 1.6; overflow: visible; }}
   .h-row.is-hidden, tr.is-hidden {{ display: flex; }}
@@ -137,25 +190,27 @@ tr.is-match {{ background: #fff7d6; }}
     </select>
     <button type="button" data-depth="2">只看前兩層</button>
     <button type="button" data-depth="all">展開全部</button>
+    <button type="button" id="toggleDrawerBtn">清單</button>
     <button type="button" id="printBtn">列印 / 存 PDF</button>
     <span class="status-line" id="resultCount">{len(rows)} 筆資料</span>
   </section>
-  <section class="grid">
+  <section class="meeting-stage" aria-label="股權架構簡報舞台">
     <article class="panel chart-panel">
       <h2>股權總覽</h2>
-      {overview_svg}
-      <p class="print-note">圖上只保留公司名稱與持股；完整底稿請見下方結果主表。</p>
-    </article>
-    <article class="panel">
-      <h2>使用方式</h2>
-      <p class="print-note">這份 HTML 是可互動會議頁：可搜尋、高亮、篩選層級，也可直接列印或另存 PDF。資料來源為網站結果主表。</p>
-      <p class="print-note">PPT 適合最後人工微調；HTML 適合正式閱讀、核對與列印。</p>
+      <div class="chart-shell">{overview_svg}</div>
+      <p class="print-note">主圖保留公司名稱與持股，條列層級可由右上「清單」開啟，不會壓縮股權圖。</p>
     </article>
   </section>
-  <section class="panel hierarchy-panel">
-    <h2>條列層級</h2>
-    <div class="hierarchy" id="hierarchyList">{hierarchy_rows}</div>
-  </section>
+  <aside class="detail-drawer" id="detailDrawer" aria-label="條列層級清單">
+    <div class="drawer-head">
+      <h2>條列層級</h2>
+      <button class="drawer-close" type="button" id="closeDrawerBtn" aria-label="關閉清單">×</button>
+    </div>
+    <div class="drawer-body">
+      <div class="hierarchy" id="hierarchyList">{hierarchy_rows}</div>
+      <p class="print-note">點選公司可高亮主圖節點；搜尋與層級篩選會同步更新本清單。</p>
+    </div>
+  </aside>
   <section class="panel full-table">
     <h2>結果主表摘要</h2>
     <table id="resultTable">
@@ -169,9 +224,12 @@ tr.is-match {{ background: #fff7d6; }}
   const searchBox = document.getElementById("searchBox");
   const levelFilter = document.getElementById("levelFilter");
   const resultCount = document.getElementById("resultCount");
+  const toggleDrawerBtn = document.getElementById("toggleDrawerBtn");
+  const closeDrawerBtn = document.getElementById("closeDrawerBtn");
   const hierarchyRows = Array.from(document.querySelectorAll(".h-row"));
   const tableRows = Array.from(document.querySelectorAll("#resultTable tbody tr"));
   let maxDepth = null;
+  let selectedNodeId = "";
 
   function normalize(value) {{
     return String(value || "")
@@ -221,8 +279,26 @@ tr.is-match {{ background: #fff7d6; }}
     resultCount.textContent = visible + " 筆顯示中";
   }}
 
+  function setDrawer(open) {{
+    document.body.classList.toggle("drawer-open", open);
+    toggleDrawerBtn.textContent = open ? "收合清單" : "清單";
+  }}
+
+  function selectNode(nodeId) {{
+    selectedNodeId = nodeId || "";
+    hierarchyRows.forEach((row) => row.classList.toggle("is-selected", row.dataset.nodeId === selectedNodeId));
+    document.querySelectorAll("svg [data-node-id]").forEach((node) => {{
+      node.classList.toggle("is-selected", node.dataset.nodeId === selectedNodeId);
+    }});
+  }}
+
   searchBox.addEventListener("input", applyFilters);
   levelFilter.addEventListener("change", applyFilters);
+  toggleDrawerBtn.addEventListener("click", () => setDrawer(!document.body.classList.contains("drawer-open")));
+  closeDrawerBtn.addEventListener("click", () => setDrawer(false));
+  hierarchyRows.forEach((row) => {{
+    row.addEventListener("click", () => selectNode(row.dataset.nodeId));
+  }});
   document.querySelectorAll("[data-depth]").forEach((button) => {{
     button.addEventListener("click", () => {{
       maxDepth = button.dataset.depth === "all" ? null : Number(button.dataset.depth);
@@ -230,6 +306,7 @@ tr.is-match {{ background: #fff7d6; }}
     }});
   }});
   document.getElementById("printBtn").addEventListener("click", () => window.print());
+  setDrawer(false);
   applyFilters();
 }})();
 </script>
@@ -342,9 +419,9 @@ def _build_overview_svg(title: str, rows: list[dict]) -> str:
     if not root:
         parts.append('<text x="610" y="280" text-anchor="middle" class="t">沒有可顯示的公司資料</text></svg>')
         return "".join(parts)
-    parts.append(_svg_node("root", root["canonical_name"], 475, 28, 270, 48, root=True))
+    parts.append(_svg_node(root["node_id"], root["canonical_name"], 475, 28, 270, 48, root=True))
     if main and main is not root:
-        parts.append(_svg_node("main", main["canonical_name"], 475, 112, 270, 54))
+        parts.append(_svg_node(main["node_id"], main["canonical_name"], 475, 112, 270, 54))
         parts.append(_svg_line(610, 76, 610, 112))
     top_y = 252
     xs = [48, 276, 504, 732, 960]
@@ -401,7 +478,7 @@ def _html_hierarchy_row(row: dict, depth: int) -> str:
     warn_html = '<span class="h-warn">⚠ 待確認</span>' if uncertain else ""
     attrs_html = f'<span class="h-attrs">{attrs}</span>' if attrs else ""
     return (
-        f'<div class="h-row" data-level="{depth}" data-search="{search}">'
+        f'<div class="h-row" data-level="{depth}" data-node-id="{html.escape(row["node_id"], quote=True)}" data-search="{search}">'
         f'<span class="h-prefix">{prefix}</span>'
         f'<span class="h-name" style="color:{color}">{html.escape(row["canonical_name"])}</span>'
         f"{warn_html}"
@@ -414,7 +491,7 @@ def _html_table_row(row: dict) -> str:
     level = _safe_int(row.get("chart1_level"), 0)
     search = html.escape(" ".join([row["canonical_name"], _row_attrs(row), row.get("node_status") or ""]), quote=True)
     return (
-        f'<tr data-level="{level}" data-search="{search}">'
+        f'<tr data-level="{level}" data-node-id="{html.escape(row["node_id"], quote=True)}" data-search="{search}">'
         f"<td>L{level}</td>"
         f"<td>{html.escape(row['canonical_name'])}</td>"
         f"<td>{html.escape(row.get('chart1_parent') or '')}</td>"
