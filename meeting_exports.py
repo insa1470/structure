@@ -18,7 +18,6 @@ def generate_meeting_html(task: dict, output_path: str | Path) -> dict:
     title = _title(task)
     overview_svg = _build_overview_svg(title, rows)
     hierarchy = _ordered_rows(rows)
-    table_rows = "\n".join(_html_table_row(row) for row, _depth in hierarchy)
     hierarchy_rows = "\n".join(_html_hierarchy_row(row, depth) for row, depth in hierarchy)
     max_depth = max((depth for _row, depth in hierarchy), default=0)
     output = Path(output_path)
@@ -156,22 +155,33 @@ body.drawer-open .detail-drawer {{ transform: translateX(0); }}
 .h-warn {{ color: #d97706; font-size: 12px; font-weight: 800; }}
 .h-attrs {{ color: #475569; font-size: 12px; }}
 .status-line {{ color: #64748b; font-size: 12px; margin: 8px 0 0; }}
-table {{ width: 100%; border-collapse: collapse; font-size: 11px; }}
-th, td {{ border-bottom: 1px solid #e8edf3; padding: 6px 8px; text-align: left; vertical-align: top; }}
-th {{ background: #f8fafc; color: #475569; font-weight: 700; }}
-.full-table {{ margin-top: 16px; max-height: 520px; overflow: auto; }}
-tr.is-hidden {{ display: none; }}
-tr.is-match {{ background: #fff7d6; }}
 .print-note {{ margin-top: 10px; color: #64748b; font-size: 12px; }}
+.print-hierarchy-page {{ display: none; }}
 @media print {{
   body {{ background: #fff; }}
   .meeting-page {{ max-width: none; padding: 0; }}
   .toolbar, .detail-drawer {{ display: none; }}
+  .topbar {{ margin-bottom: 7mm; }}
+  h1 {{ font-size: 18px; }}
+  .meta {{ font-size: 10px; }}
   .panel {{ break-inside: avoid; }}
-  .hierarchy {{ font-size: 11px; line-height: 1.6; overflow: visible; }}
-  .h-row.is-hidden, tr.is-hidden {{ display: flex; }}
-  tr.is-hidden {{ display: table-row; }}
-  .full-table {{ break-before: page; }}
+  .chart-panel {{ min-height: auto; }}
+  .chart-shell {{ min-height: 150mm; padding: 4mm; }}
+  .chart-panel svg {{ width: 100%; max-height: 150mm; }}
+  .print-hierarchy-page {{
+    display: block;
+    break-before: page;
+    page-break-before: always;
+    padding-top: 2mm;
+  }}
+  .print-hierarchy-title {{
+    margin: 0 0 6mm;
+    font-size: 16px;
+    font-weight: 800;
+  }}
+  .print-hierarchy-page .hierarchy {{ font-size: 10.5px; line-height: 1.55; overflow: visible; }}
+  .print-hierarchy-page .h-row {{ padding: 1.4px 4px; break-inside: avoid; }}
+  .print-hierarchy-page .h-row.is-hidden {{ display: flex; }}
   .print-note {{ display: none; }}
 }}
 </style>
@@ -211,12 +221,9 @@ tr.is-match {{ background: #fff7d6; }}
       <p class="print-note">點選公司可高亮主圖節點；搜尋與層級篩選會同步更新本清單。</p>
     </div>
   </aside>
-  <section class="panel full-table">
-    <h2>結果主表摘要</h2>
-    <table id="resultTable">
-      <thead><tr><th>層級</th><th>公司名稱</th><th>父層</th><th>持股</th><th>狀態</th></tr></thead>
-      <tbody>{table_rows}</tbody>
-    </table>
+  <section class="print-hierarchy-page" aria-label="列印用條列層級">
+    <h2 class="print-hierarchy-title">條列層級</h2>
+    <div class="hierarchy">{hierarchy_rows}</div>
   </section>
 </main>
 <script>
@@ -226,8 +233,7 @@ tr.is-match {{ background: #fff7d6; }}
   const resultCount = document.getElementById("resultCount");
   const toggleDrawerBtn = document.getElementById("toggleDrawerBtn");
   const closeDrawerBtn = document.getElementById("closeDrawerBtn");
-  const hierarchyRows = Array.from(document.querySelectorAll(".h-row"));
-  const tableRows = Array.from(document.querySelectorAll("#resultTable tbody tr"));
+  const hierarchyRows = Array.from(document.querySelectorAll("#hierarchyList .h-row"));
   let maxDepth = null;
   let selectedNodeId = "";
 
@@ -265,16 +271,6 @@ tr.is-match {{ background: #fff7d6; }}
       row.classList.toggle("is-hidden", !show);
       row.classList.toggle("is-match", Boolean(q && matchQuery));
       if (show) visible += 1;
-    }});
-    tableRows.forEach((row) => {{
-      const rowLevel = Number(row.dataset.level || 0);
-      const text = normalize(row.dataset.search || row.textContent);
-      const matchQuery = !q || text.includes(q);
-      const matchLevel = level === "all" || String(rowLevel) === level;
-      const matchDepth = maxDepth === null || rowLevel <= maxDepth;
-      const show = matchQuery && matchLevel && matchDepth;
-      row.classList.toggle("is-hidden", !show);
-      row.classList.toggle("is-match", Boolean(q && matchQuery));
     }});
     resultCount.textContent = visible + " 筆顯示中";
   }}
@@ -484,20 +480,6 @@ def _html_hierarchy_row(row: dict, depth: int) -> str:
         f"{warn_html}"
         f"{attrs_html}"
         "</div>"
-    )
-
-
-def _html_table_row(row: dict) -> str:
-    level = _safe_int(row.get("chart1_level"), 0)
-    search = html.escape(" ".join([row["canonical_name"], _row_attrs(row), row.get("node_status") or ""]), quote=True)
-    return (
-        f'<tr data-level="{level}" data-node-id="{html.escape(row["node_id"], quote=True)}" data-search="{search}">'
-        f"<td>L{level}</td>"
-        f"<td>{html.escape(row['canonical_name'])}</td>"
-        f"<td>{html.escape(row.get('chart1_parent') or '')}</td>"
-        f"<td>{html.escape(row.get('actual_controller_share') or '')}</td>"
-        f"<td>{html.escape(row.get('node_status') or '')}</td>"
-        "</tr>"
     )
 
 
