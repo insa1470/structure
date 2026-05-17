@@ -360,6 +360,11 @@ def _children_by_parent(rows: list[dict]) -> dict[str, list[dict]]:
     return children
 
 
+def _max_children_per_parent(rows: list[dict]) -> int:
+    children = _children_by_parent(rows)
+    return max((len(items) for parent, items in children.items() if parent), default=0)
+
+
 def _root(rows: list[dict]) -> dict | None:
     by_id = {row["node_id"]: row for row in rows}
     return next((row for row in rows if not row.get("chart1_parent") or row.get("chart1_parent") not in by_id), rows[0] if rows else None)
@@ -403,57 +408,80 @@ def _overview_model(rows: list[dict]) -> dict:
     }
 
 
+def _use_detailed_first_page(rows: list[dict]) -> bool:
+    if not rows:
+        return False
+    ordered = _ordered_rows(rows)
+    max_depth = max((depth for _row, depth in ordered), default=0)
+    max_children = _max_children_per_parent(rows)
+    return len(rows) <= 8 or (len(rows) <= 12 and max_depth <= 2 and max_children <= 5)
+
+
 def _build_overview_svg(title: str, rows: list[dict]) -> str:
     model = _overview_model(rows)
     root, main, visible, overflow, children = model["root"], model["main"], model["visible"], model["overflow"], model["children"]
+    detailed = _use_detailed_first_page(rows)
     w, h = 1220, 560
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="{html.escape(title)} 股權總覽">',
-        "<style>.n rect{fill:#fff;stroke:#172033;stroke-width:1.4}.root rect{fill:#e9edf8}.g rect{fill:#eaf2fb;stroke:#2f5f98;stroke-width:1.3}.e{stroke:#6b7c93;stroke-width:1.2}.t{font:600 13px sans-serif;fill:#172033}.s{font:500 11px sans-serif;fill:#172033}.gt{font:700 14px sans-serif;fill:#172033}</style>",
+        "<style>.n rect{fill:#fff;stroke:#172033;stroke-width:1.4}.root rect{fill:#e9edf8}.g rect{fill:#eaf2fb;stroke:#2f5f98;stroke-width:1.3}.e{stroke:#6b7c93;stroke-width:1.2}.t{font:600 13px sans-serif;fill:#172033}.td{font:500 10.5px sans-serif;fill:#475569}.s{font:500 11px sans-serif;fill:#172033}.gt{font:700 14px sans-serif;fill:#172033}</style>",
         '<rect x="1" y="1" width="1218" height="558" fill="#f8fafc" stroke="#d6dee8"/>',
     ]
     if not root:
         parts.append('<text x="610" y="280" text-anchor="middle" class="t">沒有可顯示的公司資料</text></svg>')
         return "".join(parts)
-    parts.append(_svg_node(root["node_id"], root["canonical_name"], 475, 28, 270, 48, root=True))
+    parts.append(_svg_node(root["node_id"], _node_label(root, detailed=detailed, include_share=False), 455, 26, 310, 58 if detailed else 48, root=True, detailed=detailed))
     if main and main is not root:
-        parts.append(_svg_node(main["node_id"], main["canonical_name"], 475, 112, 270, 54))
-        parts.append(_svg_line(610, 76, 610, 112))
-    top_y = 252
+        main_h = 72 if detailed else 54
+        main_y = 108 if detailed else 112
+        parts.append(_svg_node(main["node_id"], _node_label(main, detailed=detailed, include_share=False), 455, main_y, 310, main_h, detailed=detailed))
+        parts.append(_svg_line(610, 84 if detailed else 76, 610, main_y))
+    top_y = 260 if detailed else 252
+    node_h = 86 if detailed else 58
     xs = [48, 276, 504, 732, 960]
     if visible:
-        parts.append(_svg_line(610, 166, 610, 218))
-        parts.append(_svg_line(xs[0] + 95, 218, xs[len(visible) - 1] + 95, 218))
+        bus_y = 228 if detailed else 218
+        parts.append(_svg_line(610, 180 if detailed else 166, 610, bus_y))
+        parts.append(_svg_line(xs[0] + 95, bus_y, xs[len(visible) - 1] + 95, bus_y))
     for idx, row in enumerate(visible):
         x = xs[idx]
-        parts.append(_svg_line(x + 95, 218, x + 95, top_y))
-        parts.append(_svg_node(row["node_id"], _node_label(row), x, top_y, 190, 58))
+        bus_y = 228 if detailed else 218
+        parts.append(_svg_line(x + 95, bus_y, x + 95, top_y))
+        parts.append(_svg_node(row["node_id"], _node_label(row, detailed=detailed), x, top_y, 190, node_h, detailed=detailed))
         kids = children.get(row["node_id"], [])
         if kids:
-            parts.append(_svg_line(x + 95, top_y + 58, x + 95, 342))
-            parts.append(_svg_group(f"清單柱｜{len(kids)} 家", kids, x - 8, 354, 206, 160, max_items=5))
+            group_y = 376 if detailed else 354
+            parts.append(_svg_line(x + 95, top_y + node_h, x + 95, group_y - 12))
+            parts.append(_svg_group(f"清單柱｜{len(kids)} 家", kids, x - 8, group_y, 206, 150 if detailed else 160, max_items=4 if detailed else 5, detailed=detailed))
     if overflow:
-        parts.append(_svg_line(xs[-1] + 95, 218, xs[-1] + 95, 374))
-        parts.append(_svg_group(f"其他一級子公司｜{len(overflow)} 家", overflow, 928, 384, 238, 150, max_items=5))
+        bus_y = 228 if detailed else 218
+        parts.append(_svg_line(xs[-1] + 95, bus_y, xs[-1] + 95, 374))
+        parts.append(_svg_group(f"其他一級子公司｜{len(overflow)} 家", overflow, 928, 384, 238, 150, max_items=5, detailed=detailed))
     parts.append("</svg>")
     return "".join(parts)
 
 
-def _svg_node(node_id: str, text: str, x: int, y: int, w: int, h: int, root: bool = False) -> str:
-    lines = _split_label(text, 14)
+def _svg_node(node_id: str, text: str, x: int, y: int, w: int, h: int, root: bool = False, detailed: bool = False) -> str:
+    lines = _split_label(text, 18 if detailed else 14, max_lines=4 if detailed else 3, split_long=not detailed)
     cls = "n root" if root else "n"
-    ty = y + h / 2 - (len(lines) - 1) * 7
-    text_xml = "".join(f'<text x="{x + w / 2}" y="{ty + i * 16}" text-anchor="middle" dominant-baseline="middle" class="t">{html.escape(line)}</text>' for i, line in enumerate(lines))
+    line_gap = 14 if detailed else 16
+    ty = y + h / 2 - (len(lines) - 1) * line_gap / 2
+    text_xml = "".join(
+        f'<text x="{x + w / 2}" y="{ty + i * line_gap}" text-anchor="middle" dominant-baseline="middle" class="{"t" if i == 0 else "td"}">{html.escape(line)}</text>'
+        for i, line in enumerate(lines)
+    )
     return f'<g class="{cls}" data-node-id="{html.escape(node_id)}"><rect x="{x}" y="{y}" width="{w}" height="{h}" rx="2"/>{text_xml}</g>'
 
 
-def _svg_group(title: str, rows: list[dict], x: int, y: int, w: int, h: int, max_items: int = 5) -> str:
+def _svg_group(title: str, rows: list[dict], x: int, y: int, w: int, h: int, max_items: int = 5, detailed: bool = False) -> str:
     items = rows[:max_items]
     lines = [f'<g class="g"><rect x="{x}" y="{y}" width="{w}" height="{h}" rx="2"/><text x="{x + 12}" y="{y + 24}" class="gt">{html.escape(title)}</text>']
     for idx, row in enumerate(items):
         label = f"{idx + 1}. {_truncate(row['canonical_name'], 13)}"
         if row.get("actual_controller_share"):
             label += f" {row['actual_controller_share']}"
+        if detailed and _row_attrs(row):
+            label += f"｜{_truncate(_row_attrs(row), 18)}"
         lines.append(f'<text x="{x + 14}" y="{y + 50 + idx * 18}" class="s">{html.escape(label)}</text>')
     if len(rows) > len(items):
         lines.append(f'<text x="{x + 14}" y="{y + 50 + len(items) * 18}" class="s">另有 {len(rows) - len(items)} 家未列示</text>')
@@ -483,21 +511,41 @@ def _html_hierarchy_row(row: dict, depth: int) -> str:
     )
 
 
-def _node_label(row: dict) -> str:
+def _node_label(row: dict, detailed: bool = False, include_share: bool = True) -> str:
     share = row.get("actual_controller_share") or ""
-    return f"{row['canonical_name']}\n持股：{share}" if share else row["canonical_name"]
+    if not detailed:
+        return f"{row['canonical_name']}\n持股：{share}" if share and include_share else row["canonical_name"]
+    detail_lines = []
+    if share and include_share:
+        detail_lines.append(f"持股：{share}")
+    if row.get("legal_representative"):
+        detail_lines.append(f"法代：{row['legal_representative']}")
+    if row.get("registered_capital"):
+        detail_lines.append(f"資本：{row['registered_capital']}")
+    if row.get("established_date"):
+        detail_lines.append(f"成立：{row['established_date']}")
+    if row.get("role_label"):
+        detail_lines.append(f"定位：{row['role_label']}")
+    if row.get("node_status") != "enriched":
+        detail_lines.append("待確認")
+    compact = []
+    for idx in range(0, len(detail_lines), 2):
+        compact.append("｜".join(detail_lines[idx : idx + 2]))
+    return "\n".join([row["canonical_name"], *compact[:3]])
 
 
-def _split_label(text: str, width: int) -> list[str]:
+def _split_label(text: str, width: int, max_lines: int = 3, split_long: bool = True) -> list[str]:
     chunks = []
     for raw in str(text).split("\n"):
         raw = raw.strip()
         if len(raw) <= width:
             chunks.append(raw)
+        elif not split_long:
+            chunks.append(raw[: width - 1] + "…")
         else:
             chunks.append(raw[:width])
             chunks.append(raw[width : width * 2] + ("…" if len(raw) > width * 2 else ""))
-    return chunks[:3]
+    return chunks[:max_lines]
 
 
 def _truncate(text: str, width: int) -> str:
@@ -507,32 +555,37 @@ def _truncate(text: str, width: int) -> str:
 def _ppt_overview_slide(title: str, rows: list[dict]) -> str:
     model = _overview_model(rows)
     root, main, visible, overflow, children = model["root"], model["main"], model["visible"], model["overflow"], model["children"]
+    detailed = _use_detailed_first_page(rows)
     shapes = [_ppt_text(title + "｜股權架構會議圖", 0.35, 0.24, 8.8, 0.35, 18, bold=True), _ppt_text("可編輯 PPT：公司框、線條、清單柱與文字皆為原生物件。", 0.36, 0.62, 10.8, 0.22, 8.5, color="667085"), _ppt_rect(0.34, 0.92, 12.65, 5.92, fill="F7FAFC", line="D6DEE8")]
     if not root:
         shapes.append(_ppt_text("沒有可顯示的公司資料", 5.0, 3.4, 3.0, 0.3, 12))
         return "".join(shapes)
-    shapes.append(_ppt_node(root["canonical_name"], 5.15, 1.05, 2.75, 0.42, fill="E9EDF8", bold=True))
+    shapes.append(_ppt_node(_node_label(root, detailed=detailed, include_share=False), 5.0, 1.02, 3.05, 0.56 if detailed else 0.42, fill="E9EDF8", bold=True, font_size=6.5 if detailed else 8.2))
     if main and main is not root:
-        shapes.append(_ppt_node(main["canonical_name"], 5.15, 1.78, 2.75, 0.48, bold=True))
-        shapes.append(_ppt_line(6.525, 1.47, 6.525, 1.78))
+        main_y = 1.72 if detailed else 1.78
+        main_h = 0.72 if detailed else 0.48
+        shapes.append(_ppt_node(_node_label(main, detailed=detailed, include_share=False), 5.0, main_y, 3.05, main_h, bold=True, font_size=6.3 if detailed else 8.2))
+        shapes.append(_ppt_line(6.525, 1.58 if detailed else 1.47, 6.525, main_y))
     xs = [0.65, 3.05, 5.45, 7.85, 10.25]
     box_w = 2.05
-    top_y = 3.0
-    bus_y = 2.63
+    top_y = 3.08 if detailed else 3.0
+    node_h = 0.86 if detailed else 0.56
+    bus_y = 2.7 if detailed else 2.63
     if visible:
-        shapes.append(_ppt_line(6.525, 2.26, 6.525, bus_y))
+        shapes.append(_ppt_line(6.525, 2.44 if detailed else 2.26, 6.525, bus_y))
         shapes.append(_ppt_line(xs[0] + box_w / 2, bus_y, xs[len(visible) - 1] + box_w / 2, bus_y))
     for idx, row in enumerate(visible):
         x = xs[idx]
         shapes.append(_ppt_line(x + box_w / 2, bus_y, x + box_w / 2, top_y))
-        shapes.append(_ppt_node(_node_label(row), x, top_y, box_w, 0.56, font_size=6.8))
+        shapes.append(_ppt_node(_node_label(row, detailed=detailed), x, top_y, box_w, node_h, font_size=5.45 if detailed else 6.8))
         kids = children.get(row["node_id"], [])
         if kids:
-            shapes.append(_ppt_line(x + box_w / 2, top_y + 0.56, x + box_w / 2, 3.83))
-            shapes.append(_ppt_group_box(f"清單柱｜{len(kids)} 家", kids, x - 0.1, 3.88, 2.25, 1.36))
+            group_y = 4.14 if detailed else 3.88
+            shapes.append(_ppt_line(x + box_w / 2, top_y + node_h, x + box_w / 2, group_y - 0.05))
+            shapes.append(_ppt_group_box(f"清單柱｜{len(kids)} 家", kids, x - 0.1, group_y, 2.25, 1.18 if detailed else 1.36, max_items=4 if detailed else 6, detailed=detailed))
     if overflow:
         shapes.append(_ppt_line(11.32, bus_y, 11.32, 5.22))
-        shapes.append(_ppt_group_box(f"其他一級子公司｜{len(overflow)} 家", overflow, 9.95, 5.28, 2.75, 1.08, max_items=5))
+        shapes.append(_ppt_group_box(f"其他一級子公司｜{len(overflow)} 家", overflow, 9.95, 5.28, 2.75, 1.08, max_items=5, detailed=detailed))
     shapes.append(_ppt_text("用戶可編輯：拖曳公司框、改名稱／持股、刪除或新增線條、調整清單柱內容。", 0.44, 6.96, 12.2, 0.2, 8, color="667085"))
     return "".join(shapes)
 
@@ -652,12 +705,18 @@ def _ppt_level_text_color(depth: int) -> str:
     return palette[min(max(depth, 0), len(palette) - 1)]
 
 
-def _ppt_group_box(title: str, rows: list[dict], x: float, y: float, w: float, h: float, max_items: int = 6) -> str:
+def _ppt_group_box(title: str, rows: list[dict], x: float, y: float, w: float, h: float, max_items: int = 6, detailed: bool = False) -> str:
     items = rows[:max_items]
-    body = "\n".join(f"{idx + 1}. {_truncate(row['canonical_name'], 14)}{('  ' + row['actual_controller_share']) if row.get('actual_controller_share') else ''}" for idx, row in enumerate(items))
+    lines = []
+    for idx, row in enumerate(items):
+        line = f"{idx + 1}. {_truncate(row['canonical_name'], 14)}{('  ' + row['actual_controller_share']) if row.get('actual_controller_share') else ''}"
+        if detailed and _row_attrs(row):
+            line += f"｜{_truncate(_row_attrs(row), 20)}"
+        lines.append(line)
+    body = "\n".join(lines)
     if len(rows) > len(items):
         body += f"\n另有 {len(rows) - len(items)} 家未列示"
-    return _ppt_rect(x, y, w, h, fill="EAF2FB", line="2F5F98") + _ppt_text(title, x + 0.10, y + 0.08, w - 0.2, 0.2, 8.3, bold=True) + _ppt_text(body, x + 0.12, y + 0.40, w - 0.24, h - 0.46, 6.4)
+    return _ppt_rect(x, y, w, h, fill="EAF2FB", line="2F5F98") + _ppt_text(title, x + 0.10, y + 0.08, w - 0.2, 0.2, 8.3, bold=True) + _ppt_text(body, x + 0.12, y + 0.40, w - 0.24, h - 0.46, 5.4 if detailed else 6.4)
 
 
 def _ppt_node(text: str, x: float, y: float, w: float, h: float, fill: str = "FFFFFF", bold: bool = False, font_size: float = 8.2) -> str:
