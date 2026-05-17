@@ -5052,7 +5052,7 @@ function renderChart() {
   document.getElementById("chart")?.classList.toggle("chart-style-mono", state.chartStyle === "mono");
   document.getElementById("chart")?.classList.toggle("chart-style-color", state.chartStyle === "color");
 
-  elements.exportPngBtn.style.display  = isList ? "none" : "";
+  if (elements.exportPngBtn) elements.exportPngBtn.style.display = isList ? "none" : "";
   elements.exportHtmlMenuBtn.style.display = "";
 
   if (isList) {
@@ -5847,10 +5847,10 @@ function bindEvents() {
     confirmAllReviewRows().catch((err) => alert(`全部確認失敗：${err.message}`));
   });
   elements.exportBtn.addEventListener("click", exportWorkbook);
-  elements.exportHtmlMenuBtn?.addEventListener("click", openHtmlExportMenu);
+  elements.exportHtmlMenuBtn?.addEventListener("click", () => exportMeetingArtifact("html"));
   elements.exportMeetingPptBtn?.addEventListener("click", () => exportMeetingArtifact("ppt"));
-  elements.exportPngBtn.addEventListener("click", exportPNG);
-  elements.printChartBtn.addEventListener("click", openPrintSettings);
+  elements.exportPngBtn?.addEventListener("click", exportPNG);
+  elements.printChartBtn?.addEventListener("click", openPrintSettings);
 }
 
 applyChartIntent(state.chartIntent);
