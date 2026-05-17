@@ -360,11 +360,6 @@ def _children_by_parent(rows: list[dict]) -> dict[str, list[dict]]:
     return children
 
 
-def _max_children_per_parent(rows: list[dict]) -> int:
-    children = _children_by_parent(rows)
-    return max((len(items) for parent, items in children.items() if parent), default=0)
-
-
 def _root(rows: list[dict]) -> dict | None:
     by_id = {row["node_id"]: row for row in rows}
     return next((row for row in rows if not row.get("chart1_parent") or row.get("chart1_parent") not in by_id), rows[0] if rows else None)
@@ -413,19 +408,20 @@ def _use_detailed_first_page(rows: list[dict]) -> bool:
         return False
     ordered = _ordered_rows(rows)
     max_depth = max((depth for _row, depth in ordered), default=0)
-    max_children = _max_children_per_parent(rows)
-    return len(rows) <= 8 or (len(rows) <= 12 and max_depth <= 2 and max_children <= 5)
+    return len(rows) <= 10 and max_depth <= 3
 
 
 def _build_overview_svg(title: str, rows: list[dict]) -> str:
     model = _overview_model(rows)
     root, main, visible, overflow, children = model["root"], model["main"], model["visible"], model["overflow"], model["children"]
     detailed = _use_detailed_first_page(rows)
-    w, h = 1220, 560
+    max_inline_children = max((len(children.get(row["node_id"], [])) for row in visible), default=0) if detailed else 0
+    w = 1220
+    h = max(560, 414 + max_inline_children * 82) if max_inline_children else 560
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="{html.escape(title)} 股權總覽">',
         "<style>.n rect{fill:#fff;stroke:#172033;stroke-width:1.4}.root rect{fill:#e9edf8}.g rect{fill:#eaf2fb;stroke:#2f5f98;stroke-width:1.3}.e{stroke:#6b7c93;stroke-width:1.2}.t{font:600 13px sans-serif;fill:#172033}.td{font:500 10.5px sans-serif;fill:#475569}.s{font:500 11px sans-serif;fill:#172033}.gt{font:700 14px sans-serif;fill:#172033}</style>",
-        '<rect x="1" y="1" width="1218" height="558" fill="#f8fafc" stroke="#d6dee8"/>',
+        f'<rect x="1" y="1" width="{w - 2}" height="{h - 2}" fill="#f8fafc" stroke="#d6dee8"/>',
     ]
     if not root:
         parts.append('<text x="610" y="280" text-anchor="middle" class="t">沒有可顯示的公司資料</text></svg>')
@@ -450,9 +446,20 @@ def _build_overview_svg(title: str, rows: list[dict]) -> str:
         parts.append(_svg_node(row["node_id"], _node_label(row, detailed=detailed), x, top_y, 190, node_h, detailed=detailed))
         kids = children.get(row["node_id"], [])
         if kids:
-            group_y = 376 if detailed else 354
-            parts.append(_svg_line(x + 95, top_y + node_h, x + 95, group_y - 12))
-            parts.append(_svg_group(f"清單柱｜{len(kids)} 家", kids, x - 8, group_y, 206, 150 if detailed else 160, max_items=4 if detailed else 5))
+            if detailed:
+                child_x = x - 8
+                child_y = top_y + node_h + 48
+                child_h = 64
+                parts.append(_svg_line(x + 95, top_y + node_h, x + 95, child_y))
+                for child_idx, child in enumerate(kids):
+                    yy = child_y + child_idx * (child_h + 18)
+                    if child_idx:
+                        parts.append(_svg_line(x + 95, yy - 18, x + 95, yy))
+                    parts.append(_svg_node(child["node_id"], _node_label(child, detailed=True), child_x, yy, 206, child_h, detailed=True))
+            else:
+                group_y = 354
+                parts.append(_svg_line(x + 95, top_y + node_h, x + 95, group_y - 12))
+                parts.append(_svg_group(f"清單柱｜{len(kids)} 家", kids, x - 8, group_y, 206, 160, max_items=5))
     if overflow:
         bus_y = 228 if detailed else 218
         parts.append(_svg_line(xs[-1] + 95, bus_y, xs[-1] + 95, 374))
@@ -578,9 +585,20 @@ def _ppt_overview_slide(title: str, rows: list[dict]) -> str:
         shapes.append(_ppt_node(_node_label(row, detailed=detailed), x, top_y, box_w, node_h, font_size=5.45 if detailed else 6.8))
         kids = children.get(row["node_id"], [])
         if kids:
-            group_y = 4.14 if detailed else 3.88
-            shapes.append(_ppt_line(x + box_w / 2, top_y + node_h, x + box_w / 2, group_y - 0.05))
-            shapes.append(_ppt_group_box(f"清單柱｜{len(kids)} 家", kids, x - 0.1, group_y, 2.25, 1.18 if detailed else 1.36, max_items=4 if detailed else 6))
+            if detailed:
+                child_x = x - 0.12
+                child_y = top_y + node_h + 0.46
+                child_h = 0.58
+                shapes.append(_ppt_line(x + box_w / 2, top_y + node_h, x + box_w / 2, child_y))
+                for child_idx, child in enumerate(kids):
+                    yy = child_y + child_idx * (child_h + 0.18)
+                    if child_idx:
+                        shapes.append(_ppt_line(x + box_w / 2, yy - 0.18, x + box_w / 2, yy))
+                    shapes.append(_ppt_node(_node_label(child, detailed=True), child_x, yy, 2.28, child_h, font_size=4.9))
+            else:
+                group_y = 3.88
+                shapes.append(_ppt_line(x + box_w / 2, top_y + node_h, x + box_w / 2, group_y - 0.05))
+                shapes.append(_ppt_group_box(f"清單柱｜{len(kids)} 家", kids, x - 0.1, group_y, 2.25, 1.36, max_items=6))
     if overflow:
         shapes.append(_ppt_line(11.32, bus_y, 11.32, 5.22))
         shapes.append(_ppt_group_box(f"其他一級子公司｜{len(overflow)} 家", overflow, 9.95, 5.28, 2.75, 1.08, max_items=5))
