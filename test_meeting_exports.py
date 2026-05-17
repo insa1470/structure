@@ -57,6 +57,26 @@ class MeetingOverviewTests(unittest.TestCase):
         self.assertIn("同層清單｜2 家", svg)
         self.assertNotIn("其他一級子公司", svg)
 
+    def test_large_overview_switches_to_core_summary(self):
+        svg = _build_overview_svg("測試", make_task_rows(level2_count=14, grandchildren={1: 4, 2: 4, 3: 4, 4: 4}))
+
+        self.assertIn("核心摘要圖", svg)
+        self.assertIn("完整層級請見清單", svg)
+        for idx in range(1, 7):
+            self.assertIn(f"同層子公司{idx:02d}", svg)
+        self.assertNotIn("同層子公司07", svg)
+        self.assertIn("另有 8 家同層分支未展開", svg)
+
+    def test_large_ppt_overview_switches_to_core_summary(self):
+        slide_xml = _ppt_overview_slide("測試", make_task_rows(level2_count=14, grandchildren={1: 4, 2: 4, 3: 4, 4: 4}))
+
+        self.assertIn("核心摘要圖", slide_xml)
+        self.assertIn("完整層級請見清單", slide_xml)
+        for idx in range(1, 7):
+            self.assertIn(f"同層子公司{idx:02d}", slide_xml)
+        self.assertNotIn("同層子公司07", slide_xml)
+        self.assertIn("另有 8 家同層分支未展開", slide_xml)
+
 
 if __name__ == "__main__":
     unittest.main()
