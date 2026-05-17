@@ -52,10 +52,13 @@ const state = {
   hasUnsavedEdits: false,
   autoDraftTimer: null,
   toolbarCollapsed: false,
+  sidebarCollapsed: false,
   currentView: "upload",
 };
 
 const elements = {
+  shell: document.getElementById("appShell"),
+  sidebarToggleBtn: document.getElementById("sidebarToggleBtn"),
   pageTitle: document.getElementById("pageTitle"),
   navButtons: [...document.querySelectorAll(".nav-btn")],
   views: [...document.querySelectorAll(".view")],
@@ -389,17 +392,30 @@ function saveChartViewPrefs() {
   try {
     localStorage.setItem(CHART_VIEW_PREFS_KEY, JSON.stringify({
       toolbarCollapsed: state.toolbarCollapsed,
+      sidebarCollapsed: state.sidebarCollapsed,
     }));
   } catch (_) {
     // best effort
   }
 }
 
+function refitChartAfterWorkspaceChange() {
+  if (state.currentView !== "chart") return;
+  window.setTimeout(fitChartToViewport, 180);
+  window.setTimeout(fitChartToViewport, 340);
+}
+
 function applyWorkspaceModeUI() {
   const inChartView = state.currentView === "chart";
   document.body.classList.toggle("toolbar-collapsed", inChartView && state.toolbarCollapsed);
+  elements.shell?.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
   if (elements.toggleToolbarBtn) {
     elements.toggleToolbarBtn.textContent = state.toolbarCollapsed ? "顯示工具列" : "隱藏工具列";
+  }
+  if (elements.sidebarToggleBtn) {
+    elements.sidebarToggleBtn.textContent = state.sidebarCollapsed ? "展開側欄" : "收合側欄";
+    elements.sidebarToggleBtn.setAttribute("aria-expanded", String(!state.sidebarCollapsed));
+    elements.sidebarToggleBtn.setAttribute("title", state.sidebarCollapsed ? "展開左側導航" : "收合左側導航");
   }
 }
 
@@ -408,6 +424,7 @@ function loadChartViewPrefs() {
     const prefs = JSON.parse(localStorage.getItem(CHART_VIEW_PREFS_KEY) || "null");
     if (!prefs || typeof prefs !== "object") return;
     state.toolbarCollapsed = Boolean(prefs.toolbarCollapsed);
+    state.sidebarCollapsed = Boolean(prefs.sidebarCollapsed);
   } catch (_) {
     // ignore invalid local data
   }
@@ -5569,6 +5586,12 @@ function bindEvents() {
   elements.navButtons.forEach((button) => {
     button.addEventListener("click", () => setView(button.dataset.view));
   });
+  elements.sidebarToggleBtn?.addEventListener("click", () => {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    applyWorkspaceModeUI();
+    saveChartViewPrefs();
+    refitChartAfterWorkspaceChange();
+  });
   elements.chart1Input.addEventListener("change", (event) => {
     state.chart1File = event.target.files[0];
     setPreview(state.chart1File, elements.chart1Meta, elements.chart1Preview, document.getElementById("dz1"));
@@ -5818,6 +5841,7 @@ function bindEvents() {
     state.toolbarCollapsed = !state.toolbarCollapsed;
     applyWorkspaceModeUI();
     saveChartViewPrefs();
+    refitChartAfterWorkspaceChange();
   });
   elements.reviewConfirmAllBtn?.addEventListener("click", () => {
     confirmAllReviewRows().catch((err) => alert(`全部確認失敗：${err.message}`));

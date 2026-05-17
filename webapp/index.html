@@ -20,25 +20,28 @@
       <aside class="sidebar" id="appSidebar">
         <div class="brand">
           <div class="brand-badge">股</div>
-          <div>
+          <div class="brand-text">
             <p class="eyebrow">Review Console</p>
             <h1>圖表AI助手</h1>
           </div>
         </div>
+        <button id="sidebarToggleBtn" class="sidebar-toggle-btn" type="button" aria-expanded="true">
+          收合側欄
+        </button>
         <p class="sidebar-note">
           上傳、審核、輸出股權架構圖。
         </p>
         <nav class="nav">
-          <button class="nav-btn active" data-view="upload">上傳任務</button>
-          <button class="nav-btn" data-view="taskCenter">任務中心</button>
-          <button class="nav-btn" data-view="overview">總覽</button>
-          <button class="nav-btn" data-view="review">待確認</button>
-          <button class="nav-btn" data-view="candidates">新增候選</button>
-          <button class="nav-btn" data-view="results">結果主表</button>
-          <button class="nav-btn nav-btn-chart" data-view="chart">股權架構圖</button>
+          <button class="nav-btn active" data-view="upload" data-short="上傳">上傳任務</button>
+          <button class="nav-btn" data-view="taskCenter" data-short="任務">任務中心</button>
+          <button class="nav-btn" data-view="overview" data-short="總覽">總覽</button>
+          <button class="nav-btn" data-view="review" data-short="確認">待確認</button>
+          <button class="nav-btn" data-view="candidates" data-short="候選">新增候選</button>
+          <button class="nav-btn" data-view="results" data-short="主表">結果主表</button>
+          <button class="nav-btn nav-btn-chart" data-view="chart" data-short="圖">股權架構圖</button>
         </nav>
         <div class="admin-nav">
-          <button class="nav-btn admin-test-btn" data-view="ocrTest">管理員登入</button>
+          <button class="nav-btn admin-test-btn" data-view="ocrTest" data-short="管理">管理員登入</button>
         </div>
       </aside>
 
