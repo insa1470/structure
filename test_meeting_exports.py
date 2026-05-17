@@ -52,30 +52,46 @@ class MeetingOverviewTests(unittest.TestCase):
     def test_overview_uses_separate_peer_list_only_after_twelve_same_level_nodes(self):
         svg = _build_overview_svg("測試", make_task_rows(level2_count=14))
 
-        for idx in range(1, 13):
-            self.assertIn(f"同層子公司{idx:02d}", svg)
-        self.assertIn("同層清單｜2 家", svg)
+        self.assertIn("無下層一級子公司｜14 家", svg)
+        self.assertIn("同層子公司01", svg)
+        self.assertNotIn('data-node-id="N003"', svg)
         self.assertNotIn("其他一級子公司", svg)
+
+    def test_overview_keeps_branch_nodes_and_collapses_leaf_peers(self):
+        svg = _build_overview_svg("測試", make_task_rows(level2_count=12, grandchildren={1: 2, 2: 1, 3: 1}))
+
+        for node_id in ("N003", "N004", "N005"):
+            self.assertIn(f'data-node-id="{node_id}"', svg)
+        self.assertNotIn('data-node-id="N006"', svg)
+        self.assertIn("無下層一級子公司｜9 家", svg)
+
+    def test_ppt_keeps_branch_nodes_and_collapses_leaf_peers(self):
+        slide_xml = _ppt_overview_slide("測試", make_task_rows(level2_count=12, grandchildren={1: 2, 2: 1, 3: 1}))
+
+        for idx in range(1, 4):
+            self.assertIn(f"同層子公司{idx:02d}", slide_xml)
+        self.assertIn("無下層一級子公司｜9 家", slide_xml)
 
     def test_large_overview_switches_to_core_summary(self):
         svg = _build_overview_svg("測試", make_task_rows(level2_count=14, grandchildren={1: 4, 2: 4, 3: 4, 4: 4}))
 
         self.assertIn("核心摘要圖", svg)
         self.assertIn("完整層級請見清單", svg)
-        for idx in range(1, 7):
+        for idx in range(1, 5):
             self.assertIn(f"同層子公司{idx:02d}", svg)
-        self.assertNotIn("同層子公司07", svg)
-        self.assertIn("另有 8 家同層分支未展開", svg)
+        self.assertNotIn('data-node-id="N009"', svg)
+        self.assertIn("無下層一級子公司｜10 家", svg)
+        self.assertIn("10 家無下層公司已收進清單柱", svg)
 
     def test_large_ppt_overview_switches_to_core_summary(self):
         slide_xml = _ppt_overview_slide("測試", make_task_rows(level2_count=14, grandchildren={1: 4, 2: 4, 3: 4, 4: 4}))
 
         self.assertIn("核心摘要圖", slide_xml)
         self.assertIn("完整層級請見清單", slide_xml)
-        for idx in range(1, 7):
+        for idx in range(1, 5):
             self.assertIn(f"同層子公司{idx:02d}", slide_xml)
-        self.assertNotIn("同層子公司07", slide_xml)
-        self.assertIn("另有 8 家同層分支未展開", slide_xml)
+        self.assertIn("無下層一級子公司｜10 家", slide_xml)
+        self.assertIn("10 家無下層公司已收進清單柱", slide_xml)
 
 
 if __name__ == "__main__":

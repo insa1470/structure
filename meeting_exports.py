@@ -395,12 +395,24 @@ def _overview_model(rows: list[dict]) -> dict:
     main = (children.get(root["node_id"], []) or [root])[0] if root else None
     level2 = children.get(main["node_id"], []) if main else []
     summary_mode = len(rows) > 25
+    branch_nodes = [row for row in level2 if children.get(row["node_id"])]
+    leaf_nodes = [row for row in level2 if not children.get(row["node_id"])]
+    collapse_leaf_peers = len(leaf_nodes) >= 4 and (summary_mode or len(level2) > 10)
     visible_limit = 6 if summary_mode else 12
+    if collapse_leaf_peers:
+        visible = branch_nodes[:visible_limit]
+        overflow = branch_nodes[visible_limit:]
+        leaf_group = leaf_nodes
+    else:
+        visible = level2[:visible_limit]
+        overflow = level2[visible_limit:]
+        leaf_group = []
     return {
         "root": root,
         "main": main,
-        "visible": level2[:visible_limit],
-        "overflow": level2[visible_limit:],
+        "visible": visible,
+        "overflow": overflow,
+        "leaf_group": leaf_group,
         "children": children,
         "summary_mode": summary_mode,
     }
@@ -417,6 +429,7 @@ def _use_detailed_first_page(rows: list[dict]) -> bool:
 def _build_overview_svg(title: str, rows: list[dict]) -> str:
     model = _overview_model(rows)
     root, main, visible, overflow, children = model["root"], model["main"], model["visible"], model["overflow"], model["children"]
+    leaf_group = model["leaf_group"]
     summary_mode = model["summary_mode"]
     detailed = _use_detailed_first_page(rows)
     max_inline_children = max((len(children.get(row["node_id"], [])) for row in visible), default=0) if detailed else 0
@@ -434,9 +447,17 @@ def _build_overview_svg(title: str, rows: list[dict]) -> str:
         parts.append(_svg_node(main["node_id"], _node_label(main, detailed=detailed, include_share=False), 455, main_y, 310, main_h, detailed=detailed))
         parts.append(_svg_line(610, 84 if detailed else 76, 610, main_y))
     bottom = _append_svg_level_rows(parts, visible, children, detailed, summary_mode=summary_mode)
+    if leaf_group:
+        group_w = 520 if len(leaf_group) > 6 else 360
+        group_h = _svg_group_height(leaf_group, max_items=6 if summary_mode else 8)
+        group_x = int((w - group_w) / 2)
+        group_y = bottom + 24
+        parts.append(_svg_line(610, max(184, bottom - 8), 610, group_y - 12))
+        parts.append(_svg_group(f"無下層一級子公司｜{len(leaf_group)} 家", leaf_group, group_x, group_y, group_w, group_h, max_items=6 if summary_mode else 8))
+        bottom = group_y + group_h
     if summary_mode:
         note_y = bottom + 28
-        parts.append(_svg_summary_note(len(rows), len(overflow), 350, note_y, 520, 64))
+        parts.append(_svg_summary_note(len(rows), len(overflow), len(leaf_group), 350, note_y, 520, 64))
         bottom = note_y + 64
     elif overflow:
         group_w = 520
@@ -517,8 +538,13 @@ def _append_svg_level_rows(parts: list[str], visible: list[dict], children: dict
     return bottom
 
 
-def _svg_summary_note(total_count: int, overflow_count: int, x: int, y: int, w: int, h: int) -> str:
-    extra = f"另有 {overflow_count} 家同層分支未展開" if overflow_count else "主要分支已顯示"
+def _svg_summary_note(total_count: int, overflow_count: int, leaf_count: int, x: int, y: int, w: int, h: int) -> str:
+    if overflow_count:
+        extra = f"另有 {overflow_count} 家有下層分支未展開"
+    elif leaf_count:
+        extra = f"{leaf_count} 家無下層公司已收進清單柱"
+    else:
+        extra = "主要分支已顯示"
     return (
         f'<g class="g"><rect x="{x}" y="{y}" width="{w}" height="{h}" rx="2"/>'
         f'<text x="{x + 16}" y="{y + 24}" class="gt">核心摘要圖｜{total_count} 筆主表資料</text>'
@@ -628,6 +654,7 @@ def _truncate(text: str, width: int) -> str:
 def _ppt_overview_slide(title: str, rows: list[dict]) -> str:
     model = _overview_model(rows)
     root, main, visible, overflow, children = model["root"], model["main"], model["visible"], model["overflow"], model["children"]
+    leaf_group = model["leaf_group"]
     summary_mode = model["summary_mode"]
     detailed = _use_detailed_first_page(rows)
     shapes = [_ppt_text(title + "｜股權架構會議圖", 0.35, 0.24, 8.8, 0.35, 18, bold=True), _ppt_text("可編輯 PPT：公司框、線條、清單柱與文字皆為原生物件。", 0.36, 0.62, 10.8, 0.22, 8.5, color="667085"), _ppt_rect(0.34, 0.92, 12.65, 5.92, fill="F7FAFC", line="D6DEE8")]
@@ -641,10 +668,24 @@ def _ppt_overview_slide(title: str, rows: list[dict]) -> str:
         shapes.append(_ppt_node(_node_label(main, detailed=detailed, include_share=False), 5.0, main_y, 3.05, main_h, bold=True, font_size=6.3 if detailed else 8.2))
         shapes.append(_ppt_line(6.525, 1.58 if detailed else 1.47, 6.525, main_y))
     bottom = _append_ppt_level_rows(shapes, visible, children, detailed, summary_mode=summary_mode)
+    if leaf_group:
+        group_w = 4.8
+        group_h = min(1.42, max(0.84, 0.44 + min(len(leaf_group), 5 if summary_mode else 6) * 0.18))
+        group_x = 4.25
+        group_y = min(5.18 if summary_mode else 5.38, bottom + 0.2)
+        shapes.append(_ppt_line(6.525, min(group_y - 0.16, 5.0), 6.525, group_y))
+        shapes.append(_ppt_group_box(f"無下層一級子公司｜{len(leaf_group)} 家", leaf_group, group_x, group_y, group_w, group_h, max_items=5 if summary_mode else 6))
+        bottom = group_y + group_h
     if summary_mode:
         note_y = min(5.58, bottom + 0.2)
         shapes.append(_ppt_group_box(f"核心摘要圖｜{len(rows)} 筆主表資料", [], 4.15, note_y, 5.0, 0.76, max_items=0))
-        shapes.append(_ppt_text(f"另有 {len(overflow)} 家同層分支未展開，完整層級請見清單。", 4.34, note_y + 0.36, 4.65, 0.18, 7.0, color="172033"))
+        if overflow:
+            summary_text = f"另有 {len(overflow)} 家有下層分支未展開，完整層級請見清單。"
+        elif leaf_group:
+            summary_text = f"{len(leaf_group)} 家無下層公司已收進清單柱，完整層級請見清單。"
+        else:
+            summary_text = "主要分支已顯示，完整層級請見清單。"
+        shapes.append(_ppt_text(summary_text, 4.34, note_y + 0.36, 4.65, 0.18, 7.0, color="172033"))
     elif overflow:
         group_w = 4.4
         group_h = min(1.22, max(0.72, 0.42 + min(len(overflow), 4) * 0.18))
