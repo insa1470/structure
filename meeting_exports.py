@@ -452,11 +452,11 @@ def _build_overview_svg(title: str, rows: list[dict]) -> str:
         if kids:
             group_y = 376 if detailed else 354
             parts.append(_svg_line(x + 95, top_y + node_h, x + 95, group_y - 12))
-            parts.append(_svg_group(f"清單柱｜{len(kids)} 家", kids, x - 8, group_y, 206, 150 if detailed else 160, max_items=4 if detailed else 5, detailed=detailed))
+            parts.append(_svg_group(f"清單柱｜{len(kids)} 家", kids, x - 8, group_y, 206, 150 if detailed else 160, max_items=4 if detailed else 5))
     if overflow:
         bus_y = 228 if detailed else 218
         parts.append(_svg_line(xs[-1] + 95, bus_y, xs[-1] + 95, 374))
-        parts.append(_svg_group(f"其他一級子公司｜{len(overflow)} 家", overflow, 928, 384, 238, 150, max_items=5, detailed=detailed))
+        parts.append(_svg_group(f"其他一級子公司｜{len(overflow)} 家", overflow, 928, 384, 238, 150, max_items=5))
     parts.append("</svg>")
     return "".join(parts)
 
@@ -473,15 +473,13 @@ def _svg_node(node_id: str, text: str, x: int, y: int, w: int, h: int, root: boo
     return f'<g class="{cls}" data-node-id="{html.escape(node_id)}"><rect x="{x}" y="{y}" width="{w}" height="{h}" rx="2"/>{text_xml}</g>'
 
 
-def _svg_group(title: str, rows: list[dict], x: int, y: int, w: int, h: int, max_items: int = 5, detailed: bool = False) -> str:
+def _svg_group(title: str, rows: list[dict], x: int, y: int, w: int, h: int, max_items: int = 5) -> str:
     items = rows[:max_items]
     lines = [f'<g class="g"><rect x="{x}" y="{y}" width="{w}" height="{h}" rx="2"/><text x="{x + 12}" y="{y + 24}" class="gt">{html.escape(title)}</text>']
     for idx, row in enumerate(items):
         label = f"{idx + 1}. {_truncate(row['canonical_name'], 13)}"
         if row.get("actual_controller_share"):
             label += f" {row['actual_controller_share']}"
-        if detailed and _row_attrs(row):
-            label += f"｜{_truncate(_row_attrs(row), 18)}"
         lines.append(f'<text x="{x + 14}" y="{y + 50 + idx * 18}" class="s">{html.escape(label)}</text>')
     if len(rows) > len(items):
         lines.append(f'<text x="{x + 14}" y="{y + 50 + len(items) * 18}" class="s">另有 {len(rows) - len(items)} 家未列示</text>')
@@ -582,10 +580,10 @@ def _ppt_overview_slide(title: str, rows: list[dict]) -> str:
         if kids:
             group_y = 4.14 if detailed else 3.88
             shapes.append(_ppt_line(x + box_w / 2, top_y + node_h, x + box_w / 2, group_y - 0.05))
-            shapes.append(_ppt_group_box(f"清單柱｜{len(kids)} 家", kids, x - 0.1, group_y, 2.25, 1.18 if detailed else 1.36, max_items=4 if detailed else 6, detailed=detailed))
+            shapes.append(_ppt_group_box(f"清單柱｜{len(kids)} 家", kids, x - 0.1, group_y, 2.25, 1.18 if detailed else 1.36, max_items=4 if detailed else 6))
     if overflow:
         shapes.append(_ppt_line(11.32, bus_y, 11.32, 5.22))
-        shapes.append(_ppt_group_box(f"其他一級子公司｜{len(overflow)} 家", overflow, 9.95, 5.28, 2.75, 1.08, max_items=5, detailed=detailed))
+        shapes.append(_ppt_group_box(f"其他一級子公司｜{len(overflow)} 家", overflow, 9.95, 5.28, 2.75, 1.08, max_items=5))
     shapes.append(_ppt_text("用戶可編輯：拖曳公司框、改名稱／持股、刪除或新增線條、調整清單柱內容。", 0.44, 6.96, 12.2, 0.2, 8, color="667085"))
     return "".join(shapes)
 
@@ -705,18 +703,16 @@ def _ppt_level_text_color(depth: int) -> str:
     return palette[min(max(depth, 0), len(palette) - 1)]
 
 
-def _ppt_group_box(title: str, rows: list[dict], x: float, y: float, w: float, h: float, max_items: int = 6, detailed: bool = False) -> str:
+def _ppt_group_box(title: str, rows: list[dict], x: float, y: float, w: float, h: float, max_items: int = 6) -> str:
     items = rows[:max_items]
     lines = []
     for idx, row in enumerate(items):
         line = f"{idx + 1}. {_truncate(row['canonical_name'], 14)}{('  ' + row['actual_controller_share']) if row.get('actual_controller_share') else ''}"
-        if detailed and _row_attrs(row):
-            line += f"｜{_truncate(_row_attrs(row), 20)}"
         lines.append(line)
     body = "\n".join(lines)
     if len(rows) > len(items):
         body += f"\n另有 {len(rows) - len(items)} 家未列示"
-    return _ppt_rect(x, y, w, h, fill="EAF2FB", line="2F5F98") + _ppt_text(title, x + 0.10, y + 0.08, w - 0.2, 0.2, 8.3, bold=True) + _ppt_text(body, x + 0.12, y + 0.40, w - 0.24, h - 0.46, 5.4 if detailed else 6.4)
+    return _ppt_rect(x, y, w, h, fill="EAF2FB", line="2F5F98") + _ppt_text(title, x + 0.10, y + 0.08, w - 0.2, 0.2, 8.3, bold=True) + _ppt_text(body, x + 0.12, y + 0.40, w - 0.24, h - 0.46, 6.4)
 
 
 def _ppt_node(text: str, x: float, y: float, w: float, h: float, fill: str = "FFFFFF", bold: bool = False, font_size: float = 8.2) -> str:
